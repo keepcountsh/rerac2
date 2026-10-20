@@ -268,15 +268,28 @@ Clank and Giant Clank cameras, water, the knock-down view, the other camera type
 The level's update table (`lvl.vtbl` at `0x2a2e80`, 233 records `{o_class, update, 0x2a3978}`) covers the level's
 own classes and every weapon and gadget; a class not in it (or with a null update) has none. Of the 76 classes with
 instances on Aranos, 50 have an update. Ported (`rc_game2::moby::classes`): the wrench 0x47, the crates 500 / 501 /
-511, the bolts 13..19, and in `props`: 0x0ac3, 0x0ac5 / 0x0ac6, 0x0ac8, 0x0c4c (the sky ships), 0x0c63 (a mission
-area), 0x0c8b (the death height), 0x0d1e (searchlights), 0x1143 / 0x12fa (breakables), 0x12f5, 0x12f9 (a barrier
-held by two objects), 0x132d (the sun flare's object). Shared services: the volumes and paths (`rc_game2::level`),
-moby states `0x31b8d0`, the sound hooks of the moby host.
+511, the bolts 13..19, the spawn points 0x0325, the chute 0x02a7, the gate 0x0ac7; in `props`: 0x0919 (a camera
+volume), 0x0ac0 (a mover), 0x0ac1 / 0x0ac2 / 0x0aca (the lifts, carrying Ratchet), 0x0ac3, 0x0ac4 (a gate), 0x0ac5 /
+0x0ac6, 0x0ac8, 0x0adb (a hovering craft), the wrecks 0x0ac9 / 0x0c0a..0x0c0d / 0x0e01 / 0x0e02, 0x0c22 (the
+tutorial's help), 0x0c4c (the sky ships), 0x0c63 (a mission area), 0x0c8b (the death height), 0x0c8c (the interior
+swap), 0x0d1e (searchlights), 0x0ddf (a view volume), 0x0f13 (a scene's props), 0x1143 / 0x12fa (breakables),
+0x12f5, 0x12f9 (a barrier held by two objects), 0x132d (the sun flare's object), 0x1330 (the arrival); in
+`carriers`: 0x0a38, 0x0c66, 0x09c7 (a floating rock with a mount). Shared services: the volumes, areas and paths
+(`rc_game2::level`), moby states `0x31b8d0`, the sound hooks of the moby host, the camera tweaks, the spawn rules
+and the checkpoint, the help requests, the hero's carry on movers (`0x322668`, `moby::carry_hero`), the eased move
+`0x31ed78` (`physics::ease`), the group attach (`moby::attach`: mobys, ties and shrubs).
 
-**To do**, by size of the update (lines of the export): 0x0919 camera volume (42), 0x0cda steam (75), 0x0c8c
-interior swap (80), 0x0c5c puffs (85), 0x0c66 / 0x0a38 carriers (the group attach `0x3246c0` / `0x324bd0`, which
-moves ties and shrubs too), 0x0340 (65), 0x0ce9 (110), 0x0325 spawn points (134), 0x02a7 chute (144), 0x0ac7 (145),
-0x0ddf (149), 0x0c22 (151), 0x0ac0 (172), 0x0ac9 family (187, seven classes), 0x0f13 (187), 0x1330 (204), 0x0ac4 (209),
-0x09c7 (238), 0x0adb (249), 0x0ac2 (290), 0x0aca (295), 0x0ac1 (302), 0x099c (319), 0x0b0b (783), 0x0b0a, 0x0b51,
-0x0f6e and the 0x41b0xx stubs (not in the export: decompile them in Ghidra). The visual effects they start
-(particles, lights, debris, the lens flare) wait for an effects pass.
+**Effects only** (nothing else in their updates; they wait for the effects pass): 0x0cda (steam), 0x0c5c (puffs),
+0x0ce9 (a tie group's colours pulsing, `0x3701d0`). 0x0340 acts only with Ratchet in the ship (`0x18c0b4` = 0x1c,
+the class 0xac), never on Aranos.
+
+**Engine gaps the objects left** (the game side is done): the ties and shrubs the carriers move
+(`MobyWorld::moved_ties` / `moved_shrubs` with their new matrices in `ties` / `shrubs`: the tie and shrub instance
+buffers, the tie LOD spheres and the shrub culls follow nothing yet) and the ties hidden by 0x0ddf / 0x09c7
+(`MobyWorld::hidden_ties`); both need the shared tie / shrub renderers to take updates, which R&C1 never needed. The
+arrival scene of 0x1330 and the scene parts of 0x0f13 wait for the scene system (`0x42a4e0`, `0x1bca70`).
+
+**To do**: the enemies 0x099c (319) and 0x0b0b (783) on R&C2's enemy framework (the AI block `+0x68`[0x18]
+`0x32d968`, the damage intake `0x327e38` / `0x31dd48` / the knockback `0x3282b0`, the target search `0x32ad38`, the
+movement `0x32cc30` / `0x32cd20` / `0x328b80` → `0x328e90`, the senses `0x32dcf0`), then 0x0b0a, 0x0b51, 0x0f6e and
+the 0x41b0xx stubs (not in the export: decompile them in Ghidra).
