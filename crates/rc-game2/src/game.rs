@@ -103,8 +103,6 @@ impl Default for GameState {
 }
 
 impl GameState {
-    /// `0x2f5270(text, slot)`: ask for a help text — only with no panel up or asked for, the slot not off, past the
-    /// sixth frame.
     /// `0x322730(item)`: the item had; a weapon or gadget (below 0x15, or 0x18) goes in the first free
     /// quick-select slot.
     pub fn give_item(&mut self, item: i32) {
@@ -123,6 +121,8 @@ impl GameState {
         if let Some(b) = self.missions.get_mut(self.level.max(0) as usize * 0x10 + mission as usize) { *b |= 0x80; }
     }
 
+    /// `0x2f5270(text, slot)`: ask for a help text — only with no panel up or asked for, the slot not off, past the
+    /// sixth frame.
     pub fn help(&mut self, text: i32, slot: i32) -> bool {
         if self.help_state != 0 || self.help_req.is_some() || self.frame <= 5 { return false; }
         if self.help_counts.get(slot.max(0) as usize).copied().unwrap_or(-1) == -1 { return false; }

@@ -66,6 +66,9 @@ struct Play {
     game: rc_game2::game::GameState,
     /// The HUD's counters (rc_game2::hud).
     hud: rc_game2::hud::Hud,
+    /// The help panel (rc_game2::help) and the level's English help texts.
+    help: rc_game2::help::Panel,
+    texts: Vec<rc_formats::strings::Message>,
     ticks: u64,
     trace: bool,
     /// The level's objects spawned once (later spawns are respawns).
@@ -198,6 +201,8 @@ fn tick(
     // The HUD (`0x443c08`) with this tick's requests.
     let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh);
+    // The help panel (`0x2f5680`).
+    p.help.tick(&mut p.game, p.pad.pressed & rc_game::pad::button::TRIANGLE != 0, &p.texts);
     if p.trace {
         let v = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let h = &p.hero;
@@ -252,14 +257,14 @@ struct GameHud {
 #[allow(clippy::too_many_arguments)]
 fn draw_hud(
     mut commands: Commands,
-    play: Option<Res<Play>>,
+    mut play: Option<ResMut<Play>>,
     hud: Option<Res<GameHud>>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<crate::hud_render::HudMaterial>>,
     mut composites: ResMut<Assets<crate::hud_render::HudComposite>>,
 ) {
-    let Some(p) = play else { return };
+    let Some(p) = play.as_mut() else { return };
     let Some(hud) = hud else {
         let root = crate::level_load::extracted_root();
         let data = match crate::rac2::Data::load(&root) {
@@ -288,7 +293,9 @@ fn draw_hud(
     };
     let draws = p.hud.draw(p.game.bolts);
     let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
-    let quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
+    let mut quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
+    let p: &mut Play = p;
+    quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs));
     let mut d = crate::hud_render::Hud2d::default();
     for q in quads {
         let tex = match q.tex {
@@ -338,6 +345,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
+        help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
 }

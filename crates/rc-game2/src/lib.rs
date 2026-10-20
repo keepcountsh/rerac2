@@ -8,6 +8,7 @@ pub mod camera;
 pub mod front_end;
 pub mod game;
 pub mod gui;
+pub mod help;
 pub mod hero;
 pub mod hud;
 pub mod level;
