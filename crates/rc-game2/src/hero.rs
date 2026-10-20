@@ -19,6 +19,7 @@
 //! Field names are ours; each carries its L00 address.
 
 pub mod air;
+pub mod clank;
 pub mod damage;
 pub mod ground;
 pub mod items;
@@ -327,6 +328,8 @@ pub struct Hero {
     /// This tick's request to show the bolt counter (△); `0x18c0dc`-like menu lock for △ (a script's).
     pub show_bolts: Option<i32>,
     pub no_menu: u8,
+    /// The random calls the hero's own code makes (`0x31ba38`: the fidgets).
+    pub rng: crate::rng::Rng,
     /// Hits Ratchet's body deals this tick (the Thruster-Pack's ram), delivered by the item pass.
     pub hits_out: Vec<HeroHit>,
     /// States the port has not got, reported once each.
@@ -341,6 +344,8 @@ pub struct HeroHit {
     pub damage: f32,
     pub flags: u32,
     pub dir: V3,
+    /// Centred between two of Ratchet's joints instead (the item pass reads them).
+    pub joints: Option<[usize; 2]>,
 }
 
 impl Default for Hero {
@@ -365,7 +370,7 @@ impl Hero {
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
             bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
-            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, swing: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, hits_out: Vec::new(), unported_seen: Vec::new(),
+            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, swing: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), hits_out: Vec::new(), unported_seen: Vec::new(),
         }
     }
 

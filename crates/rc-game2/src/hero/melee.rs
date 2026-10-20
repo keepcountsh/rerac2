@@ -173,7 +173,7 @@ impl Hero {
         let found = self.target_search(env, range, yaw, yaw_cone, pitch_cone, false);
         match found {
             Some(t) if self.melee.target.is_none() || self.melee.aim != 0 => {
-                self.melee.aim_yaw = atan2(t.pos[1] - self.pos[1], t.pos[0] - self.pos[0]);
+                self.melee.aim_yaw = atan2(t.pos[0] - self.pos[0], t.pos[1] - self.pos[1]);
                 self.melee.aim_dir = sub(t.pos, self.pos);
                 self.melee.target = Some(t.id);
                 self.melee.target_pos = t.pos;
@@ -197,8 +197,8 @@ impl Hero {
         for t in env.targets {
             let d = dist(eye, t.pos);
             let mut skip = range < d;
-            let a_yaw = rot_dist(atan2(t.pos[1] - eye[1], t.pos[0] - eye[0]), yaw);
-            let a_pitch = rot_dist(atan2(t.pos[2] - eye[2], dist2(eye, t.pos)), 0.0);
+            let a_yaw = rot_dist(atan2(t.pos[0] - eye[0], t.pos[1] - eye[1]), yaw);
+            let a_pitch = rot_dist(atan2(dist2(eye, t.pos), t.pos[2] - eye[2]), 0.0);
             if 0.0 < yaw_cone && yaw_cone < a_yaw { skip = true; }
             if 0.0 < pitch_cone && pitch_cone < a_pitch { skip = true; }
             let mut score = d + (a_yaw + a_pitch) * d;

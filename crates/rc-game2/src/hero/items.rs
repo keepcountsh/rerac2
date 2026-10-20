@@ -58,7 +58,13 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     // The body's hits of this tick (the Thruster-Pack's ram).
     for h in std::mem::take(&mut ctx.hero.hits_out) {
         let t = crate::moby::hits::HitTemplate::new(h.damage, ctx.hero_moby, h.flags, [h.dir[0], h.dir[1], h.dir[2], 0.0]);
-        world.sphere_hit(ctx.scene, h.centre, h.r, 0, ctx.hero_moby, Some(&t));
+        let mut c = h.centre;
+        if let (Some([a, b]), Some(hm)) = (h.joints, ctx.hero_moby) {
+            if let (Some(pa), Some(pb)) = (ctx.host.joint(&world.mobys[hm], a), ctx.host.joint(&world.mobys[hm], b)) {
+                c = [(pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5, (pa[2] + pb[2]) * 0.5];
+            }
+        }
+        world.sphere_hit(ctx.scene, c, h.r, 0, ctx.hero_moby, Some(&t));
     }
     let it = &mut ctx.hero.items;
     if it.hand.is_none() && world.class(WRENCH_CLASS).is_some() {

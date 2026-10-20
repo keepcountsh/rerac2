@@ -13,8 +13,11 @@
 //! 4, climbing the wall by 0.03 up to 2.4). Found: the edge, the hang point (edge + wall normal·0.5 + 1.43 down),
 //! the wall's yaw, the moby.
 //!
+//! Clank's body (`0x18c0d4` = 1) probes with its own sizes (0.725 up, 0.7 down, 0.71 below the edge, 0.32 out); its
+//! ledge states 0x46 / 0x47 / 0x49 / 0x4a are in `clank.rs`.
+//!
 //! Not ported: the ledge's moby carrying Ratchet (`+0x38`), the head check flag (`+0x34`, a 0.45 sphere above the
-//! edge), Clank's ledges (`0x18c0d4` = 1: states 0x49 / 0x4a), the gravity frames.
+//! edge), the gravity frames.
 
 use super::physics::*;
 use super::states::Entry;
@@ -57,13 +60,21 @@ impl Hero {
     /// `0x2ad000(pos, rot, out)`; `own` = the hero's block is the output (the per-tick probe, gated by the state).
     pub fn ledge_probe(&self, env: &Env, pos: V3, own: bool) -> Option<Ledge> {
         if self.ledge.cooldown != 0 { return None; }
-        let mut on = (self.group == 4 && (self.jump.descending != 0 || self.vel[2] < 0.058_333_337))
-            || self.group == 2
-            || matches!(self.state, 8 | 0x19 | 0x1a);
-        if self.state == 0xe && self.anim_frame < 37.0 { on = false; }
+        let clank = self.mode == 1;
+        let mut on = if clank {
+            (self.group == 4 && self.jump.descending != 0) || self.group == 2 || matches!(self.state, 0x4b | 0x49 | 0x4a)
+        } else {
+            let mut on = (self.group == 4 && (self.jump.descending != 0 || self.vel[2] < 0.058_333_337))
+                || self.group == 2
+                || matches!(self.state, 8 | 0x19 | 0x1a);
+            if self.state == 0xe && self.anim_frame < 37.0 { on = false; }
+            on
+        };
         if !own { on = true; }
         if !on { return None; }
-        let (up_h, down_h, max_up, hang_down, min_above, step) = (1.5, 1.15, 1.5, 1.43, 1.8, 0.3 * 0.25);
+        // Clank's body (`0x18c0d4` = 1) is smaller.
+        let (up_h, down_h, max_up, hang_down, min_above, step, wall_down, out) =
+            if clank { (0.725, 0.7, 0.725, 0.71, 0.7, 0.25 * 0.25, 0.4, 0.32) } else { (1.5, 1.15, 1.5, 1.43, 1.8, 0.3 * 0.25, 0.7, 0.5) };
         let fwd = self.rows[0];
         let p = add(pos, scale(fwd, self.cap_radius));
         let mut top = add(p, scale(UP, up_h + 0.15));
@@ -89,9 +100,9 @@ impl Hero {
         if env.line(sub(near, fwd), near, 2).is_some() { return None; }
         if dz + self.height < min_above || dz < 0.5 { return None; }
         // The wall below the edge.
-        let mut q = add(add(edge, fwd), scale(UP, -0.7));
+        let mut q = add(add(edge, fwd), scale(UP, -wall_down));
         let mut a = [pos[0], pos[1], q[2]];
-        let st = scale(UP, 0.7 * 0.2);
+        let st = scale(UP, wall_down * 0.2);
         let mut wall = None;
         for _ in 0..5 {
             if let Some(w) = env.line(a, q, 2) {
@@ -112,8 +123,8 @@ impl Hero {
         while t < 2.4 {
             match env.line(add(c, e1), add(c, e2), 4) {
                 None => {
-                    let hang = add(add(c, scale(n, 0.5)), scale(UP, -hang_down));
-                    return Some(Ledge { hang, edge: c, yaw: atan2(n[1], n[0]), moby: None });
+                    let hang = add(add(c, scale(n, out)), scale(UP, -hang_down));
+                    return Some(Ledge { hang, edge: c, yaw: atan2(n[0], n[1]), moby: None });
                 }
                 Some(o) => c = o.point,
             }
@@ -157,7 +168,7 @@ impl Hero {
     pub(super) fn phys_ledge(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
         let w = sub(self.ledge.edge, self.ledge.hang);
         self.stick_dir = w;
-        self.target_yaw = atan2(w[1], w[0]);
+        self.target_yaw = atan2(w[0], w[1]);
         match self.state {
             0x17 | 0x18 => {
                 self.turn_to(0.04, 0.2, 0.104_719_76, 0);
@@ -243,4 +254,4 @@ const FRAC_PI_2: f32 = std::f32::consts::FRAC_PI_2;
 const FRAC_PI_4: f32 = std::f32::consts::FRAC_PI_4;
 
 /// `0x2eef88(out, a, b)` = b × a.
-fn cross(a: V3, b: V3) -> V3 { [b[1] * a[2] - a[1] * b[2], b[2] * a[0] - a[2] * b[0], b[0] * a[1] - a[0] * b[1]] }
+pub(super) fn cross(a: V3, b: V3) -> V3 { [b[1] * a[2] - a[1] * b[2], b[2] * a[0] - a[2] * b[0], b[0] * a[1] - a[0] * b[1]] }

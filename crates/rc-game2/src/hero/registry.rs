@@ -26,6 +26,8 @@ pub enum Module {
     Pack,
     /// `swing.rs`: the Swingshot (group 0xd: 0x23, 0x24, 0x25).
     Swing,
+    /// `clank.rs`: Clank's own body (`0x18c0d4` = 1: 0x3f..0x4e).
+    Clank,
     /// `water.rs`: swimming (groups 0x11 / 0x12: 0x32..0x36) and the water hurts 0x72 / 0x73.
     Water,
     /// `misc.rs`: the stagger 0x26 / 0x2f, the slide 0x30, the mud 0x76, the bonk 0x77.
@@ -63,10 +65,10 @@ pub const STATES: &[StateInfo] = &[
     s(0x30, 0x10, Misc, true), s(0x31, 9, Unported, false), s(0x32, 0x11, Water, true), s(0x33, 0x11, Water, true),
     s(0x34, 0x11, Water, true), s(0x35, 0x12, Water, true), s(0x36, 0x12, Water, true), s(0x37, 9, Unported, false),
     s(0x38, 4, Jump, true), s(0x39, 0x14, Damage, true), s(0x3d, -1, Unported, false), s(0x3e, 0xf, Unported, false),
-    s(0x3f, 0, Unported, false), s(0x40, 1, Unported, false), s(0x41, 2, Unported, false), s(0x42, 7, Unported, false),
-    s(0x43, 0x14, Unported, false), s(0x44, 2, Unported, false), s(0x45, 4, Unported, false), s(0x46, 3, Unported, false),
-    s(0x47, 3, Unported, false), s(0x48, 4, Unported, false), s(0x49, 3, Unported, false), s(0x4a, 3, Unported, false),
-    s(0x4b, 5, Unported, false), s(0x4d, -1, Unported, false), s(0x4e, 2, Unported, false), s(0x5b, 4, Jump, true),
+    s(0x3f, 0, Clank, true), s(0x40, 1, Clank, true), s(0x41, 2, Clank, true), s(0x42, 7, Clank, true),
+    s(0x43, 0x14, Clank, true), s(0x44, 2, Clank, true), s(0x45, 4, Jump, true), s(0x46, 3, Clank, true),
+    s(0x47, 3, Clank, true), s(0x48, 4, Jump, true), s(0x49, 3, Clank, true), s(0x4a, 3, Clank, true),
+    s(0x4b, 5, Clank, true), s(0x4d, -1, Clank, true), s(0x4e, 2, Clank, true), s(0x5b, 4, Jump, true),
     s(0x60, -1, Unported, false), s(0x61, 0x18, Unported, false), s(0x62, 1, Unported, false), s(0x63, 1, Unported, false),
     s(0x64, 0, Unported, false), s(0x65, 0x19, Damage, true), s(0x66, 0x19, Jump, true), s(0x67, 0x14, Damage, true),
     s(0x6d, 6, Unported, false), s(0x6e, 4, Jump, true), s(0x6f, 9, Unported, false), s(0x70, 1, Walk, true),

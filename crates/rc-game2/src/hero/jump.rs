@@ -345,7 +345,7 @@ impl Hero {
         // (`0x2e14b0`), 1 damage with flags 0x10000 along the displacement × 7 (`0x31d4c8`).
         if self.state == 0x10 && 8 < self.timer && self.anim_frame < 28.0 {
             let c = self.local_point(0.8, 0.0, 0.3);
-            self.hits_out.push(super::HeroHit { centre: c, r: 0.9, damage: 1.0, flags: 0x10000, dir: scale(self.disp, 7.0) });
+            self.hits_out.push(super::HeroHit { centre: c, r: 0.9, damage: 1.0, flags: 0x10000, dir: scale(self.disp, 7.0), joints: None });
         }
         self.jump_vertical(env);
         self.wall_probe(env);

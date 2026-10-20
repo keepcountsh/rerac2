@@ -117,7 +117,7 @@ fn in_hand(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let (prev_base, prev_head) = (ctx.hero.melee.sweep_base, ctx.hero.melee.sweep_head);
     let mut yaw = h.rot[2];
     if matches!(h.state, 0x13 | 0x6d | 0x2a) {
-        let a = atan2(head[1] - h.pos[1], head[0] - h.pos[0]);
+        let a = atan2(head[0] - h.pos[0], head[1] - h.pos[1]);
         let side = if sw[1] == 1 { -std::f32::consts::FRAC_PI_2 } else { std::f32::consts::FRAC_PI_2 };
         yaw = crate::hero::physics::add_rot(a, side);
     }
@@ -126,7 +126,7 @@ fn in_hand(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if 0.0 < l { d = scale(d, (l + 0.17) / l); }
     let mut off = 0.0;
     if h.group != 0xf && h.state != 0x6d && h.state != 0x14 {
-        off = rot_dist(h.rot[2], atan2(head[1] - h.pos[1], head[0] - h.pos[0]));
+        off = rot_dist(h.rot[2], atan2(head[0] - h.pos[0], head[1] - h.pos[1]));
         if std::f32::consts::FRAC_PI_2 < off { window = false; }
         d = reach(h.rot[2], d);
     }
@@ -135,7 +135,7 @@ fn in_hand(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     ctx.hero.melee.sweep_head = head;
     // The wall test (from 10 ticks on, within 70° of the facing): a line 1.4 out at waist height.
     if !matches!(h.state, 0x2a | 0x6d) && off < 1.221_730_6 && 10 < h.timer && ctx.hero.melee.wall_hit == 0 {
-        let a = atan2(head[1] - h.pos[1], head[0] - h.pos[0]);
+        let a = atan2(head[0] - h.pos[0], head[1] - h.pos[1]);
         let from = add(h.pos, [0.0, 0.0, 0.5]);
         let out = reach(h.rot[2], [a.cos() * 1.4, a.sin() * 1.4, 0.0]);
         if let Some(o) = ctx.coll.and_then(|c| rc_game::collision_query::coll_line_m(c, ctx.scene, from, add(from, out), rc_game::collision_query::QueryFlags(2), None)) {
@@ -179,7 +179,7 @@ fn in_hand(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// `0x38d270(&d)`: the reach shrinks with the angle off the facing (full 0.7 + 0.30 at 0°, 0.7 at 105°).
 fn reach(yaw: f32, d: V3) -> V3 {
     let lim = 1.832_596;
-    let a = rot_dist(yaw, atan2(d[1], d[0])).min(lim);
+    let a = rot_dist(yaw, atan2(d[0], d[1])).min(lim);
     scale(d, (lim - a) * 0.163_702_22 + 0.7)
 }
 

@@ -65,6 +65,7 @@ impl Hero {
             Module::Misc => self.misc_entry(anim, env, id, play),
             Module::Swing => self.swing_entry(anim, env, id, play),
             Module::Water => self.water_entry(anim, env, id, play),
+            Module::Clank => self.clank_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -95,6 +96,7 @@ impl Hero {
             Module::Misc => if self.state != 0x26 { self.phys_misc(env, anim) },
             Module::Swing => self.phys_swing(env, anim),
             Module::Water => self.phys_water(env, anim),
+            Module::Clank => self.phys_clank(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -121,6 +123,7 @@ impl Hero {
             Module::Walk => self.trans_walk(env, anim),
             Module::Air => self.trans_fall(env, anim),
             Module::Jump if matches!(self.state, 0x5b | 0x92) => None,
+            Module::Jump if matches!(self.state, 0x45 | 0x48) => self.trans_clank(env, anim),
             Module::Jump => self.trans_jump(env, anim),
             Module::Melee => self.trans_melee(env, anim),
             Module::Ledge => self.trans_ledge(env, anim),
@@ -130,6 +133,7 @@ impl Hero {
             Module::Misc => self.trans_misc(env, anim),
             Module::Swing => self.trans_swing(env, anim),
             Module::Water => self.trans_water(env, anim),
+            Module::Clank => self.trans_clank(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.
