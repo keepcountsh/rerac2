@@ -118,6 +118,8 @@ fn tick(
     };
     p.pad.update(Some(&input.bytes()), false);
     p.game.frame += 1;
+    // `0x2d6258`: the health limit from the XP and the nanotech.
+    p.game.health_tick(&mut p.hero.hp);
     let class = &lv.mobys.anim[p.class];
     let mobys = p.mobys.as_mut().expect("mobys");
     let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
