@@ -83,6 +83,8 @@ pub struct Ctx<'a> {
     pub hero_moby: Option<usize>,
     /// Ratchet's animation (`0x18aa40..0x18aa60`, his moby's `+0x40..+0x43`) as this tick left it.
     pub hero_view: rc_game::hero::anim::AnimView,
+    /// The level's volumes and paths.
+    pub level: &'a crate::level::LevelData,
 }
 
 /// What the level's class table gives a moby at init.
@@ -241,6 +243,12 @@ pub trait MobyHost {
     /// two sequences of a blend: the rebuild's `+0x42` / `+0x43` / `+0x44`), packed model units (×1024); `None`: the
     /// class has none (the sphere stays at the position).
     fn sequence_sphere(&self, _m: &Moby) -> Option<[f32; 4]> { None }
+    /// `0x3605f0(index, mode, moby)`: play the moby's class sound `index` (mode 0 once, 4 looped); returns its
+    /// handle (−1: none).
+    fn play_sound(&mut self, _m: &Moby, _index: i32, _mode: i32) -> i32 { -1 }
+    /// `0x3602f0(handle)`: stop a sound; `0x3602a8(moby, handle)`: it still plays.
+    fn stop_sound(&mut self, _handle: i32) {}
+    fn sound_playing(&self, _handle: i32) -> bool { false }
 }
 
 /// The level's mobys (`0x1b1e1c`, 0x100 bytes each) with the class table and the collision grid.

@@ -58,6 +58,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
+    match rac2::gameplay::grind_paths(&g) {
+        Ok(p) => println!("grind paths: {} ({:?})", p.len(), p.iter().map(|g| (g.points.len(), g.looped)).collect::<Vec<_>>()),
+        Err(e) => println!("grind paths: {e}"),
+    }
     for name in ["moby_groups", "shared_data", "pvar_moby_links", "pvar_table", "pvar_data", "pvar_pointer_fixups"] {
         let s = rac2::gameplay::section(&g, name)?;
         println!("{name}: {:?} bytes, first words {:x?}", s.map(<[u8]>::len), s.map(|s| s.chunks(4).take(12).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect::<Vec<_>>()));

@@ -10,6 +10,7 @@ pub mod game;
 pub mod gui;
 pub mod hero;
 pub mod hud;
+pub mod level;
 pub mod moby;
 pub mod paths;
 pub mod rng;

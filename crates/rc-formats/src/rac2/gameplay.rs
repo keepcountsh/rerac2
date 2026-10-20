@@ -255,3 +255,48 @@ pub fn grind_paths(gameplay: &[u8]) -> Result<Vec<GrindPath>> {
     }
     Ok(out)
 }
+
+/// A volume record (sections 26..29 `cuboids` / `spheres` / `cylinders` / `pills`, 0x80 bytes): the matrix (its
+/// translation row at `+0x30`), the 3×4 inverse at `+0x40` (a point is inside when `inverse · (p − position)` is
+/// within ±1, L00 `0x321858`) and the words at `+0x70`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Volume {
+    pub matrix: [[f32; 4]; 4],
+    pub inverse: [[f32; 4]; 3],
+    pub extra: [f32; 4],
+}
+
+/// One volume section: `s32 count`, pad to 0x10, `count` × 0x80 (L00 `0x3012a0`: the tables `0x1b1f0c` cuboids,
+/// `0x1b1f14` spheres, `0x1b1f1c` cylinders).
+pub fn volumes(gameplay: &[u8], name: &str) -> Result<Vec<Volume>> {
+    let Some(s) = section(gameplay, name)? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let n = b.i32(0)?;
+    if !(0..=0x4000).contains(&n) { return invalid(format!("{name}: count {n}")); }
+    (0..n as usize)
+        .map(|i| {
+            let o = 0x10 + 0x80 * i;
+            let row = |k: usize| -> Result<[f32; 4]> { Ok([b.f32(o + k)?, b.f32(o + k + 4)?, b.f32(o + k + 8)?, b.f32(o + k + 12)?]) };
+            Ok(Volume { matrix: [row(0)?, row(0x10)?, row(0x20)?, row(0x30)?], inverse: [row(0x40)?, row(0x50)?, row(0x60)?], extra: row(0x70)? })
+        })
+        .collect()
+}
+
+/// The paths (section 30 `paths`): `s32 count, s32 data offset, s32 data bytes, pad`, `count` offsets into the data,
+/// each at a spline `{s32 n, pad[3], n × vec4}` (L00 `0x3012a0`: the table `0x1fda00`). The `w` of the points is
+/// what the file holds (objects that walk a path fill in the segment lengths).
+pub fn paths(gameplay: &[u8]) -> Result<Vec<Vec<[f32; 4]>>> {
+    let Some(s) = section(gameplay, "paths")? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let count = b.i32(0)?;
+    if !(0..=0x4000).contains(&count) { return invalid(format!("paths: count {count}")); }
+    let data = b.i32(4)? as usize;
+    (0..count as usize)
+        .map(|i| {
+            let p = data + b.i32(0x10 + 4 * i)? as usize;
+            let n = b.i32(p)?;
+            if !(0..=0x10000).contains(&n) { return invalid(format!("path {i}: {n} points")); }
+            (0..n as usize).map(|k| { let q = p + 0x10 + 0x10 * k; Ok([b.f32(q)?, b.f32(q + 4)?, b.f32(q + 8)?, b.f32(q + 12)?]) }).collect()
+        })
+        .collect()
+}
