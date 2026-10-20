@@ -157,8 +157,8 @@ impl Hero {
     pub fn cross_within(env: &Env, n: i32) -> bool { env.pad.pressed_within(button::CROSS, n).is_some() }
 
     /// `0x2ca270(n, no_plain)`: the jump chooser. ✕ within `n` ticks: with R1 held and the stick not forward, ✕ and a
-    /// d-pad press or stick flick within 12 ticks of each other (both within `n` + 12) → the flip 0xb; the strafing
-    /// flip (L1 / L2, `0x18b274`) is not ported; else the plain jump 7 unless `no_plain` (the caller picks 7 or 9
+    /// d-pad press or stick flick within 12 ticks of each other (both within `n` + 12) → the flip 0xb; strafing
+    /// (L2 / R2, `0x18b274`) at more than 0.9 of the stick, not ahead → the flip too; else the plain jump 7 unless `no_plain` (the caller picks 7 or 9
     /// itself). Returns whether a jump was set.
     pub fn try_jump(&mut self, anim: &mut dyn AnimCtl, env: &Env, n: i32, no_plain: bool) -> bool {
         if !Self::cross_within(env, n) { return false; }
@@ -166,13 +166,19 @@ impl Hero {
         if env.pad.held & button::R1 != 0 && 0 < gap && env.pad.combo(button::CROSS, FLIP_DIRS, n + gap, gap) {
             return self.set_state(anim, env, 0xb, true);
         }
+        // Strafing at more than 0.9 of the stick, not ahead: the strafe flip.
+        if self.strafe != 0 && 0.9 < self.stick_mag && self.flip_direction(env) != 2 { return self.set_state(anim, env, 0xb, true); }
         if no_plain { return false; }
         self.set_state(anim, env, 7, true)
     }
 
-    /// `0x2c3cf8`: the stick's direction against the facing, after `0x2b3af8(1, 0)` (strafing: the strafe's own, not
-    /// ported): 3 behind (within 45° of it), 1 right, 0 left, else 2 ahead.
+    /// `0x2c3cf8`: the stick's direction against the facing, after `0x2b3af8(1, 0)` (strafing: the stick's sector): 3
+    /// behind (within 45° of it), 1 right, 0 left, else 2 ahead.
     pub fn flip_direction(&mut self, env: &Env) -> i32 {
+        if self.strafe != 0 {
+            // Strafing: the stick's sector (left 0, right 1, ahead 2, back 3).
+            return self.stick_sector as i32;
+        }
         self.stick_target(env, 1.0, 0);
         let d = sub_rot(self.target_yaw, self.rot[2]);
         let q = std::f32::consts::FRAC_PI_4;

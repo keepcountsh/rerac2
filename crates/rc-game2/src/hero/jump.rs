@@ -25,7 +25,7 @@
 //! glide 8; ✕ against an armed wall (`wall.rs`): the wall jump 0x11; a ledge: 0x17; a rail (0x27) or a pole (0x71);
 //! hitting a wall in a pack jump: 0x77.
 //!
-//! Not ported: the strafe flips (`0x18b274`), the ice's air control (`0x2b96a0`), the splash and sounds, the landing
+//! Not ported: the ice's air control (`0x2b96a0`), the splash and sounds, the landing
 //! effects and camera jolt, the body lean `0x2b7c88`, the vehicle (`0x18c0d4` = 1) and the scripted timers
 //! `0x18a012` (→ 0x82) / `0x18a032` (the state refused).
 
@@ -225,7 +225,10 @@ impl Hero {
             let j = &mut self.jump;
             (j.flip_target_yaw, j.flip_stick_dir) = (self.target_yaw, self.stick_dir);
             j.flip_speed = if 0.025 < self.eff_len_xy { self.eff_len_xy } else { 0.0 };
-            (j.flip_push, j.f34c, j.f34e) = (0.0, 1, 1);
+            (j.flip_push, j.f34c, j.f34e, j.flip_strafe) = (0.0, 1, 1, false);
+            if self.strafe != 0 && 0.3 < self.stick_mag {
+                (j.flip_target_yaw, j.flip_stick_dir, j.flip_strafe, j.flip_push) = (self.strafe_yaw, self.strafe_dir, true, 1.0 / 12.0);
+            }
         }
         let j = &mut self.jump;
         if j.fallover_h == 0.0 { j.fallover_h = j.h * 1.5; }
@@ -520,15 +523,22 @@ impl Hero {
         self.stick_dir = j.flip_fwd;
         self.turn_to(0.04, 0.2, 0.116_355_3, 0);
         self.speed = if j.flip_dir == 3 { 0.0 } else { j.flip_speed };
-        let t = if j.descending == 0 || 0xb < j.land_eta { 0.07 } else { 0.0 };
-        approach(t, 0.002_222_222_3, &mut self.jump.flip_push);
+        if j.flip_strafe {
+            approach((self.stick_mag / 12.0).max(1.0 / 30.0), 0.010_277_778, &mut self.jump.flip_push);
+            self.speed = self.eff_len_xy;
+        } else {
+            let t = if j.descending == 0 || 0xb < j.land_eta { 0.07 } else { 0.0 };
+            approach(t, 0.002_222_222_3, &mut self.jump.flip_push);
+        }
         let (s, c) = j.flip_target_yaw.sin_cos();
         self.vel[0] = c * self.jump.flip_push;
         self.vel[1] = s * self.jump.flip_push;
-        let carry = j.flip_speed * rot_dist(j.flip_yaw, j.flip_target_yaw).sin();
-        let (s, c) = j.flip_yaw.sin_cos();
-        self.vel[0] += c * carry;
-        self.vel[1] += s * carry;
+        if !j.flip_strafe {
+            let carry = j.flip_speed * rot_dist(j.flip_yaw, j.flip_target_yaw).sin();
+            let (s, c) = j.flip_yaw.sin_cos();
+            self.vel[0] += c * carry;
+            self.vel[1] += s * carry;
+        }
         self.drag(0.7, 0.0);
         self.momentum = self.drag;
     }

@@ -118,6 +118,8 @@ pub struct JumpBlock {
     pub flip_stick_dir: V3,
     pub flip_speed: f32,
     pub flip_push: f32,
+    /// `0x18a34d`: the strafing flip (the stick's strafe yaw and direction instead, the push to stick · 1/12).
+    pub flip_strafe: bool,
     /// `0x18a2dc`: the climb's forward push.
     pub climb_push: f32,
     /// The scripted vertical curve (`0x18a2bd` on): `0x18a264` the table (per row: a base / 3600 when not −999999,
