@@ -54,6 +54,7 @@ impl Hero {
             Module::Damage => self.damage_entry(anim, env, id, play),
             Module::Pack => self.pack_entry(anim, env, id, play),
             Module::Misc => self.misc_entry(anim, env, id, play),
+            Module::Swing => self.swing_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -81,6 +82,7 @@ impl Hero {
             Module::Damage => self.phys_damage(env, anim),
             Module::Pack => self.phys_pack(env, anim),
             Module::Misc => if self.state != 0x26 { self.phys_misc(env, anim) },
+            Module::Swing => self.phys_swing(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -93,6 +95,7 @@ impl Hero {
     pub fn transitions(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
         // The prologue: the hit intake, no health, the fall out of the level; the item trigger (`0x2c96d0`: the wrench).
         if self.transitions_prologue(env, anim) { return; }
+        if self.swingshot_trigger(env, anim) { return; }
         if self.melee_trigger(env, anim) { return; }
         let next = match module_of(self.state) {
             Module::Ground => self.trans_ground(env, anim),
@@ -106,6 +109,7 @@ impl Hero {
             Module::Pack => self.trans_pack(env, anim),
             Module::Misc if self.state == 0x26 => None,
             Module::Misc => self.trans_misc(env, anim),
+            Module::Swing => self.trans_swing(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.

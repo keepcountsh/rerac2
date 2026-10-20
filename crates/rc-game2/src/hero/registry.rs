@@ -24,6 +24,8 @@ pub enum Module {
     Jump,
     /// `pack.rs`: the glide 8 (group 5).
     Pack,
+    /// `swing.rs`: the Swingshot (group 0xd: 0x23, 0x24, 0x25).
+    Swing,
     /// `misc.rs`: the stagger 0x26 / 0x2f, the slide 0x30, the mud 0x76, the bonk 0x77.
     Misc,
     /// Not ported yet.
@@ -53,7 +55,7 @@ pub const STATES: &[StateInfo] = &[
     s(0x15, 6, Melee, true), s(0x16, 7, Damage, true), s(0x17, 3, Ledge, true), s(0x18, 3, Ledge, true),
     s(0x19, 3, Ledge, true), s(0x1a, 3, Ledge, true), s(0x1b, 4, Jump, true), s(0x1c, 9, Unported, false),
     s(0x1d, 0, Ground, true), s(0x1e, 9, Unported, false), s(0x1f, -1, Unported, false), s(0x22, 6, Melee, true),
-    s(0x23, 0xd, Unported, false), s(0x24, 0xd, Unported, false), s(0x25, 0xd, Unported, false), s(0x26, 8, Misc, true),
+    s(0x23, 0xd, Swing, true), s(0x24, 0xd, Swing, true), s(0x25, 0xd, Swing, true), s(0x26, 8, Misc, true),
     s(0x27, 0xf, Unported, false), s(0x28, 0xf, Unported, false), s(0x29, 0xf, Unported, false), s(0x2a, 0xf, Unported, false),
     s(0x2b, 0xe, Unported, false), s(0x2c, 2, Air, true), s(0x2e, 1, Walk, true), s(0x2f, 8, Misc, true),
     s(0x30, 0x10, Misc, true), s(0x31, 9, Unported, false), s(0x32, 0x11, Unported, false), s(0x33, 0x11, Unported, false),

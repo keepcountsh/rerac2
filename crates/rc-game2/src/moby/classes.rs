@@ -16,3 +16,23 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         _ => None,
     }
 }
+
+/// The Swingshot nodes (class 0x2f6) for the hero's search `0x2c4098`: shown ones (mode 0x1000) with their pvars
+/// `+0x68`[0] in use, [4] radius, [8] kind, [0x20] range.
+pub fn swing_nodes(w: &super::MobyWorld) -> Vec<crate::hero::swing::Node> {
+    w.mobys
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.o_class == 0x2f6 && m.state < 0x80 && m.mode & 0x1000 != 0)
+        .map(|(id, m)| crate::hero::swing::Node {
+            id,
+            pos: m.pos,
+            busy: m.pv_i(0) != 0,
+            radius: m.pv_f(4),
+            kind: m.pv_f(8),
+            range: m.pv_f(0x20),
+            drawn: m.drawn != 0,
+            hidden: m.mode & 1 != 0,
+        })
+        .collect()
+}

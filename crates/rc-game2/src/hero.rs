@@ -31,6 +31,7 @@ pub mod physics;
 pub mod registry;
 pub mod states;
 pub mod surface;
+pub mod swing;
 pub mod walk;
 pub mod wall;
 
@@ -320,6 +321,7 @@ pub struct Hero {
     pub stagger: i16,
     pub rot_vel: [f32; 2],
     pub bonk_yaw: f32,
+    pub swing: swing::SwingBlock,
     /// Hits Ratchet's body deals this tick (the Thruster-Pack's ram), delivered by the item pass.
     pub hits_out: Vec<HeroHit>,
     /// States the port has not got, reported once each.
@@ -358,7 +360,7 @@ impl Hero {
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
             bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
-            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, hits_out: Vec::new(), unported_seen: Vec::new(),
+            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, swing: Default::default(), hits_out: Vec::new(), unported_seen: Vec::new(),
         }
     }
 
