@@ -131,12 +131,23 @@ fn tick(
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     let targets = mobys.world.targets(p.camera.pos);
+    // Ratchet's hit record (his moby's `+0xa8`) with its source.
+    let hit = mobys.hero_moby.and_then(|i| mobys.world.hit_message(i)).map(|rec| {
+        let src = rec.tmpl.source.and_then(|s| mobys.world.mobys.get(s));
+        rc_game2::hero::damage::HitIn { rec, source_pos: src.map(|m| m.pos), source_class: src.map_or(-1, |m| m.o_class) }
+    });
     {
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let env = Env { coll, pad: &p.pad, cam_yaw: p.camera.yaw(), cam_rows: p.camera.rows, mirror: false, scene: scene.as_ref(), hero_moby: mobys.hero_moby, targets: &targets };
+        let death_z = lv.death_z.is_finite().then_some(lv.death_z);
+        let env = Env { coll, pad: &p.pad, cam_yaw: p.camera.yaw(), cam_rows: p.camera.rows, mirror: false, scene: scene.as_ref(), hero_moby: mobys.hero_moby, targets: &targets, hit, death_z };
         let mut ctl = p.anim.ctl(class);
         hero_update(&mut p.hero, &env, &mut ctl);
     }
+    if let Some(i) = mobys.hero_moby {
+        if p.hero.damage.took || hit.is_some() { mobys.world.clear_hit(i); }
+    }
+    p.hero.damage.took = false;
+    if let Some(t) = p.hero.show_health.take() { p.game.show_health = Some(t); }
     // `0x2a6dd0`'s write-back: Ratchet's moby takes his position, angles and rows.
     if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
         (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
@@ -191,6 +202,18 @@ fn tick(
     }
     commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR });
     p.ticks += 1;
+    // `0x2b31f0`'s respawn request: Ratchet back at his start with full health (the checkpoints and the fade are not
+    // ported); the world keeps its state.
+    if p.hero.damage.dead {
+        let inst = &lv.mobys.instances[p.instance];
+        let armour = p.hero.damage.armour;
+        p.hero = Hero::spawn(inst.position, inst.rotation[2]);
+        p.hero.hp = p.game.max_health;
+        p.hero.damage.armour = armour;
+        p.anim = RatchetAnim::new(&lv.mobys.anim[p.class]);
+        p.camera = FollowCamera::new(&cam_input(&p.hero, lv.collision.as_ref(), [0.0; 2]));
+        p.game.show_health = Some(0x168);
+    }
 }
 
 /// The in-game HUD's layer: the front end's texture set (its fonts, slot 1) and the level's HUD icons after it.
@@ -285,7 +308,8 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     let class = m.classes.iter().position(|c| c.o_class == 0)?;
     let inst = &m.instances[instance];
     let scale = m.placed.get(instance).copied().flatten().map_or(1.0, |pl| pl.scale);
-    let hero = Hero::spawn(inst.position, inst.rotation[2]);
+    let mut hero = Hero::spawn(inst.position, inst.rotation[2]);
+    hero.hp = rc_game2::game::GameState::default().max_health;
     let camera = FollowCamera::new(&cam_input(&hero, lv.collision.as_ref(), [0.0; 2]));
     println!("rac2: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {

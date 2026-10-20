@@ -19,6 +19,7 @@
 //! Field names are ours; each carries its L00 address.
 
 pub mod air;
+pub mod damage;
 pub mod ground;
 pub mod items;
 pub mod jump;
@@ -242,6 +243,11 @@ pub struct Hero {
     pub ledge: ledge::LedgeBlock,
     /// `0x18aa58`: Ratchet's animation frame as the last advance left it (the probes read it).
     pub anim_frame: f32,
+    /// The damage block; the damage of the hit the intake took (the hurt's entry applies it); this tick's request
+    /// to show the health (`0x30d9f8(n)`).
+    pub damage: damage::DamageBlock,
+    pub pending_damage: Option<i32>,
+    pub show_health: Option<i32>,
     /// States the port has not got, reported once each.
     pub unported_seen: Vec<i32>,
 }
@@ -265,7 +271,7 @@ impl Hero {
             quick_turn: 0, run_dir: [1.0, 0.0, 0.0], run_yaw: 0.0, anim_speed: 1.0, state: 0, substate: 0, group: 0,
             prev_state: 0, prev_group: 0, prev2_state: 0, prev2_group: 0, prev_timer: 0, cam_mode: 0, mode: 0, jump: JumpBlock { air_turn: 0.250_011_4, terminal: 0.833_333_3, ..JumpBlock::default() },
             pos_hist: [[0.0; 3]; HISTORY], pos_hist_idx: 0, pos_hist_count: 0, yaw_hist: [0.0; HISTORY], yaw_hist_idx: 0,
-            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, unported_seen: Vec::new(),
+            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None, unported_seen: Vec::new(),
         }
     }
 
@@ -335,6 +341,7 @@ impl Hero {
         if self.land_lag != 0 { self.land_lag -= 1; }
         if self.jump.landed != 0 { self.jump.landed = self.jump.landed.saturating_add(1); }
         if 0 < self.ledge.cooldown { self.ledge.cooldown -= 1; }
+        if 0 < self.damage.invincible { self.damage.invincible -= 1; }
     }
 
     /// `0x2ae0e8(n)`: the yaw `n` ticks before the newest in the history (at most 31, at most what it holds).

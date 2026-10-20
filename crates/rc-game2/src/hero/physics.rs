@@ -53,6 +53,9 @@ pub struct Env<'a> {
     pub hero_moby: Option<usize>,
     /// The target list (`0x1fac60`) as the moby loop left it, for the aims.
     pub targets: &'a [super::melee::Target],
+    /// Ratchet's hit record this tick (his moby's `+0xa8`) and the level's death height (`0x1b1a68`).
+    pub hit: Option<super::damage::HitIn>,
+    pub death_z: Option<f32>,
 }
 
 impl Env<'_> {
