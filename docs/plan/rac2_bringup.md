@@ -223,14 +223,39 @@ Ratchet's animation player (SetAnim `0x2d2508` = R&C1's `0x247a90`). New in R&C2
 Ratchet's mesh is the armour's (`rac2::armor`), and his sequences are compressed (frame pointers with 0xf in the top
 nibble, decoded by `0x313fa8`: `moby_anim::decode_compressed_frame`).
 
-**Done:** idle, walk / run (the walk ↔ run selector `0x2ca358`), stop, crouch, fall with its landings, jump 7 and run
-jump 9 (height ramp, windup, air control `0x2b6cd0` / `0x2b62a0`, landing `0x2cab40`), the double jump 0xe and the
-flip 0xb. R&C2 reuses R&C1's id 0xb (R&C1's long jump) for the crouch flip: R1, a direction and ✕ together, its
-direction picked by `0x2c3cf8`, also chained on landing. R&C2's long jumps (10, 0xd, 0xf, 0x10) need the Heli-Pack or
-Thruster-Pack (`0x2cadb0`), which Ratchet does not have on Aranos's opening. Engine: crate::rac2_play
-(pad, hero, camera, Ratchet's instance and pose); the follow camera (§6.5). **Not yet:** every other state (the pack jumps,
-the wrench, swingshot, gadgets, water, ledges, damage / death), the moby collision of the queries, the
-lighting of Ratchet, his sounds, Clank on his back.
+**Done (2026-10-21): every state SetState has a case for.** `rc_game2::hero::registry` lists them by module:
+ground (0, 1, 3, 4, 0x1d), walk (2, 0x2e ice, 0x70 wading), air (6, 0x2c tumble), jump (7, 9, 10, 0xb..0x12, 0x1b, 0x38,
+0x45, 0x48, 0x5b, 0x66, 0x6e, 0x81, 0x89, 0x92), pack (8 glide), melee (0x13..0x15, 0x1f, 0x22, 0x6d, 0x83, 0x93),
+ledge (0x17..0x1a), damage (0x16, 0x39, 0x65, 0x67, 0x74, 0x78..0x7d, 0x7f, 0x8c), water (0x32..0x36, 0x72, 0x73), swing
+(0x23..0x25, 0x2b, 0x8a, 0x8b), grind (0x27..0x2a, 0x3e, 0x71), Clank's body (0x3f..0x4e), scripts (0x1c, 0x1e, 0x31,
+0x37, 0x3c, 0x3d, 0x60..0x64, 0x6f, 0x75), gear (0x7b, 0x82, 0x85, 0x86), misc (0x26, 0x2f, 0x30, 0x76, 0x77). With
+them the probes (ledge `0x2ad000`, wall jump `0x2ac5f0`, rail `0x2adbb8`, pole `0x2adda8`, ahead `0x2c3068`, the
+ground probe's liquids `0x2b4a08`), the surface check `0x2aca80`, the prologue's water checks, strafing and the
+strafe flip, the hit intake and the health limit from the XP (`0x2d6258`). Objects ask for states through
+`Hero::request_state` / `script_walk_to`. Clank's packs read `GameState::clank` / `thruster` (off on Aranos's
+opening).
+
+**Not yet:** the weapons and gadgets as hand items (the trigger cases other than the wrench and the Swingshot), the
+lock-on `0x2cb2e0`, the quick select, the vehicles' bodies (`0x18c0d4` 2 / 3), the sounds, the effects (sparks,
+splashes, bubbles) and the body lean.
+
+### 6.6 Aranos's objects (milestone G, 2026-10-21)
+
+The level's update table (`lvl.vtbl` at `0x2a2e80`, 233 records `{o_class, update, 0x2a3978}`) covers the level's
+own classes and every weapon and gadget; a class not in it (or with a null update) has none. Of the 76 classes with
+instances on Aranos, 50 have an update. Ported (`rc_game2::moby::classes`): the wrench 0x47, the crates 500 / 501 /
+511, the bolts 13..19, and in `props`: 0x0ac3, 0x0ac5 / 0x0ac6, 0x0ac8, 0x0c4c (the sky ships), 0x0c63 (a mission
+area), 0x0c8b (the death height), 0x0d1e (searchlights), 0x1143 / 0x12fa (breakables), 0x12f5, 0x12f9 (a barrier
+held by two objects), 0x132d (the sun flare's object). Shared services: the volumes and paths (`rc_game2::level`),
+moby states `0x31b8d0`, the sound hooks of the moby host.
+
+**To do**, by size of the update (lines of the export): 0x0919 camera volume (42), 0x0cda steam (75), 0x0c8c
+interior swap (80), 0x0c5c puffs (85), 0x0c66 / 0x0a38 carriers (the group attach `0x3246c0` / `0x324bd0`, which
+moves ties and shrubs too), 0x0340 (65), 0x0ce9 (110), 0x0325 spawn points (134), 0x02a7 chute (144), 0x0ac7 (145),
+0x0ddf (149), 0x0c22 (151), 0x0ac0 (172), 0x0ac9 family (187, seven classes), 0x0f13 (187), 0x1330 (204), 0x0ac4 (209),
+0x09c7 (238), 0x0adb (249), 0x0ac2 (290), 0x0aca (295), 0x0ac1 (302), 0x099c (319), 0x0b0b (783), 0x0b0a, 0x0b51,
+0x0f6e and the 0x41b0xx stubs (not in the export: decompile them in Ghidra). The visual effects they start
+(particles, lights, debris, the lens flare) wait for an effects pass.
 
 ### 6.5 The follow camera (milestone F, 2026-10-16)
 
