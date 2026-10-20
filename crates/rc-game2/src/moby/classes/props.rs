@@ -130,13 +130,57 @@ pub fn update_0ac8(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
 }
 
-/// 0x0d1e (`0x3fa808`, the searchlights): sequence 1, the yaw turning 0.0524 a tick; two light cones out of it
-/// (`0x33f550`, the engine's lights: not drawn yet).
-pub fn update_0d1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
-    if w.mobys[id].state == 0 {
-        ctx.host.set_anim(&w.mobys[id], 1, 0, 0);
-        w.mobys[id].state = 1;
-    }
+/// 0x0d1e (`0x3fa808`, the searchlights): the pitch turning 0.0524 a tick; two light cones out of it (`0x33f550`,
+/// the engine's lights: not drawn yet).
+pub fn update_0d1e(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
+    if w.mobys[id].state == 0 { w.mobys[id].set_state(1, -1); }
     let m = &mut w.mobys[id];
     if m.state == 1 { m.rot[1] = crate::hero::physics::add_rot(m.rot[1], 0.052_359_88); }
+}
+
+/// 0x12f9 (`0x383bb0`): a barrier held by two objects (the moby indices `+0x68`[4] / [8]): once either is gone (state
+/// 0xfe / 0xfd) it breaks (debris `0x327498`: not drawn; sound 0) and is deleted.
+pub fn update_12f9(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    match w.mobys[id].state {
+        0 => w.mobys[id].set_state(1, -1),
+        1 => {
+            let (a, b) = (w.mobys[id].pv_i(4), w.mobys[id].pv_i(8));
+            if a < 1 || b < 1 { return; }
+            let alive = |i: i32| w.mobys.get(i as usize).is_some_and(|m| m.state != 0xfe && m.state != 0xfd);
+            if alive(a) && alive(b) { return; }
+            w.mobys[id].set_state(2, -1);
+        }
+        2 => {
+            ctx.host.play_sound(&w.mobys[id], 0, 0);
+            w.delete(id);
+        }
+        _ => {}
+    }
+}
+
+/// The breakables (0x12fa the lamps `0x383ce0`, 0x1143 `0x414368`): a hit with the flags 0x4010000 (the wrench and
+/// blasts) while `+0x68`[0] = 0 breaks them (state 2: the shards `0x32b580` and the burst `0x2ecfb0`, not drawn),
+/// then they are deleted. The lamp's light (`0x33f550`) is the engine's.
+pub fn update_breakable(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
+    match w.mobys[id].state {
+        0 => w.mobys[id].set_state(1, -1),
+        1 => {
+            if let Some(h) = w.hit_message(id) {
+                if h.tmpl.flags & 0x0401_0000 != 0 && w.mobys[id].pv_i(0) == 0 { w.mobys[id].set_state(2, -1); }
+            }
+            w.clear_hit(id);
+        }
+        2 => w.delete(id),
+        _ => {}
+    }
+}
+
+/// 0x132d (`0x383eb8`): the sun's lens flare (14 rings, `0x3842f8` drawn when the sun `+0x68` is on screen and not
+/// hidden): not drawn yet; only its state.
+pub fn update_132d(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    if m.state == 0 {
+        m.state = 1;
+        m.update_dist = 0xff;
+    }
 }
