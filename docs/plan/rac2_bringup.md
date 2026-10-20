@@ -283,6 +283,11 @@ and the checkpoint, the help requests, the hero's carry on movers (`0x322668`, `
 0x0ce9 (a tie group's colours pulsing, `0x3701d0`). 0x0340 acts only with Ratchet in the ship (`0x18c0b4` = 0x1c,
 the class 0xac), never on Aranos.
 
+**The help panel** (`rc_game2::help`, drawn with the HUD): the requests the objects make (`0x2f5270`), the
+panel's states `0x2f5680` (open, grow, fade in, show for 7 ticks a character, △ dismisses and counts in the slot,
+fade out, shrink), the word wrap `0x2ea908` and the rounded box `0x2e9548`, over the level's English help texts.
+Not yet: the border sprites (`0x42f3b0`), the help voice, the HUD hiding while it shows.
+
 **Engine gaps the objects left** (the game side is done): the ties and shrubs the carriers move
 (`MobyWorld::moved_ties` / `moved_shrubs` with their new matrices in `ties` / `shrubs`: the tie and shrub instance
 buffers, the tie LOD spheres and the shrub culls follow nothing yet) and the ties hidden by 0x0ddf / 0x09c7
