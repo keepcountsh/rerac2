@@ -2,6 +2,7 @@
 //! update, 0x2a3978}` up to o_class −1, written to the slot table `0x1da240` by `0x32e1f8`) as Rust ports.
 
 pub mod bolt;
+pub mod carriers;
 pub mod chute;
 pub mod crate_;
 pub mod gate;
@@ -20,6 +21,8 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x12f5 => Some(props::update_12f5),
         0x0c8b => Some(props::update_0c8b),
         0x0ac0 => Some(props::update_0ac0),
+        0x0a38 => Some(carriers::update_0a38),
+        0x0c66 => Some(carriers::update_0c66),
         0x0ac1 => Some(props::update_0ac1),
         0x0ac2 => Some(props::update_0ac2),
         0x0aca => Some(props::update_0aca),

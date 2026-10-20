@@ -31,12 +31,12 @@ pub const SECTIONS: [(&str, &str); HEADER_WORDS] = [
     ("help_korean", "content"),
     ("tie_classes", "content"),
     ("tie_instances", "content"),
-    // New in R&C2: a count (0x1b on Aranos) and 0x800-byte records.
-    ("tie_groups", "order"),
+    // New in R&C2: the tie groups ([`instance_groups`]; 0x1b on Aranos).
+    ("tie_groups", "content"),
     ("shrub_classes", "content"),
     ("shrub_instances", "content"),
-    // New in R&C2: a count (1 on Aranos).
-    ("shrub_groups", "order"),
+    // New in R&C2: the shrub groups ([`instance_groups`]; 1 on Aranos).
+    ("shrub_groups", "content"),
     ("moby_classes", "content"),
     ("moby_instances", "content"),
     ("moby_groups", "order"),
@@ -202,6 +202,33 @@ pub fn moby_groups(gameplay: &[u8]) -> Result<Vec<Vec<u16>>> {
     let count = b.i32(0)?;
     if !(0..=0xf0).contains(&count) { return invalid(format!("moby groups: count {count}")); }
     let lists = 0x10 + 4 * count as usize;
+    let mut out = Vec::with_capacity(count as usize);
+    for g in 0..count as usize {
+        let off = b.i32(0x10 + 4 * g)?;
+        let mut members = Vec::new();
+        if off >= 0 {
+            let mut p = lists + off as usize;
+            loop {
+                let v = b.u16(p)?;
+                members.push(v & 0x7fff);
+                if v & 0x8000 != 0 { break; }
+                p += 2;
+            }
+        }
+        out.push(members);
+    }
+    Ok(out)
+}
+
+/// The tie and shrub groups (sections 14 `tie_groups` and 17 `shrub_groups`): `s32 count, s32 bytes, pad[2]`, then
+/// `count` offsets (−1 none) into the lists, which start on the next 16-byte boundary; a list is u16 instance indices,
+/// the last with bit 15 (L00 `0x3012a0`; the tables `0x1a9014` / `0x1a901c`).
+pub fn instance_groups(gameplay: &[u8], name: &str) -> Result<Vec<Vec<u16>>> {
+    let Some(s) = section(gameplay, name)? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let count = b.i32(0)?;
+    if !(0..=0x400).contains(&count) { return invalid(format!("{name}: count {count}")); }
+    let lists = (0x10 + 4 * count as usize + 0xf) & !0xf;
     let mut out = Vec::with_capacity(count as usize);
     for g in 0..count as usize {
         let off = b.i32(0x10 + 4 * g)?;

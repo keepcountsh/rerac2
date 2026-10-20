@@ -33,6 +33,7 @@
 //! pvar pool.
 
 pub mod classes;
+pub mod attach;
 pub mod bolts;
 pub mod hits;
 
@@ -361,6 +362,17 @@ pub struct MobyWorld {
     pub hits: hits::HitLog,
     /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
     pub groups: Vec<Vec<usize>>,
+    /// The ties' and shrubs' world matrices (`0x1b249c` / `0x1b2380`, 0x40 each: rows, position) and their groups
+    /// (`0x1a9014` / `0x1a901c`), for the carriers ([`attach`]).
+    pub ties: Vec<[[f32; 4]; 4]>,
+    pub shrubs: Vec<[[f32; 4]; 4]>,
+    pub tie_groups: Vec<Vec<u16>>,
+    pub shrub_groups: Vec<Vec<u16>>,
+    /// The carriers' members by carrier ([`attach`]), and the ties / shrubs a carrier moved since the engine last
+    /// took them.
+    pub attached: std::collections::HashMap<usize, attach::Carrier>,
+    pub moved_ties: Vec<usize>,
+    pub moved_shrubs: Vec<usize>,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).
@@ -372,13 +384,18 @@ pub struct SpawnData {
     /// `(pvar index, offset)`: a pointer relative to its own block (kept relative here: the classes read offsets).
     pub fixups: Vec<(usize, usize)>,
     pub groups: Vec<Vec<u16>>,
+    /// The ties' and shrubs' matrices and groups ([`MobyWorld::ties`]).
+    pub ties: Vec<[[f32; 4]; 4]>,
+    pub shrubs: Vec<[[f32; 4]; 4]>,
+    pub tie_groups: Vec<Vec<u16>>,
+    pub shrub_groups: Vec<Vec<u16>>,
 }
 
 impl MobyWorld {
     /// The class table from the level's classes in core-index order (slot = that order).
     pub fn new(mut classes: Vec<ClassInfo>) -> MobyWorld {
         for (i, c) in classes.iter_mut().enumerate() { c.slot = i.min(CLASS_SLOTS - 1) as u8; }
-        MobyWorld { mobys: Vec::new(), classes, grid: MobyGrid::new(), changed: true, hits: Default::default(), groups: Vec::new() }
+        MobyWorld { mobys: Vec::new(), classes, grid: MobyGrid::new(), changed: true, hits: Default::default(), groups: Vec::new(), ..Default::default() }
     }
 
     pub fn class(&self, o_class: i16) -> Option<&ClassInfo> { self.classes.iter().find(|c| c.o_class == o_class) }
@@ -442,6 +459,10 @@ impl MobyWorld {
             if class.is_some() { self.rebuild(id, host); }
         }
         self.groups = data.groups.iter().map(|g| g.iter().filter_map(|&r| map.get(r as usize).and_then(|&x| usize::try_from(x).ok())).collect()).collect();
+        self.ties = data.ties.clone();
+        self.shrubs = data.shrubs.clone();
+        self.tie_groups = data.tie_groups.clone();
+        self.shrub_groups = data.shrub_groups.clone();
     }
 
     /// `CreateMoby(o_class)` `0x311320`: the first free slot (state ≥ 0xfe), initialised, with zeroed pvars.

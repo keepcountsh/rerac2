@@ -75,6 +75,8 @@ pub struct GameState {
     pub help_counts: Vec<i16>,
     /// `0x18c310`: Ratchet in one of the tutorial's no-item areas.
     pub no_item_area: bool,
+    /// `0x1c92c0`: the level's variant (the scenes and the level code set it; 0 on a load).
+    pub variant: i32,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -90,7 +92,7 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false,
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0,
         }
     }
 }

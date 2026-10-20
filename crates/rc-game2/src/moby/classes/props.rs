@@ -530,7 +530,7 @@ pub fn update_0ac4(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 
 /// `0x324430(amp, step, base, m, &phase, &last)`: the height bobs — `base + sin(phase)·amp` (base ≤ 0: by the
 /// change from the last tick's offset), the phase stepped.
-fn bob(m: &mut crate::moby::Moby, amp: f32, step: f32, base: f32, phase: usize, last: usize) {
+pub(super) fn bob(m: &mut crate::moby::Moby, amp: f32, step: f32, base: f32, phase: usize, last: usize) {
     let ph = crate::hero::physics::add_rot(m.pv_f(phase), step);
     m.set_pv_f(phase, ph);
     if 0.0 < base {
@@ -545,7 +545,7 @@ fn bob(m: &mut crate::moby::Moby, amp: f32, step: f32, base: f32, phase: usize, 
 
 /// `0x3244e8(tilt, step_a, step_b, m, &a, &b)`: the pitch / roll sway (`tilt·sin a·sin b`, `tilt·sin a·cos b`), the
 /// phases stepped.
-fn sway(m: &mut crate::moby::Moby, tilt: f32, step_a: f32, step_b: f32, a: usize, b: usize) {
+pub(super) fn sway(m: &mut crate::moby::Moby, tilt: f32, step_a: f32, step_b: f32, a: usize, b: usize) {
     let (pa, pb) = (m.pv_f(a), m.pv_f(b));
     m.rot[0] = tilt * pa.sin() * pb.sin();
     m.rot[1] = tilt * pa.sin() * pb.cos();
