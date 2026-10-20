@@ -21,6 +21,10 @@ use super::registry::{module_of, Module};
 use super::Hero;
 use rc_game::hero::anim::AnimCtl;
 
+/// The states whose entries set `0x18c0d7` (no △ menu) and `0x18c0dc` (no item use).
+const NO_MENU: [i32; 16] = [0x11, 0x12, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x67, 0x72, 0x73, 0x75, 0x7c, 0x7f];
+const NO_ITEMS: [i32; 12] = [0x1b, 0x1c, 0x24, 0x25, 0x2b, 0x31, 0x37, 0x62, 0x6f, 0x75, 0x8b, 0x8c];
+
 /// SetState's entry result: an animation to set after the entry (`SetAnim(blend, seq, frame)` at the switch's end),
 /// nothing more, or a SetState return value of its own (the entry ran a nested SetState or refused).
 pub enum Entry {
@@ -44,6 +48,11 @@ impl Hero {
         self.substate = 0;
         self.state = id;
         self.cam_mode = 0;
+        // `0x18c0dc` (the items kept away) and `0x18c0d7` (no △ menu) clear on every change; the entries set them.
+        self.items.no_use = 0;
+        if self.mode == 0 { self.no_menu = 0; }
+        if NO_MENU.contains(&id) { self.no_menu = 1; }
+        if NO_ITEMS.contains(&id) { self.items.no_use = 1; }
         let entry = match module_of(id) {
             Module::Ground => self.ground_entry(anim, env, id, play),
             Module::Walk => self.walk_entry(anim, env, id, play),
@@ -55,6 +64,7 @@ impl Hero {
             Module::Pack => self.pack_entry(anim, env, id, play),
             Module::Misc => self.misc_entry(anim, env, id, play),
             Module::Swing => self.swing_entry(anim, env, id, play),
+            Module::Water => self.water_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -62,6 +72,7 @@ impl Hero {
             Entry::Anim(blend, seq, frame) => if play { self.set_anim(anim, blend, seq, frame) },
             Entry::Done => {}
         }
+        if self.group == 0x14 { self.items.no_use = 1; }
         if self.group != self.prev_group { self.group_timer = 0; }
         self.timer = 0;
         self.substate_timer = 0;
@@ -83,6 +94,7 @@ impl Hero {
             Module::Pack => self.phys_pack(env, anim),
             Module::Misc => if self.state != 0x26 { self.phys_misc(env, anim) },
             Module::Swing => self.phys_swing(env, anim),
+            Module::Water => self.phys_water(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -97,6 +109,13 @@ impl Hero {
         if self.transitions_prologue(env, anim) { return; }
         if self.swingshot_trigger(env, anim) { return; }
         if self.melee_trigger(env, anim) { return; }
+        if self.water_checks(env, anim) { return; }
+        // △ (`0x2f79d8`, the quick select, is the menu's): the health and bolt counters show.
+        if env.pad.pressed & rc_game::pad::button::TRIANGLE != 0 && self.no_menu == 0 && self.items.no_use == 0 {
+            self.show_health = Some(0x168);
+            self.show_bolts = Some(0xb4);
+        }
+        if self.fall_out_check(env, anim) { return; }
         let next = match module_of(self.state) {
             Module::Ground => self.trans_ground(env, anim),
             Module::Walk => self.trans_walk(env, anim),
@@ -110,6 +129,7 @@ impl Hero {
             Module::Misc if self.state == 0x26 => None,
             Module::Misc => self.trans_misc(env, anim),
             Module::Swing => self.trans_swing(env, anim),
+            Module::Water => self.trans_water(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.

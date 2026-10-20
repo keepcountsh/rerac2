@@ -474,11 +474,13 @@ impl Hero {
         }
     }
 
-    /// `0x2b4a08`: the ground probe. A line (flags 2) from 2.2 (walk group 2: 2.9) above the feet to 48 below finds
-    /// the ground point `0x18a0f0`, its z `0x18a138`, the height above it `0x18a13c` (32 without; negative when the
-    /// ground is above), the normal `0x18a0c0` and slope `0x18a140`; under 0.02 with a slope ≤ 50° the air ticks
-    /// `0x18a16e` reset. Water and liquid surfaces (0, 0xd, 3, 0xb), the moby under the feet and the side probes for
-    /// the model's tilt are not ported.
+    /// `0x2b4a08`: the ground probe. A line (flags 2) from 2.2 radii (walk group 2: 2.9) above the feet to 48 below
+    /// finds the ground point `0x18a0f0`, its z `0x18a138`, the height above it `0x18a13c` (32 without; negative when
+    /// the ground is above), the normal `0x18a0c0`, its yaw `0x18a14c` and slope `0x18a140`; under 0.02 with a slope ≤
+    /// 50° the air ticks `0x18a16e` reset. The first hit's surface is the one under the feet (`0x18b2b0`); a water
+    /// surface (0) sets the water's height `0x18a150` and the line goes on through it (flags 0x24; nothing below: no
+    /// ground), a deep liquid (0xd) and quicksand (3) set theirs and the line goes on from just under them (flags 4), a
+    /// pit (0xb) sets its height. The side probes for the model's tilt (`0x2b8f50`) are not ported.
     pub fn ground_probe(&mut self, env: &Env) {
         self.air_ticks = self.air_ticks.saturating_add(1);
         self.f16c = self.f16c.saturating_add(1);
@@ -490,16 +492,39 @@ impl Hero {
         self.ground_moby = None;
         self.ground_class = -1;
         self.on_moby = false;
-        let up = if self.group == 2 { 2.9 } else { 2.2 };
-        let a = add(self.pos, [0.0, 0.0, up]);
+        if self.water.under != 0 { self.water.under += 1; }
+        let up = self.cap_radius * if self.group == 2 { 2.9 } else { 2.2 };
+        let mut a = add(self.pos, [0.0, 0.0, up]);
         let b = add(self.pos, [0.0, 0.0, -48.0]);
-        if let Some(o) = env.line(a, b, 2) {
+        let mut hit = env.line(a, b, 2);
+        if let Some(o) = hit {
             self.surface = o.surface_id();
-            self.ground_moby = o.moby;
-            self.ground_yaw = atan2(o.normal[0], o.normal[1]);
-            self.ground_class = o.moby.and_then(|m| env.classes.get(m).copied()).unwrap_or(-1);
-            self.on_moby = o.moby.is_some();
+            match self.surface {
+                0 => {
+                    self.surf.water_z = o.point[2];
+                    if self.pos[2] < self.surf.water_z && self.water.under < 1 { self.water.under = 1; }
+                    hit = env.line(a, b, 0x24);
+                }
+                0xd => {
+                    self.surf.water_z = o.point[2];
+                    a[2] = o.point[2] - 0.01;
+                    hit = env.line(a, b, 4);
+                }
+                3 => {
+                    self.surf.sand_z = o.point[2];
+                    a[2] = o.point[2] - 0.01;
+                    hit = env.line(a, b, 4);
+                }
+                0xb => self.surf.sand_z = o.point[2],
+                _ => {}
+            }
+        }
+        if let Some(o) = hit {
             if 0 <= o.kind {
+                self.ground_moby = o.moby;
+                self.ground_yaw = atan2(o.normal[0], o.normal[1]);
+                self.ground_class = o.moby.and_then(|m| env.classes.get(m).copied()).unwrap_or(-1);
+                self.on_moby = o.moby.is_some();
                 self.ground_point = o.point;
                 self.ground_z = o.point[2];
                 self.height = dist(self.pos, self.ground_point);
@@ -512,6 +537,7 @@ impl Hero {
                 }
             }
         }
+        if self.surf.water_z < self.pos[2] { self.water.under = 0; }
         if self.air_ticks == 0 {
             self.grounded_ticks += 1;
             self.last_ground_point = self.ground_point;

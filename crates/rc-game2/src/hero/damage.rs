@@ -320,14 +320,20 @@ impl Hero {
         self.damage.dead = true;
     }
 
-    /// The transitions' prologue (`0x2cb650`): the hit intake, the death on no health from idle or walk, the fall
-    /// out of the level (below the level's death height with more than 2 above the ground: 0x74).
+    /// The transitions' prologue (`0x2cb650`), its first part: the hit intake, the death on no health from idle or
+    /// walk.
     pub fn transitions_prologue(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> bool {
         if self.hit_intake(env, anim) { return true; }
         if self.hp < 1 && (self.state == 0 || self.state == 2) {
             self.set_state(anim, env, 0x39, true);
             return true;
         }
+        false
+    }
+
+    /// The prologue's last check: below the level's death height (`0x1b1a68`) with more than 2 above the ground → the
+    /// fall out of the level 0x74.
+    pub fn fall_out_check(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> bool {
         if let Some(z) = env.death_z {
             if self.pos[2] < z && 2.0 < self.height && self.mode != 2 && self.state != 0x74 {
                 self.set_state(anim, env, 0x74, true);

@@ -26,6 +26,8 @@ pub enum Module {
     Pack,
     /// `swing.rs`: the Swingshot (group 0xd: 0x23, 0x24, 0x25).
     Swing,
+    /// `water.rs`: swimming (groups 0x11 / 0x12: 0x32..0x36) and the water hurts 0x72 / 0x73.
+    Water,
     /// `misc.rs`: the stagger 0x26 / 0x2f, the slide 0x30, the mud 0x76, the bonk 0x77.
     Misc,
     /// Not ported yet.
@@ -58,8 +60,8 @@ pub const STATES: &[StateInfo] = &[
     s(0x23, 0xd, Swing, true), s(0x24, 0xd, Swing, true), s(0x25, 0xd, Swing, true), s(0x26, 8, Misc, true),
     s(0x27, 0xf, Unported, false), s(0x28, 0xf, Unported, false), s(0x29, 0xf, Unported, false), s(0x2a, 0xf, Unported, false),
     s(0x2b, 0xe, Unported, false), s(0x2c, 2, Air, true), s(0x2e, 1, Walk, true), s(0x2f, 8, Misc, true),
-    s(0x30, 0x10, Misc, true), s(0x31, 9, Unported, false), s(0x32, 0x11, Unported, false), s(0x33, 0x11, Unported, false),
-    s(0x34, 0x11, Unported, false), s(0x35, 0x12, Unported, false), s(0x36, 0x12, Unported, false), s(0x37, 9, Unported, false),
+    s(0x30, 0x10, Misc, true), s(0x31, 9, Unported, false), s(0x32, 0x11, Water, true), s(0x33, 0x11, Water, true),
+    s(0x34, 0x11, Water, true), s(0x35, 0x12, Water, true), s(0x36, 0x12, Water, true), s(0x37, 9, Unported, false),
     s(0x38, 4, Jump, true), s(0x39, 0x14, Damage, true), s(0x3d, -1, Unported, false), s(0x3e, 0xf, Unported, false),
     s(0x3f, 0, Unported, false), s(0x40, 1, Unported, false), s(0x41, 2, Unported, false), s(0x42, 7, Unported, false),
     s(0x43, 0x14, Unported, false), s(0x44, 2, Unported, false), s(0x45, 4, Unported, false), s(0x46, 3, Unported, false),
@@ -68,7 +70,7 @@ pub const STATES: &[StateInfo] = &[
     s(0x60, -1, Unported, false), s(0x61, 0x18, Unported, false), s(0x62, 1, Unported, false), s(0x63, 1, Unported, false),
     s(0x64, 0, Unported, false), s(0x65, 0x19, Damage, true), s(0x66, 0x19, Jump, true), s(0x67, 0x14, Damage, true),
     s(0x6d, 6, Unported, false), s(0x6e, 4, Jump, true), s(0x6f, 9, Unported, false), s(0x70, 1, Walk, true),
-    s(0x71, 0x1a, Unported, false), s(0x72, -1, Unported, false), s(0x73, 7, Unported, false), s(0x74, 0x14, Damage, true),
+    s(0x71, 0x1a, Unported, false), s(0x72, -1, Water, true), s(0x73, 7, Water, true), s(0x74, 0x14, Damage, true),
     s(0x75, 9, Unported, false), s(0x76, 2, Misc, true), s(0x77, 10, Misc, true), s(0x78, 0x19, Damage, true),
     s(0x79, 0x14, Damage, true), s(0x7a, 0x14, Damage, true), s(0x7b, 0x1c, Unported, false), s(0x7c, 0x14, Damage, true),
     s(0x7d, 0x14, Damage, true), s(0x7f, 0x14, Damage, true), s(0x81, 4, Jump, true), s(0x82, 0x1e, Unported, false),

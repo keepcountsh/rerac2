@@ -153,6 +153,7 @@ fn tick(
     }
     p.hero.damage.took = false;
     if let Some(t) = p.hero.show_health.take() { p.game.show_health = Some(t); }
+    if let Some(t) = p.hero.show_bolts.take() { p.game.show_bolts = Some(t); }
     // `0x2a6dd0`'s write-back: Ratchet's moby takes his position, angles and rows.
     if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
         (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
