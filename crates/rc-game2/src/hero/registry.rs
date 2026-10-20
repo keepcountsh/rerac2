@@ -24,6 +24,8 @@ pub enum Module {
     Jump,
     /// `pack.rs`: the glide 8 (group 5).
     Pack,
+    /// `misc.rs`: the stagger 0x26 / 0x2f, the slide 0x30, the mud 0x76, the bonk 0x77.
+    Misc,
     /// Not ported yet.
     Unported,
 }
@@ -51,10 +53,10 @@ pub const STATES: &[StateInfo] = &[
     s(0x15, 6, Melee, true), s(0x16, 7, Damage, true), s(0x17, 3, Ledge, true), s(0x18, 3, Ledge, true),
     s(0x19, 3, Ledge, true), s(0x1a, 3, Ledge, true), s(0x1b, 4, Jump, true), s(0x1c, 9, Unported, false),
     s(0x1d, 0, Ground, true), s(0x1e, 9, Unported, false), s(0x1f, -1, Unported, false), s(0x22, 6, Melee, true),
-    s(0x23, 0xd, Unported, false), s(0x24, 0xd, Unported, false), s(0x25, 0xd, Unported, false), s(0x26, 8, Unported, false),
+    s(0x23, 0xd, Unported, false), s(0x24, 0xd, Unported, false), s(0x25, 0xd, Unported, false), s(0x26, 8, Misc, true),
     s(0x27, 0xf, Unported, false), s(0x28, 0xf, Unported, false), s(0x29, 0xf, Unported, false), s(0x2a, 0xf, Unported, false),
-    s(0x2b, 0xe, Unported, false), s(0x2c, 2, Unported, false), s(0x2e, 1, Walk, true), s(0x2f, 8, Unported, false),
-    s(0x30, 0x10, Unported, false), s(0x31, 9, Unported, false), s(0x32, 0x11, Unported, false), s(0x33, 0x11, Unported, false),
+    s(0x2b, 0xe, Unported, false), s(0x2c, 2, Air, true), s(0x2e, 1, Walk, true), s(0x2f, 8, Misc, true),
+    s(0x30, 0x10, Misc, true), s(0x31, 9, Unported, false), s(0x32, 0x11, Unported, false), s(0x33, 0x11, Unported, false),
     s(0x34, 0x11, Unported, false), s(0x35, 0x12, Unported, false), s(0x36, 0x12, Unported, false), s(0x37, 9, Unported, false),
     s(0x38, 4, Jump, true), s(0x39, 0x14, Damage, true), s(0x3d, -1, Unported, false), s(0x3e, 0xf, Unported, false),
     s(0x3f, 0, Unported, false), s(0x40, 1, Unported, false), s(0x41, 2, Unported, false), s(0x42, 7, Unported, false),
@@ -65,7 +67,7 @@ pub const STATES: &[StateInfo] = &[
     s(0x64, 0, Unported, false), s(0x65, 0x19, Unported, false), s(0x66, 0x19, Jump, true), s(0x67, 0x14, Unported, false),
     s(0x6d, 6, Unported, false), s(0x6e, 4, Jump, true), s(0x6f, 9, Unported, false), s(0x70, 1, Walk, true),
     s(0x71, 0x1a, Unported, false), s(0x72, -1, Unported, false), s(0x73, 7, Unported, false), s(0x74, 0x14, Damage, true),
-    s(0x75, 9, Unported, false), s(0x76, 2, Unported, false), s(0x77, 10, Unported, false), s(0x78, 0x19, Unported, false),
+    s(0x75, 9, Unported, false), s(0x76, 2, Misc, true), s(0x77, 10, Misc, true), s(0x78, 0x19, Unported, false),
     s(0x79, 0x14, Damage, true), s(0x7a, 0x14, Unported, false), s(0x7b, 0x1c, Unported, false), s(0x7c, 0x14, Unported, false),
     s(0x7d, 0x14, Unported, false), s(0x7f, 0x14, Unported, false), s(0x81, 4, Jump, true), s(0x82, 0x1e, Unported, false),
     s(0x83, 6, Melee, true), s(0x85, 0x20, Unported, false), s(0x86, 0x20, Unported, false), s(0x89, 4, Jump, true),

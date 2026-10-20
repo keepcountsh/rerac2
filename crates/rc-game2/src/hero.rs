@@ -25,6 +25,7 @@ pub mod items;
 pub mod jump;
 pub mod ledge;
 pub mod melee;
+pub mod misc;
 pub mod pack;
 pub mod physics;
 pub mod registry;
@@ -307,6 +308,18 @@ pub struct Hero {
     pub strafe_back: bool,
     pub strafe_flip: [i16; 2],
     pub strafe_yaw_vel: f32,
+    /// `0x18a14c`: the ground normal's yaw (the mud slides down it).
+    pub ground_yaw: f32,
+    /// The slide 0x30's chute (`0x18a960..`, written by the chute moby `0x39f588`): its yaw, its bank, the ticks it
+    /// holds Ratchet (`0x18a020`), the bank springs' velocities `0x18a974` / `0x18a978`.
+    pub slide_yaw: f32,
+    pub slide_bank: f32,
+    pub slide_hold: i16,
+    pub slide_vel: [f32; 2],
+    /// `0x18a00c`: the stagger's ticks; `0x189ec0`: the tumble's pitch / roll velocities; `0x18aa10`: the bonk's yaw.
+    pub stagger: i16,
+    pub rot_vel: [f32; 2],
+    pub bonk_yaw: f32,
     /// Hits Ratchet's body deals this tick (the Thruster-Pack's ram), delivered by the item pass.
     pub hits_out: Vec<HeroHit>,
     /// States the port has not got, reported once each.
@@ -344,7 +357,8 @@ impl Hero {
             pos_hist: [[0.0; 3]; HISTORY], pos_hist_idx: 0, pos_hist_count: 0, yaw_hist: [0.0; HISTORY], yaw_hist_idx: 0,
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
-            bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0, hits_out: Vec::new(), unported_seen: Vec::new(),
+            bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
+            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, hits_out: Vec::new(), unported_seen: Vec::new(),
         }
     }
 
@@ -427,6 +441,8 @@ impl Hero {
         if 0 < self.wall.timer { self.wall.timer -= 1; }
         if 0 < self.wall.regrab { self.wall.regrab -= 1; }
         if 0 < self.glide_lag { self.glide_lag -= 1; }
+        if 0 < self.stagger { self.stagger -= 1; }
+        if 0 < self.slide_hold { self.slide_hold -= 1; }
     }
 
     /// `0x2ae0e8(n)`: the yaw `n` ticks before the newest in the history (at most 31, at most what it holds).

@@ -494,6 +494,7 @@ impl Hero {
         if let Some(o) = env.line(a, b, 2) {
             self.surface = o.surface_id();
             self.ground_moby = o.moby;
+            self.ground_yaw = atan2(o.normal[0], o.normal[1]);
             self.ground_class = o.moby.and_then(|m| env.classes.get(m).copied()).unwrap_or(-1);
             self.on_moby = o.moby.is_some();
             if 0 <= o.kind {

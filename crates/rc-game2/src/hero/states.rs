@@ -53,6 +53,7 @@ impl Hero {
             Module::Ledge => self.ledge_entry(anim, env, id, play),
             Module::Damage => self.damage_entry(anim, env, id, play),
             Module::Pack => self.pack_entry(anim, env, id, play),
+            Module::Misc => self.misc_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -79,6 +80,7 @@ impl Hero {
             Module::Ledge => self.phys_ledge(env, anim),
             Module::Damage => self.phys_damage(env, anim),
             Module::Pack => self.phys_pack(env, anim),
+            Module::Misc => if self.state != 0x26 { self.phys_misc(env, anim) },
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -102,6 +104,8 @@ impl Hero {
             Module::Ledge => self.trans_ledge(env, anim),
             Module::Damage => self.trans_damage(env, anim),
             Module::Pack => self.trans_pack(env, anim),
+            Module::Misc if self.state == 0x26 => None,
+            Module::Misc => self.trans_misc(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.

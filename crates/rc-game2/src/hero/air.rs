@@ -3,8 +3,13 @@
 //! / 0x2c): the high-fall sequence 0xb after 18 ticks or above 1.75, and the landing — idle, stop or walk by the
 //! stick and the speed, with the landing lag `0x18a000` after a high fall.
 //!
-//! Not ported: the knock-down fall 0x74 and the tumble 0x2c, the glide / Heli-Pack 8, the ledges (0x17, 0x27, 0x71),
-//! the stuck-in-air jump (`0x18a022`), the landing effects (`0x2a6188`) and the camera jolt (`0x2d35e8`).
+//! The tumble 0x2c (group 2, camera 7: knocked through the air) shares it: the body's pitch springs to 0.44 above a
+//! height of 4 and the roll to 0 (0.02, 0.3, at most 0.0437), and it lands with a longer lag (10).
+//!
+//! In the air: ✕ held with Clank on the back (more than 0.6 up) opens the glide 8; a ledge in reach (0x17).
+//!
+//! Not ported: the rails (0x27, 0x71), the stuck-in-air jump (`0x18a022`), the landing effects (`0x2a6188`) and the
+//! camera jolt (`0x2d35e8`).
 
 use super::physics::*;
 use super::states::Entry;
@@ -12,7 +17,15 @@ use super::Hero;
 use rc_game::hero::anim::AnimCtl;
 
 impl Hero {
-    pub(super) fn fall_entry(&mut self, _anim: &mut dyn AnimCtl, _env: &Env, _id: i32, _play: bool) -> Entry {
+    pub(super) fn fall_entry(&mut self, _anim: &mut dyn AnimCtl, _env: &Env, id: i32, _play: bool) -> Entry {
+        if id == 0x2c {
+            self.group = 2;
+            self.cam_mode = 7;
+            self.rot_vel = [0.0; 2];
+            self.vel = self.eff;
+            self.substate = 0;
+            return Entry::Anim(15.0, 0xb, 0);
+        }
         self.group = 2;
         self.fall_g = 0.006_111_111_5;
         self.fall_dec = 0.001_944_444_5;
@@ -26,6 +39,16 @@ impl Hero {
     }
 
     pub(super) fn phys_fall(&mut self, env: &Env, _anim: &mut dyn AnimCtl) {
+        if self.state == 0x2c {
+            let t = if 4.0 < self.height { 0.436_332_3 } else { 0.0 };
+            let (mut a, mut v) = (self.rot[1], self.rot_vel[1]);
+            turn_spring(t, 0.02, 0.3, 0.043_633_23, &mut a, &mut v, 0);
+            (self.rot[1], self.rot_vel[1]) = (a, v);
+            let (mut a, mut v) = (self.rot[0], self.rot_vel[0]);
+            turn_spring(0.0, 0.02, 0.3, 0.043_633_23, &mut a, &mut v, 0);
+            (self.rot[0], self.rot_vel[0]) = (a, v);
+            if 1.0 < self.height { self.substate = 1; }
+        }
         self.run_target(env);
         self.air_control();
         self.drag(0.7, 0.0);
@@ -37,12 +60,19 @@ impl Hero {
         if self.substate == 0 && (0x11 < self.timer || 1.75 < self.height) {
             self.set_anim(anim, 16.0, 0xb, 0);
             self.substate = 1;
+            self.cam_mode = if self.state == 0x2c { 7 } else { 0 };
         }
         if self.air_ticks != 0 {
-            // In the air: a ledge in reach is grabbed (`0x18a398`); the glide 8 with a Heli-Pack, the grind rails 0x27
-            // and 0x71 are not ported.
-            if self.hp >= 1 && self.ledge.found { return Some(0x17); }
+            if self.hp < 1 { return None; }
+            // In the air: ✕ held with Clank on the back → the glide; a ledge in reach is grabbed (`0x18a398`); the
+            // rails 0x27 and 0x71 have no probe yet.
+            if env.pad.held & rc_game::pad::button::CROSS != 0 && env.clank && env.pack != 4 && self.land_lag == 0 && 0.6 < self.height { return Some(8); }
+            if self.ledge.found { return Some(0x17); }
             return None;
+        }
+        if self.state == 0x2c {
+            self.rot[0] = 0.0;
+            self.rot[1] = 0.0;
         }
         self.disp[2] = self.disp[2].max(-0.15);
         self.vel[2] = self.vel[2].max(-0.15);
