@@ -31,6 +31,11 @@ pub struct GameState {
     /// `$gp+0x3f8` / the frame counter `0x1b1948` of the last break.
     pub last_break_frame: i32,
     pub frame: i32,
+    /// `0x1a7b02`: Clank rides on Ratchet's back (not yet on Aranos's opening); `0x1a7a11`: the Thruster-Pack (else the
+    /// Heli-Pack); `0x1a7b13`: the Gravity Boots.
+    pub clank: bool,
+    pub thruster: bool,
+    pub boots: bool,
 }
 
 impl Default for GameState {
@@ -38,11 +43,15 @@ impl Default for GameState {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
+            clank: false, thruster: false, boots: false,
         }
     }
 }
 
 impl GameState {
+    /// `0x2adf18(3)`: the back slot's item (`0x2afc68`: with Clank the Heli-Pack 2, or 3 with the Thruster-Pack).
+    pub fn pack(&self) -> i32 { if self.clank { if self.thruster { 3 } else { 2 } } else { -1 } }
+
     /// The 3-bit count of uid `uid` (`0x2e4670`'s read).
     pub fn uid_count(&self, uid: i16) -> u8 {
         let b = self.uid_bits.get((uid as i32 >> 1).max(0) as usize).copied().unwrap_or(0);

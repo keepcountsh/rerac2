@@ -25,10 +25,13 @@ pub mod items;
 pub mod jump;
 pub mod ledge;
 pub mod melee;
+pub mod pack;
 pub mod physics;
 pub mod registry;
 pub mod states;
+pub mod surface;
 pub mod walk;
+pub mod wall;
 
 use physics::{euler_rows, Env, V3};
 use rc_game::hero::anim::{AnimCtl, AnimView};
@@ -110,6 +113,29 @@ pub struct JumpBlock {
     pub flip_push: f32,
     /// `0x18a2dc`: the climb's forward push.
     pub climb_push: f32,
+    /// The scripted vertical curve (`0x18a2bd` on): `0x18a264` the table (per row: a base / 3600 when not −999999,
+    /// a step / 3600 added every tick, the row's ticks), from tick `0x18a250` to `0x18a254`; `0x18a268` / `0x18a26c`
+    /// the row and its tick, `0x18a270` the vertical push; `0x18a258` / `0x18a25c` / `0x18a260` the animation's
+    /// frames for the timing.
+    pub curve: &'static [(f32, f32, i32)],
+    pub curve_on: bool,
+    pub curve_start: i32,
+    pub curve_end: i32,
+    pub curve_row: i32,
+    pub curve_tick: i32,
+    pub curve_v: f32,
+    pub curve_frame: f32,
+    pub curve_hold: f32,
+    pub curve_last: i32,
+    /// `0x18a274`: the Thruster-Pack jump's target speed.
+    pub thrust: f32,
+    /// The wall jump 0x11: `0x18a310` the direction off the wall and `0x18a31c` its yaw, `0x18a2b8`.
+    pub wall_dir: V3,
+    pub wall_yaw: f32,
+    pub wall_speed: f32,
+    /// `0x18a33c` / `0x18a33e` (the lava hop's).
+    pub f33c: i16,
+    pub f33e: i16,
 }
 
 /// The hero block. Addresses are L00 (the boot ELF's .bss: the same in every level).
@@ -248,8 +274,37 @@ pub struct Hero {
     pub damage: damage::DamageBlock,
     pub pending_damage: Option<i32>,
     pub show_health: Option<i32>,
+    /// The surface flags (`0x18b2b0..`, `0x2aca80`), the wall jump's wall (`0x2ac5f0`), the ahead probe
+    /// (`0x2c3068`).
+    pub surf: surface::SurfaceBlock,
+    pub wall: wall::WallBlock,
+    pub ahead: wall::AheadBlock,
+    /// `0x1b1948`: the frame counter the probes space themselves by.
+    pub frame: u32,
+    /// `0x18a15c`: the moby under the feet and its o_class.
+    pub ground_moby: Option<usize>,
+    pub ground_class: i16,
+    /// `$gp − 0x7318` / `$gp − 0x7314`: the bounce pad's height and gravity (× 1/3600), set by the pad.
+    pub bounce: [f32; 2],
+    /// `0x18a8b8`: the glide's vertical spring velocity; `0x18c2e8`: its sink factor override (0: none).
+    pub glide_vz: f32,
+    pub glide_sink: f32,
+    /// `0x18b6e0`: the lava hops in a row.
+    pub hot_hops: i32,
+    /// Hits Ratchet's body deals this tick (the Thruster-Pack's ram), delivered by the item pass.
+    pub hits_out: Vec<HeroHit>,
     /// States the port has not got, reported once each.
     pub unported_seen: Vec<i32>,
+}
+
+/// A hit Ratchet's body deals (`0x2e14b0` + `0x31d4c8`): a sphere, the damage, the flags, the direction.
+#[derive(Clone, Copy, Debug)]
+pub struct HeroHit {
+    pub centre: V3,
+    pub r: f32,
+    pub damage: f32,
+    pub flags: u32,
+    pub dir: V3,
 }
 
 impl Default for Hero {
@@ -271,7 +326,9 @@ impl Hero {
             quick_turn: 0, run_dir: [1.0, 0.0, 0.0], run_yaw: 0.0, anim_speed: 1.0, state: 0, substate: 0, group: 0,
             prev_state: 0, prev_group: 0, prev2_state: 0, prev2_group: 0, prev_timer: 0, cam_mode: 0, mode: 0, jump: JumpBlock { air_turn: 0.250_011_4, terminal: 0.833_333_3, ..JumpBlock::default() },
             pos_hist: [[0.0; 3]; HISTORY], pos_hist_idx: 0, pos_hist_count: 0, yaw_hist: [0.0; HISTORY], yaw_hist_idx: 0,
-            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None, unported_seen: Vec::new(),
+            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
+            surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
+            bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, hits_out: Vec::new(), unported_seen: Vec::new(),
         }
     }
 
@@ -327,6 +384,7 @@ impl Hero {
         self.rows = euler_rows(self.rot);
         self.size_capsule();
         self.move_collide(env);
+        self.ahead_probe(env);
         self.post_move();
         true
     }
@@ -342,6 +400,8 @@ impl Hero {
         if self.jump.landed != 0 { self.jump.landed = self.jump.landed.saturating_add(1); }
         if 0 < self.ledge.cooldown { self.ledge.cooldown -= 1; }
         if 0 < self.damage.invincible { self.damage.invincible -= 1; }
+        if 0 < self.wall.timer { self.wall.timer -= 1; }
+        if 0 < self.wall.regrab { self.wall.regrab -= 1; }
     }
 
     /// `0x2ae0e8(n)`: the yaw `n` ticks before the newest in the history (at most 31, at most what it holds).
@@ -371,9 +431,13 @@ pub fn hero_update(hero: &mut Hero, env: &Env, anim: &mut dyn AnimCtl) -> HeroTi
         }
         return HeroTick::Unported(hero.state);
     }
+    hero.frame = hero.frame.wrapping_add(1);
+    hero.hits_out.clear();
     anim.advance(Pf::f(hero.anim_speed));
     hero.anim_frame = anim.view().frame;
     hero.input_physics_move(env, anim);
+    // `0x2aca80`: the surface under the feet (the lava hop, the slides, the liquids).
+    if hero.surface_check(env, anim) { return HeroTick::Ran; }
     // `0x2ad000(pos, rot, 0x18a370)`: the ledge ahead, for the transitions.
     hero.ledge_tick(env);
     hero.transitions(env, anim);

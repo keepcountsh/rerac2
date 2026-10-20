@@ -56,6 +56,14 @@ pub struct Env<'a> {
     /// Ratchet's hit record this tick (his moby's `+0xa8`) and the level's death height (`0x1b1a68`).
     pub hit: Option<super::damage::HitIn>,
     pub death_z: Option<f32>,
+    /// Clank on Ratchet's back (`0x1a7b02`; without him `0x18c31c` is set) and the back item (`0x2adf18(3)`: 2 the
+    /// Heli-Pack, 3 the Thruster-Pack; −1 none).
+    pub clank: bool,
+    pub pack: i32,
+    /// `0x1a7b13`: the Gravity Boots.
+    pub boots: bool,
+    /// Every moby's o_class by its index (the ground moby's class).
+    pub classes: &'a [i16],
 }
 
 impl Env<'_> {
@@ -411,11 +419,17 @@ impl Hero {
         self.ground_point = [0.0; 3];
         self.height = 32.0;
         self.ground_normal = [0.0, 0.0, 1.0];
+        self.ground_moby = None;
+        self.ground_class = -1;
+        self.on_moby = false;
         let up = if self.group == 2 { 2.9 } else { 2.2 };
         let a = add(self.pos, [0.0, 0.0, up]);
         let b = add(self.pos, [0.0, 0.0, -48.0]);
         if let Some(o) = env.line(a, b, 2) {
             self.surface = o.surface_id();
+            self.ground_moby = o.moby;
+            self.ground_class = o.moby.and_then(|m| env.classes.get(m).copied()).unwrap_or(-1);
+            self.on_moby = o.moby.is_some();
             if 0 <= o.kind {
                 self.ground_point = o.point;
                 self.ground_z = o.point[2];

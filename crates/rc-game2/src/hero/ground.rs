@@ -141,16 +141,32 @@ impl Hero {
     }
 
     /// `0x2cadb0`: the crouch's jumps. R1 held, the stick not ahead, ✕ and a direction press within 12 ticks of each
-    /// other (both within 17) → the flip 0xb; after 7 crouched ticks ✕ within 9 → the jump 7 (with the Heli-Pack /
-    /// Thruster-Pack the long jumps 10, 0xd, 0xf, 0x10: not ported, Ratchet has no pack on Aranos's opening).
+    /// other (both within 17) → the flip 0xb; after 7 crouched ticks ✕ within 9 → with Clank's packs the long jumps
+    /// (moving: stick over 0.7, forward speed over 0.015) — the Heli-Pack's 10 (unless a wall within 2.5 slopes under
+    /// 45°), the Thruster-Pack's 0x10 (no wall within 2.5, or a moby there) — or standing the high jumps (Thruster-Pack
+    /// 0xd, Heli-Pack 0xf); without a pack the jump 7.
     fn crouch_jump(&mut self, anim: &mut dyn AnimCtl, env: &Env) -> bool {
+        if self.state == 0xe { return false; }
         let gap = self.flip_gap(env);
         if env.pad.held & button::R1 != 0 && 0 < gap && env.pad.combo(button::CROSS, FLIP_DIRS, gap + 5, gap) {
             self.set_state(anim, env, 0xb, true);
             return true;
         }
         if self.timer < 7 || !Self::cross_within(env, 9) { return false; }
-        self.set_state(anim, env, 7, true);
+        let moving = 0.7 < self.stick_mag && 0.015 < self.fwd_speed;
+        let a = self.ahead;
+        let id = if env.clank && env.pack == 2 && moving && !(a.dist <= 2.5 && std::f32::consts::FRAC_PI_4 <= a.slope) {
+            10
+        } else if env.clank && env.pack == 3 && moving && (2.5 < a.dist || a.solid) {
+            0x10
+        } else if env.clank && env.pack == 3 {
+            0xd
+        } else if env.clank && env.pack == 2 {
+            0xf
+        } else {
+            7
+        };
+        self.set_state(anim, env, id, true);
         true
     }
 
