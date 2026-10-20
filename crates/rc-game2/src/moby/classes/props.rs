@@ -184,3 +184,50 @@ pub fn update_132d(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
         m.update_dist = 0xff;
     }
 }
+
+/// `0x31c8e0(group, -1)`: the group's members not dead (state < 0x80).
+pub fn group_alive(w: &MobyWorld, group: i32) -> usize {
+    if group < 0 { return 0; }
+    w.groups.get(group as usize).map_or(0, |g| g.iter().filter(|&&i| w.mobys.get(i as usize).is_some_and(|m| m.state < 0x80)).count())
+}
+
+/// 0x0919 (`0x3b9868`, a camera volume): while Ratchet is in its cuboid (`+0x68`[0]) and its group (`[0x40]`) has a
+/// member alive, a camera tweak of priority 5 holds (`0x2d7468`) with the fields its pvars give (`0x3b9618`: `[4..0x1c]`
+/// distance, pivot height, look height, pitch, field of view, `[0x1c]` / `[0x1e]` the springs and the stick, `[0x20..
+/// 0x23]` the bytes, `[0x24]` / `[0x26]` the rest timer, `[0x30]` the direction; −1 / 0 leave the default).
+pub fn update_0919(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &w.mobys[id];
+    let inside = ctx.level.in_cuboid(m.pv_i(0), ctx.hero.pos);
+    let group = m.pv_i(0x40);
+    let active = m.pv_i(0x28) != 0;
+    if inside && !active {
+        if group_alive(w, group) == 0 { return; }
+        let Some(slot) = ctx.game.cam_tweaks.request(5) else { return };
+        let m = &w.mobys[id];
+        let t = &mut ctx.game.cam_tweaks.slots[slot];
+        let f = |o: usize| m.pv_f(o);
+        if f(4) != -1.0 { t.dist = f(4); }
+        if f(8) != -1.0 { t.pivot_h = f(8); }
+        if f(0xc) != -1.0 { t.look_h = f(0xc); }
+        if f(0x10) != -1.0 { t.pitch = f(0x10); }
+        if f(0x14) != -1.0 { t.fov = f(0x14); }
+        if f(0x18) != -1.0 { t.g14 = f(0x18); }
+        if m.pv_s(0x1c) != -1 { t.firm = m.pv_b(0x1c) != 0; }
+        if m.pv_s(0x1e) != -1 { t.no_stick = m.pv_s(0x1e) != 0; }
+        if m.pv_b(0x20) != 0 { t.priority = m.pv_b(0x20); }
+        if m.pv_b(0x22) != 0 { t.face_once = true; }
+        if m.pv_b(0x23) != 0 { t.face_rest = true; }
+        if m.pv_s(0x24) != -1 { t.rest_t = m.pv_s(0x24); }
+        if m.pv_s(0x26) != -1 { t.rest_len = m.pv_s(0x26); }
+        if f(0x30) != -1.0 { t.dir = [f(0x30), f(0x34), f(0x38)]; }
+        let m = &mut w.mobys[id];
+        m.set_pv_i(0x2c, slot as i32);
+        m.set_pv_i(0x28, 1);
+        return;
+    }
+    if !active { return; }
+    if !inside || group_alive(w, group) == 0 {
+        ctx.game.cam_tweaks.release(w.mobys[id].pv_i(0x2c) as usize);
+        w.mobys[id].set_pv_i(0x28, 0);
+    }
+}

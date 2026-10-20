@@ -24,8 +24,11 @@
 //! | spring back to the defaults | `0x423768` | [`FollowCamera::spring_back`] |
 //! | init: defaults, target reset `0x421b38`, snap `0x424548` | `0x424908` | [`FollowCamera::new`] |
 //!
-//! **Not ported** (no use on Aranos's opening yet, or no data source): the level's camera-tweak requests `0x2d7568`
-//! (32 slots set by regions and mobys; none active), the camera-collision grid (`0x427758`, `0x4219a0`; empty), the
+//! The camera-tweak requests (`0x2d7468` / `0x2d7508` / `0x2d7568`: 32 slots objects and regions fill, the highest
+//! priority applied each tick through the camera's setters) are [`CamTweaks`]; the hero-state tweaks `0x4239d0`
+//! follow the hero's groups (water, glide, Clank, the bounce, the Charge Boots, strafing).
+//!
+//! **Not ported** (no use on Aranos's opening yet, or no data source): the camera-collision grid (`0x427758`, `0x4219a0`; empty), the
 //! moby nudges of the avoidance (classes 0x8ba, 0xd07,
 //! 0x10d0, 0x477, 0xb), the focus moby `0x1b8e84` / `0x18b270`, the stick auto-centre `$gp+0x2540`, the body cameras
 //! (Clank, Giant Clank), the water settle (D+0x14e), the knock-down view (state 0x74, mode 11), the other camera types
@@ -120,6 +123,134 @@ pub struct CamInput<'a> {
     /// The mobys the queries test (None: the world only); they ignore Ratchet's moby.
     pub scene: Option<&'a MobyScene<'a>>,
     pub hero_moby: Option<usize>,
+    /// The level (`0x1a79f8`) and L2 / R2 held (`0x138320 & 3`, the strafe's camera).
+    pub level: i32,
+    pub strafe_held: bool,
+}
+
+/// One camera-tweak request (`0x1bb970 + 0x40·i`, `0x2d7468`): −1 / 0 leave a field alone.
+#[derive(Clone, Copy, Debug)]
+pub struct CamTweak {
+    /// `+0x00` distance, `+0x04` pivot height, `+0x08` look height, `+0x0c` scripted pitch, `+0x10` field of view,
+    /// `+0x14` the global `$gp − 0x66f0`.
+    pub dist: f32,
+    pub pivot_h: f32,
+    pub look_h: f32,
+    pub pitch: f32,
+    pub fov: f32,
+    pub g14: f32,
+    /// `+0x18` / `+0x19`: the firm springs (look from the smoothed target); `+0x1a`: the stick's yaw and pitch off;
+    /// `+0x1c` priority, `+0x1d` in use; `+0x1e` face `+0x20` once, `+0x1f` face it again after the stick rests
+    /// `+0x32` ticks (counter `+0x30`); `+0x34` the yaw rate (degrees); `+0x38` ticks to live (−1 forever);
+    /// `+0x3c` the global `$gp + 0x258c`.
+    pub firm: bool,
+    pub firm2: bool,
+    pub no_stick: bool,
+    pub priority: u8,
+    pub active: bool,
+    pub face_once: bool,
+    pub face_rest: bool,
+    pub dir: V3,
+    pub rest_t: i16,
+    pub rest_len: i16,
+    pub rate_deg: i32,
+    pub life: i32,
+    pub g3c: bool,
+}
+
+impl Default for CamTweak {
+    fn default() -> Self {
+        CamTweak {
+            dist: -1.0, pivot_h: -1.0, look_h: -1.0, pitch: -1.0, fov: -1.0, g14: -1.0, firm: false, firm2: false, no_stick: false,
+            priority: 0, active: false, face_once: false, face_rest: false, dir: [0.0; 3], rest_t: 0, rest_len: 0x78, rate_deg: 6, life: -1, g3c: false,
+        }
+    }
+}
+
+/// The 32 request slots and the last applied one (`$gp + 0x2814`).
+#[derive(Clone, Debug)]
+pub struct CamTweaks {
+    pub slots: [CamTweak; 32],
+    pub last: i32,
+    /// The field of view the camera blends to (`0x2d7a60`, `0x1b8fd4`; 1.1243 the default).
+    pub fov: f32,
+}
+
+impl Default for CamTweaks {
+    fn default() -> Self { CamTweaks { slots: [CamTweak::default(); 32], last: -1, fov: 1.124_3 } }
+}
+
+impl CamTweaks {
+    /// `0x2d7468(priority)`: a free slot, reset; `None` when all 32 are in use.
+    pub fn request(&mut self, priority: u8) -> Option<usize> {
+        let i = self.slots.iter().position(|s| !s.active)?;
+        self.slots[i] = CamTweak { priority, active: true, ..Default::default() };
+        Some(i)
+    }
+
+    /// `0x2d7508(slot)`: released (one that set the field of view puts it back).
+    pub fn release(&mut self, i: usize) {
+        let Some(s) = self.slots.get_mut(i) else { return };
+        s.active = false;
+        if 0.0 <= s.fov { self.fov = 1.124_3; }
+    }
+
+    /// `0x2d7568`: the slots' lives counted down (released at 0), the highest priority applied through the camera's
+    /// setters. Returns the slot applied.
+    pub fn apply(&mut self, cam: &mut FollowCamera, inp: &CamInput) -> Option<usize> {
+        let mut best: Option<usize> = None;
+        for i in 0..32 {
+            if !self.slots[i].active { continue; }
+            let s = &mut self.slots[i];
+            if s.life != 0 {
+                s.life -= 1;
+                if s.life == 0 {
+                    self.release(i);
+                    continue;
+                }
+            }
+            if best.map_or(true, |b| self.slots[b].priority < self.slots[i].priority) { best = Some(i); }
+        }
+        if let (Some(b), true) = (best, 0 <= self.last) {
+            let l = self.last as usize;
+            if b != l && 0.0 <= self.slots[l].fov && self.slots[b].fov < 0.0 { self.fov = 1.124_3; }
+        }
+        self.last = best.map_or(-1, |b| b as i32);
+        let i = best?;
+        let s = self.slots[i];
+        if 0.0 <= s.dist {
+            cam.set_dist(s.dist, 0.001, false);
+            if s.dist < 4.64 || 6.0 < s.dist { cam.toward_lock = 1; }
+        }
+        if 0.0 <= s.pivot_h { cam.set_pivot_h(s.pivot_h, 0.001); }
+        if 0.0 <= s.pitch { cam.script_pitch = s.pitch; }
+        if 0.0 <= s.look_h { cam.set_look_h(s.look_h, 0.005, false); }
+        if s.no_stick { cam.script |= 3; }
+        if s.firm {
+            cam.toward_lock = 1;
+            cam.leash = 0;
+            cam.look_from_s = 1;
+            cam.set_v_spring(0.01, 0.2);
+            cam.set_h_spring(0.03, 0.2);
+        }
+        if s.firm2 {
+            cam.look_from_s = 1;
+            cam.set_h_spring(0.03, 0.2);
+            cam.set_v_spring(0.007_5, 0.2);
+        }
+        if 0.0 <= s.fov { self.fov = s.fov; }
+        let rate = s.rate_deg as f32 * 0.017_453_294;
+        if s.face_once { cam.face_toward(rate, s.dir, 0.0); }
+        if s.face_rest {
+            let sl = &mut self.slots[i];
+            if 0 < sl.rest_t {
+                sl.rest_t -= 1;
+                if sl.rest_t == 0 { cam.face_toward(rate, sl.dir, 0.0); }
+            }
+            if 0.01 < inp.rstick[0].abs() || 0.01 < inp.rstick[1].abs() { sl.rest_t = sl.rest_len; }
+        }
+        Some(i)
+    }
 }
 
 impl CamInput<'_> {
@@ -381,11 +512,12 @@ impl FollowCamera {
 
     /// One camera update (`0x2d9f38` with the follow camera current): the flags, the motion pre-step, the type-0
     /// update `0x4278c8`.
-    pub fn update(&mut self, inp: &CamInput) {
+    pub fn update(&mut self, inp: &CamInput, tweaks: &mut CamTweaks) {
         self.pre_flags(inp);
         self.pre_motion(inp);
         self.platform_carry(inp);
-        self.state_tweaks(inp);
+        let req = tweaks.apply(self, inp);
+        self.state_tweaks(inp, req);
         self.targets(inp);
         self.leash();
         self.stick(inp);
@@ -450,13 +582,107 @@ impl FollowCamera {
     /// `kv = (0.0125 − 0.002)·gap/2 + 0.002`) in the air and for 15 ticks after landing; the knock-down states 0x78 /
     /// 0x7c drop the sphere chain. The other branches (groups 0x1e, 0x11, 5, 0x10, the bodies, the focus mobys, the
     /// auto-centre, the camera-tweak requests) are not ported.
-    fn state_tweaks(&mut self, inp: &CamInput) {
+    fn state_tweaks(&mut self, inp: &CamInput, req: Option<usize>) {
         let h = inp.hero;
         if h.state == 0x7c || h.state == 0x78 { self.no_chain = 1; }
         if h.grounded_ticks == 0 || self.vgap_t != 0 {
             let g = self.vgap.min(2.0);
             self.kv = (0.0125 - 0.002) * g * 0.5 + 0.002;
             if h.grounded_ticks == 0 { self.vgap_t = 0xf; } else { self.vgap_t -= 1; }
+        }
+        if h.group == 0x1e {
+            self.look_h = 0.75;
+            self.set_v_spring(0.04, 0.2);
+        }
+        if inp.level == 1 && h.state == 0x30 && 75.0 < h.pos[2] && h.pos[2] < 105.0 {
+            self.script_pitch = 0.872_664_6;
+            self.script |= 3;
+        }
+        if h.cam_mode == 0xd && h.ledge.cooldown != 0 {
+            let y = crate::hero::physics::add_rot(h.ledge.yaw, std::f32::consts::PI);
+            self.face_toward(0.209_439_5, [y.cos(), y.sin(), 0.0], 0.0);
+            self.look_from_s = 1;
+        }
+        if h.group == 0x11 {
+            self.look_h = 0.25;
+            self.set_pivot_h(0.5, 0.003);
+        }
+        let glide = h.group == 5;
+        if glide {
+            self.look_h = 0.25;
+            self.set_pivot_h(if h.mode == 1 && req.is_none() { 1.5 } else { 2.5 }, 0.003);
+        }
+        if h.group == 0x10 { self.look_h = 0.25; }
+        if h.mode == 1 {
+            if self.red == 0.0 && req.is_none() {
+                self.set_dist(3.0, 0.003, true);
+                if !glide {
+                    self.look_h = 1.0;
+                    self.set_pivot_h(1.0, 0.003);
+                }
+            }
+            self.sph_scale = 0.6;
+        }
+        if h.state == 0x81 {
+            self.look_from_s = 1;
+            self.set_h_spring(1.0, 1.0);
+            self.set_v_spring(0.06, 0.2);
+            self.toward_lock = 1;
+        }
+        if h.state == 0x7b {
+            self.set_h_spring(0.04, 0.2);
+            self.face_toward(0.785_398_2, h.rows[0], 0.0);
+            self.set_dist(3.0, 0.003, false);
+            self.toward_lock = 1;
+        }
+        // Strafing (L2 / R2 held): no leash, the look from the smoothed target, a firm horizontal spring.
+        if h.state != 0x81 && (h.state == 0x7e || h.state == 0x82 || h.strafe != 0) && inp.strafe_held {
+            self.leash = 0;
+            self.look_from_s = 1;
+            self.set_h_spring(0.04, 0.2);
+        }
+    }
+
+    /// `0x425f18(d, rate, base)`: the distance overridden toward `d`; with `base`, the base distance too.
+    pub fn set_dist(&mut self, d: f32, rate: f32, base: bool) {
+        (self.dist_ovr, self.dist_rate, self.dist_tgt) = (1, rate, d);
+        if base { self.base_dist = d; }
+    }
+    /// `0x425f60(h, rate)`: the pivot height overridden toward `h`.
+    pub fn set_pivot_h(&mut self, h: f32, rate: f32) { (self.ph_rate, self.ph_ovr, self.ph_tgt) = (rate, 1, h); }
+    /// `0x425f98(h, rate, add)`: the look height overridden toward `h` (with `add`, the default's + `h`).
+    pub fn set_look_h(&mut self, h: f32, rate: f32, add: bool) {
+        (self.look_h_ovr, self.look_h_rate) = (1, rate);
+        self.look_h_tgt = if add { self.d0_look_h + h } else { h };
+    }
+    /// `0x426080` / `0x4260c8`: the horizontal / vertical springs (0 keeps a value).
+    pub fn set_h_spring(&mut self, k: f32, d: f32) {
+        if k != 0.0 { self.kh = k; }
+        if d != 0.0 { self.dh = d; }
+    }
+    pub fn set_v_spring(&mut self, k: f32, d: f32) {
+        if k != 0.0 { self.kv = k; }
+        if d != 0.0 { self.dv = d; }
+    }
+    /// `0x426410(rate, 0, dir)` / `0x4261a0`: the yaw input scripted toward `dir` (the angle between it and the
+    /// camera's offset across the up, smoothed and capped at 1, its sign the side), at the yaw rate `rate`.
+    pub fn face_toward(&mut self, rate: f32, dir: V3, limit: f32) {
+        if rate == 0.0 { return; }
+        self.yaw_rate = rate;
+        let up = self.up_s;
+        let flat = |v: V3| sub(v, scale(up, dot(v, up)));
+        let (a, b) = (flat(dir), flat(self.off));
+        let (la, lb) = (len(a), len(b));
+        if la == 0.0 || lb == 0.0 { return; }
+        let c = (dot(a, b) / (la * lb)).clamp(-1.0, 1.0);
+        let ang = c.acos();
+        let side = if 0.0 <= dot(cross(a, up), b) { 1.0 } else { -1.0 };
+        let f = std::f32::consts::FRAC_PI_2 - ang;
+        let gap = crate::hero::physics::sub_rot(std::f32::consts::PI, f);
+        if limit == 0.0 || gap.abs() <= limit {
+            // `0x31bc68(−1, 0, 1, 0, x)`: the smooth step over −1..1.
+            let x = (gap * 0.636_619_75).clamp(-1.0, 1.0);
+            self.script_yaw = (x * (1.5 - 0.5 * x * x)).min(1.0) * side;
         }
     }
 

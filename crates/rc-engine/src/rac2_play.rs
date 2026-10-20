@@ -187,7 +187,9 @@ fn tick(
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut inp = cam_input(&p.hero, Some(coll), [p.pad.rx.to_f32(), p.pad.ry.to_f32()]);
         (inp.scene, inp.hero_moby) = (scene.as_ref(), mobys.hero_moby);
-        p.camera.update(&inp);
+        inp.level = p.game.level;
+        inp.strafe_held = p.pad.held & (rc_game::pad::button::L2 | rc_game::pad::button::R2) != 0;
+        p.camera.update(&inp, &mut p.game.cam_tweaks);
     }
     // The HUD (`0x443c08`) with this tick's requests.
     let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
@@ -332,7 +334,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
 
 /// The camera's inputs: the options' yaw and pitch normal (`0x1a7bb0` / `0x1a7bac`, the defaults).
 fn cam_input<'a>(hero: &'a Hero, coll: Option<&'a rc_formats::collision::Collision>, rstick: [f32; 2]) -> CamInput<'a> {
-    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, scene: None, hero_moby: None }
+    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, scene: None, hero_moby: None, level: 0, strafe_held: false }
 }
 
 fn camera_view(c: &FollowCamera) -> CameraView {

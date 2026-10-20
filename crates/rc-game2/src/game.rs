@@ -50,6 +50,8 @@ pub struct GameState {
     /// `2·(sub & 3)`); `0x18c0e6`: the mission whose area Ratchet is in.
     pub missions: Vec<u8>,
     pub mission_area: u8,
+    /// The camera-tweak requests (`0x1bb970`).
+    pub cam_tweaks: crate::camera::CamTweaks,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -64,7 +66,7 @@ impl Default for GameState {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
-            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0,
+            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(),
         }
     }
 }
