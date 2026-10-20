@@ -602,10 +602,16 @@ impl Hero {
         self.pos = add(add(self.pos, self.vel), self.drag);
         self.drag = [0.0; 3];
         self.cap_hit = 0;
-        self.capsule_resolve(env);
-        self.ground_probe(env);
-        self.disp = sub(self.pos, old);
-        self.step_snap();
+        // `0x189f20`: an object's push (the chutes) moves after the resolve of the own move is skipped.
+        let pushed = 0.0001 < len(self.push);
+        if !pushed {
+            self.capsule_resolve(env);
+            self.ground_probe(env);
+            self.disp = sub(self.pos, old);
+            self.step_snap();
+        } else {
+            self.ground_probe(env);
+        }
         let d = sub(self.pos, old);
         self.eff = Self::project(d, self.vel);
         self.eff_v = Self::project([0.0, 0.0, d[2]], [0.0, 0.0, self.vel[2]]);
@@ -616,6 +622,14 @@ impl Hero {
         self.fwd_speed = (self.eff[0] * c + self.eff[1] * s).max(0.0);
         self.disp = sub(self.pos, old);
         if 0.004 < self.eff_len_xy { self.slope_ratio = (self.disp[2] / self.eff_len_xy).clamp(-0.5, 0.5); }
+        if pushed {
+            self.pos = add(self.pos, self.push);
+            self.push = [0.0; 3];
+            self.capsule_resolve(env);
+            self.ground_probe(env);
+            self.disp = sub(self.pos, old);
+            self.step_snap();
+        }
         let cap = 52.0 * DT;
         if cap < self.eff_len {
             self.disp = scale(self.disp, cap / self.eff_len);

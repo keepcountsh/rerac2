@@ -38,7 +38,7 @@ impl Hero {
             0x30 => {
                 self.group = 0x10;
                 self.cam_mode = 3;
-                (self.slide_yaw, self.slide_bank, self.slide_vel) = (0.0, 0.0, [0.0; 2]);
+                (self.slide_yaw, self.slide_bank, self.slide_vel, self.slide_speed) = (0.0, 0.0, [0.0; 2], 0.0);
                 self.momentum = self.disp;
                 Entry::Anim(15.0, 0x5d, 0)
             }

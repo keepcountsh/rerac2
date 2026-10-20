@@ -37,6 +37,19 @@ impl LevelData {
         l.iter().all(|x| (-1.0..=1.0).contains(x))
     }
 
+    /// A path with its segment lengths filled in (the objects that walk one fill `w` so, the last to the first).
+    pub fn walked_path(&self, i: i32) -> Vec<[f32; 4]> {
+        let Some(p) = usize::try_from(i).ok().and_then(|i| self.paths.get(i)) else { return Vec::new() };
+        let n = p.len();
+        (0..n)
+            .map(|k| {
+                let (a, b) = (p[k], p[(k + 1) % n]);
+                let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+                [a[0], a[1], a[2], d]
+            })
+            .collect()
+    }
+
     /// A cuboid's `+0x78` word (its yaw, for the objects that face along it).
     pub fn cuboid_yaw(&self, i: i32) -> f32 { usize::try_from(i).ok().and_then(|i| self.cuboids.get(i)).map_or(0.0, |c| c.extra[2]) }
 }

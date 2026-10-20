@@ -2,6 +2,7 @@
 //! update, 0x2a3978}` up to o_class −1, written to the slot table `0x1da240` by `0x32e1f8`) as Rust ports.
 
 pub mod bolt;
+pub mod chute;
 pub mod crate_;
 pub mod props;
 pub mod spawn_point;
@@ -30,6 +31,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0919 => Some(props::update_0919),
         0x0c8c => Some(props::update_0c8c),
         0x0325 => Some(spawn_point::update),
+        0x02a7 => Some(chute::update),
         _ => None,
     }
 }
