@@ -218,3 +218,40 @@ pub fn moby_groups(gameplay: &[u8]) -> Result<Vec<Vec<u16>>> {
     }
     Ok(out)
 }
+
+/// A grind path (section 31 `grind_paths`): its bounding sphere, the word at record `+0x10` (the loader moves it to
+/// `+0x14`: the path loops when nonzero) and the spline, points `{x, y, z, the length to the next}`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GrindPath {
+    pub sphere: [f32; 4],
+    pub looped: bool,
+    pub points: Vec<[f32; 4]>,
+}
+
+/// The grind paths: `s32 count, s32 data offset, s32 data bytes, pad`, then `count` 0x20-byte records (the sphere,
+/// the loop word), then `count` offsets into the data, each at a spline `{s32 n, pad[3], n × vec4}` (L00 `0x3012a0`;
+/// the table `0x1b1640`).
+pub fn grind_paths(gameplay: &[u8]) -> Result<Vec<GrindPath>> {
+    let Some(s) = section(gameplay, "grind_paths")? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let count = b.i32(0)?;
+    if !(0..=0x400).contains(&count) { return invalid(format!("grind paths: count {count}")); }
+    let data = b.i32(4)? as usize;
+    let mut out = Vec::with_capacity(count as usize);
+    for i in 0..count as usize {
+        let r = 0x10 + 0x20 * i;
+        let sphere = [b.f32(r)?, b.f32(r + 4)?, b.f32(r + 8)?, b.f32(r + 12)?];
+        let looped = b.i32(r + 0x10)? != 0;
+        let off = b.i32(0x10 + 0x20 * count as usize + 4 * i)? as usize;
+        let p = data + off;
+        let n = b.i32(p)?;
+        if !(0..=0x10000).contains(&n) { return invalid(format!("grind path {i}: {n} points")); }
+        let mut points = Vec::with_capacity(n as usize);
+        for k in 0..n as usize {
+            let q = p + 0x10 + 0x10 * k;
+            points.push([b.f32(q)?, b.f32(q + 4)?, b.f32(q + 8)?, b.f32(q + 12)?]);
+        }
+        out.push(GrindPath { sphere, looped, points });
+    }
+    Ok(out)
+}

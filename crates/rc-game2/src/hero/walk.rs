@@ -224,7 +224,7 @@ impl Hero {
             0x70 if !self.surf.wading => { self.set_state(anim, env, 2, true); }
             _ => {}
         }
-        // A rail in reach (`0x18a45c` → 0x27): no rail probe yet.
+        if self.grind.found { return Some(0x27); }
         let turned = self.strafe_turned(env, 0.034_906_585);
         match self.state {
             2 => {

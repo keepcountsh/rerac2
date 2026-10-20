@@ -38,6 +38,8 @@ pub struct GameState {
     pub boots: bool,
     /// `0x1a7b36` with the item `0x1a739c` = 0x36: the Charge Boots on.
     pub charge_boots: bool,
+    /// `0x1a7b14`: the Grind Boots.
+    pub grind_boots: bool,
 }
 
 impl Default for GameState {
@@ -45,7 +47,7 @@ impl Default for GameState {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
-            clank: false, thruster: false, boots: false, charge_boots: false,
+            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false,
         }
     }
 }

@@ -44,6 +44,8 @@ pub struct Rac2Mobys {
     pub created: HashMap<usize, Created>,
     /// Ratchet's joint lists (chains) for his attachment points.
     pub hero_chains: Vec<Vec<u8>>,
+    /// The level's grind paths (the gameplay's section 31).
+    pub rails: Vec<rc_game2::paths::GrindPath>,
 }
 
 /// Ratchet's animation as the hero update left it, for his attachment points.
@@ -208,7 +210,8 @@ impl Rac2Mobys {
             .unwrap_or_default();
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains }
+        let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, rails }
     }
 
 }

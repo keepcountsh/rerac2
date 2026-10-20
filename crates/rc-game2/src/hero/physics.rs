@@ -66,6 +66,9 @@ pub struct Env<'a> {
     /// `0x1a79f8`.
     pub boots: bool,
     pub charge_boots: bool,
+    /// `0x1a7b14`: the Grind Boots; the level's grind paths (`0x1b1640`).
+    pub grind_boots: bool,
+    pub rails: &'a [crate::paths::GrindPath],
     pub level: i32,
     /// Every moby's o_class by its index (the ground moby's class).
     pub classes: &'a [i16],

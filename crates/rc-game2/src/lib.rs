@@ -11,4 +11,5 @@ pub mod gui;
 pub mod hero;
 pub mod hud;
 pub mod moby;
+pub mod paths;
 pub mod rng;

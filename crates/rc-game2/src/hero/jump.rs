@@ -414,7 +414,7 @@ impl Hero {
     /// `0x2b6668`: before the takeoff a small push down (1/75); landed, 0.015 down; in the air, gravity with the fall
     /// speed capped at `0x18a2c0` (the climb's first 9 ticks, the leap 0x89's 11 and the climb jump 0x48's 12 keep
     /// the vertical speed). Then the height ramp (module docs) and the scripted curve.
-    fn jump_vertical(&mut self, env: &Env) {
+    pub(super) fn jump_vertical(&mut self, env: &Env) {
         let j = self.jump;
         let keep = (self.state == 0x1b && self.timer <= 9) || (self.state == 0x89 && self.timer <= 0xb) || (self.state == 0x48 && self.timer <= 0xc);
         if !keep {
@@ -558,7 +558,9 @@ impl Hero {
                 self.set_state(anim, env, 0x10, true);
             }
         }
-        // A rail (`0x18a45c`, the grind 0x27) or a pole (`0x18a50c`, 0x71) in reach: not found yet (no rail probe).
+        // A rail (`0x18a45c`, the grind 0x27) or a pole (`0x18a50c`, 0x71) in reach.
+        if self.grind.found { return Some(0x27); }
+        if self.grind.pole.is_some() { return Some(0x71); }
         let j = self.jump;
         if j.max_air < self.timer {
             if j.landed == 0 { return Some(6); }

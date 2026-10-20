@@ -28,6 +28,8 @@ pub enum Module {
     Swing,
     /// `script.rs`: the states objects and scenes set (group 9 / 0x18, the scripted walk 0x62..0x64, the fidgets).
     Script,
+    /// `grind.rs`: grinding (group 0xf: 0x27..0x2a, 0x3e) and the zip line 0x71.
+    Grind,
     /// `extras.rs`: the Charge Boots' dash 0x7b, the updraft 0x82, the rides 0x85 / 0x86.
     Gear,
     /// `clank.rs`: Clank's own body (`0x18c0d4` = 1: 0x3f..0x4e).
@@ -64,11 +66,11 @@ pub const STATES: &[StateInfo] = &[
     s(0x19, 3, Ledge, true), s(0x1a, 3, Ledge, true), s(0x1b, 4, Jump, true), s(0x1c, 9, Script, true),
     s(0x1d, 0, Ground, true), s(0x1e, 9, Script, true), s(0x1f, -1, Melee, true), s(0x22, 6, Melee, true),
     s(0x23, 0xd, Swing, true), s(0x24, 0xd, Swing, true), s(0x25, 0xd, Swing, true), s(0x26, 8, Misc, true),
-    s(0x27, 0xf, Unported, false), s(0x28, 0xf, Unported, false), s(0x29, 0xf, Unported, false), s(0x2a, 0xf, Unported, false),
+    s(0x27, 0xf, Grind, true), s(0x28, 0xf, Grind, true), s(0x29, 0xf, Grind, true), s(0x2a, 0xf, Grind, true),
     s(0x2b, 0xe, Swing, true), s(0x2c, 2, Air, true), s(0x2e, 1, Walk, true), s(0x2f, 8, Misc, true),
     s(0x30, 0x10, Misc, true), s(0x31, 9, Script, true), s(0x32, 0x11, Water, true), s(0x33, 0x11, Water, true),
     s(0x34, 0x11, Water, true), s(0x35, 0x12, Water, true), s(0x36, 0x12, Water, true), s(0x37, 9, Script, true),
-    s(0x38, 4, Jump, true), s(0x39, 0x14, Damage, true), s(0x3c, -1, Script, true), s(0x3d, -1, Script, true), s(0x3e, 0xf, Unported, false),
+    s(0x38, 4, Jump, true), s(0x39, 0x14, Damage, true), s(0x3c, -1, Script, true), s(0x3d, -1, Script, true), s(0x3e, 0xf, Grind, true),
     s(0x3f, 0, Clank, true), s(0x40, 1, Clank, true), s(0x41, 2, Clank, true), s(0x42, 7, Clank, true),
     s(0x43, 0x14, Clank, true), s(0x44, 2, Clank, true), s(0x45, 4, Jump, true), s(0x46, 3, Clank, true),
     s(0x47, 3, Clank, true), s(0x48, 4, Jump, true), s(0x49, 3, Clank, true), s(0x4a, 3, Clank, true),
@@ -76,7 +78,7 @@ pub const STATES: &[StateInfo] = &[
     s(0x60, -1, Script, true), s(0x61, 0x18, Script, true), s(0x62, 1, Script, true), s(0x63, 1, Script, true),
     s(0x64, 0, Script, true), s(0x65, 0x19, Damage, true), s(0x66, 0x19, Jump, true), s(0x67, 0x14, Damage, true),
     s(0x6d, 6, Melee, true), s(0x6e, 4, Jump, true), s(0x6f, 9, Script, true), s(0x70, 1, Walk, true),
-    s(0x71, 0x1a, Unported, false), s(0x72, -1, Water, true), s(0x73, 7, Water, true), s(0x74, 0x14, Damage, true),
+    s(0x71, 0x1a, Grind, true), s(0x72, -1, Water, true), s(0x73, 7, Water, true), s(0x74, 0x14, Damage, true),
     s(0x75, 9, Script, true), s(0x76, 2, Misc, true), s(0x77, 10, Misc, true), s(0x78, 0x19, Damage, true),
     s(0x79, 0x14, Damage, true), s(0x7a, 0x14, Damage, true), s(0x7b, 0x1c, Gear, true), s(0x7c, 0x14, Damage, true),
     s(0x7d, 0x14, Damage, true), s(0x7f, 0x14, Damage, true), s(0x81, 4, Jump, true), s(0x82, 0x1e, Gear, true),

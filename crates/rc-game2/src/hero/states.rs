@@ -71,6 +71,7 @@ impl Hero {
             Module::Clank => self.clank_entry(anim, env, id, play),
             Module::Script => self.script_entry(anim, env, id, play),
             Module::Gear => self.gear_entry(anim, env, id, play),
+            Module::Grind => self.grind_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -104,6 +105,7 @@ impl Hero {
             Module::Clank => self.phys_clank(env, anim),
             Module::Script => self.phys_script(env, anim),
             Module::Gear => self.phys_gear(env, anim),
+            Module::Grind => self.phys_grind(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -144,6 +146,7 @@ impl Hero {
             Module::Clank => self.trans_clank(env, anim),
             Module::Script => self.trans_script(env, anim),
             Module::Gear => self.trans_gear(env, anim),
+            Module::Grind => self.trans_grind(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.

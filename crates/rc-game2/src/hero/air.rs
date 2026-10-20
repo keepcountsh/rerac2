@@ -8,7 +8,7 @@
 //!
 //! In the air: ✕ held with Clank on the back (more than 0.6 up) opens the glide 8; a ledge in reach (0x17).
 //!
-//! Not ported: the rails (0x27, 0x71), the stuck-in-air jump (`0x18a022`), the landing effects (`0x2a6188`) and the
+//! Not ported: the stuck-in-air jump (`0x18a022`), the landing effects (`0x2a6188`) and the
 //! camera jolt (`0x2d35e8`).
 
 use super::physics::*;
@@ -64,10 +64,12 @@ impl Hero {
         }
         if self.air_ticks != 0 {
             if self.hp < 1 { return None; }
-            // In the air: ✕ held with Clank on the back → the glide; a ledge in reach is grabbed (`0x18a398`); the
-            // rails 0x27 and 0x71 have no probe yet.
+            // In the air: ✕ held with Clank on the back → the glide; a ledge in reach is grabbed (`0x18a398`), a rail
+            // (0x27) or a pole (0x71).
             if env.pad.held & rc_game::pad::button::CROSS != 0 && env.clank && env.pack != 4 && self.land_lag == 0 && 0.6 < self.height { return Some(8); }
             if self.ledge.found { return Some(0x17); }
+            if self.grind.found { return Some(0x27); }
+            if self.grind.pole.is_some() { return Some(0x71); }
             return None;
         }
         if self.state == 0x2c {
