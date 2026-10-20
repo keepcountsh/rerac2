@@ -294,7 +294,23 @@ buffers, the tie LOD spheres and the shrub culls follow nothing yet) and the tie
 (`MobyWorld::hidden_ties`); both need the shared tie / shrub renderers to take updates, which R&C1 never needed. The
 arrival scene of 0x1330 and the scene parts of 0x0f13 wait for the scene system (`0x42a4e0`, `0x1bca70`).
 
-**To do**: the enemies 0x099c (319) and 0x0b0b (783) on R&C2's enemy framework (the AI block `+0x68`[0x18]
-`0x32d968`, the damage intake `0x327e38` / `0x31dd48` / the knockback `0x3282b0`, the target search `0x32ad38`, the
-movement `0x32cc30` / `0x32cd20` / `0x328b80` → `0x328e90`, the senses `0x32dcf0`), then 0x0b0a, 0x0b51, 0x0f6e and
-the 0x41b0xx stubs (not in the export: decompile them in Ghidra).
+**Also ported**: the stubs 0x0b41 / 0x0b42 / 0x0b45 / 0x0b4d / 0x0b51 / 0x0b52 / 0x0b53 / 0x0c02 / 0x0c3f (`0x41b058`
+.. `0x41b170`, `0x3dead0`: state 1, mode |= 0x800) and the scene trigger 0x0f6e (`0x40ffa0`: its scenes, level 0's
+lists 0x21 / 0x23 / 0x22 / 0x16 at `0x1b1000`, end at once; then the item, the mission and the checkpoint).
+
+**To do: the enemies** 0x099c (`0x3bb120`, 319 lines, with `0x3bbab0` its set-up and `0x3bbf38` its tail), 0x0b0a
+(`0x3d6900`, created in Ghidra tonight: 2832 bytes, with `0x3d7a48` / `0x3d81e0` / `0x3d8340` / `0x3d89f0` /
+`0x3d8d90`) and 0x0b0b (`0x3d9020`, 783 lines). All three run on R&C2's enemy framework, a shared system to port
+first (`rc_game2::moby::ai`, one block per enemy instead of the pvar pointers):
+
+| Piece | Functions | What |
+| --- | --- | --- |
+| The blocks | pvars `[0]` health, `[0xc]` target, `[0x18]` movement (`0x32d968`), `[0x1c]` the damage hook | 0x099c puts the movement block at `+0x110`; its constants are in `0x3bbab0` |
+| Senses | `0x32dcf0(a, b, c, d)` | the movement block's turn and speed limits (`+0x14..+0x28`) |
+| Target | `0x32ad38(range, height, m, …)` → `0x32acb0` (within range and height), `0x32aa58` (distance, facing-weighted, Ratchet + 42), `0x31fa20` | Ratchet, the 0xcb and 0xeb0 lists, the decoys `0x1c5768` (none on Aranos) |
+| Damage | `0x327e38(m, block, flag)` → `0x31dce8` (the hit), `0x31dd48` (its damage), `0x32a2e0` (the hook), the weapon table `0x262544`, `0x3282b0` (the flinch / knock-back start), `0x326378` / `0x3262c8` | returns 0 none, 1 grazed, 2 / 3 hurt, 4 dead, 6 the flag's |
+| Movement | `0x32cc30(yaw offset, m, goal)` → `0x32cd20` → `0x32d918`, `0x32d800` (the floor line `0x2de878`), `0x32cee0` (turn `0x31f230`, speed, `0x321688` clamp), `0x32d2b8` (the push-out `0x32d978` / `0x32da88`, 8 tries), `0x32d468` (the ground, the ledge and wall flags `+0x94`, the walk animation speed), `0x32db38`, `0x32dee0` | once a frame per enemy (`+0xbc` the frame) |
+| Flinch | `0x328b80` → `0x328e90` (or `0x329970` with `$gp − 0x6000`) | the knock-back flight: gravity, the floor and wall lines, the landing, the bounce |
+| Shared helpers | `0x3201e8`, `0x31da58`, `0x31d180` / `0x31d2c8` (hit spheres), `0x3127c8` (a joint), `0x31ce20` / `0x31ce98` (the ground height), `0x31cd18` (a ballistic solve), `0x31ec88`, `0x31c1e0`, `0x32ce98`, `0x31a8e4` (the lighting), `0x343678` | |
+
+Then the enemies themselves, their bolt drops (`0x31adc0`) and their deaths (`0x3f8348`, the effects pass).
