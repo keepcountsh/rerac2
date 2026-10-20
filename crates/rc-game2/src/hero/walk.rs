@@ -287,7 +287,7 @@ impl Hero {
     }
 
     /// `0x2ca358`: the walk / run sequence and its playback speed.
-    fn walk_anim(&mut self, anim: &mut dyn AnimCtl) {
+    pub(super) fn walk_anim(&mut self, anim: &mut dyn AnimCtl) {
         let v = anim.view();
         if v.seq_b == 0x14 {
             self.set_anim(anim, 7.0, (self.substate + 3) as u8, 0);

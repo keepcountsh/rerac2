@@ -50,7 +50,10 @@ impl Hero {
         self.cam_mode = 0;
         // `0x18c0dc` (the items kept away) and `0x18c0d7` (no △ menu) clear on every change; the entries set them.
         self.items.no_use = 0;
-        if self.mode == 0 { self.no_menu = 0; }
+        if self.mode == 0 {
+            self.no_menu = 0;
+            self.no_update = false;
+        }
         if NO_MENU.contains(&id) { self.no_menu = 1; }
         if NO_ITEMS.contains(&id) { self.items.no_use = 1; }
         let entry = match module_of(id) {
@@ -66,6 +69,7 @@ impl Hero {
             Module::Swing => self.swing_entry(anim, env, id, play),
             Module::Water => self.water_entry(anim, env, id, play),
             Module::Clank => self.clank_entry(anim, env, id, play),
+            Module::Script => self.script_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -97,6 +101,7 @@ impl Hero {
             Module::Swing => self.phys_swing(env, anim),
             Module::Water => self.phys_water(env, anim),
             Module::Clank => self.phys_clank(env, anim),
+            Module::Script => self.phys_script(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -134,6 +139,7 @@ impl Hero {
             Module::Swing => self.trans_swing(env, anim),
             Module::Water => self.trans_water(env, anim),
             Module::Clank => self.trans_clank(env, anim),
+            Module::Script => self.trans_script(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.
