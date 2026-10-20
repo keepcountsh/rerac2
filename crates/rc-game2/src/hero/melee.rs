@@ -152,9 +152,48 @@ impl Hero {
             0x22 => {
                 if play { self.set_anim(anim, 9.0, 0x2c, 7); }
             }
+            0x1f => {
+                // The glove's punch (the item 0x35 in hand): the aim (11, 0.873), sequence 0x60.
+                if self.items.hand.is_some() && play { self.set_anim(anim, -1.0, 0x60, 4); }
+                self.aim_search(env, 11.0, 0.872_664_6, -1.0);
+            }
+            0x6d => {
+                // The swings on a magnetic walkway (rows 5 / 6, alternating when chained).
+                let row = if self.prev_state == 0x6d && SWINGS[self.melee.row.clamp(0, 8) as usize][KIND] == 0 { 6 } else { 5 };
+                self.melee.row = row;
+                let k = SWINGS[row as usize][KIND];
+                if play { self.set_anim(anim, 5.0, (k + 0x17) as u8, (k == 0) as i32); }
+            }
             _ => {}
         }
         Entry::Done
+    }
+
+    /// `0x2ba8e0` case 0x1f: the glove's punch — aimed in its first 4 ticks, a 0.3 push from tick 10 to 18 (speed
+    /// 0.0528 up, 0.025 down), three 0.8 spheres (ahead and ±50°, 0.8 out, 0.55 up) dealing 3 (flags 0x30000, thrown
+    /// 2 ahead and 1.3 up) from tick 10 to 22.
+    fn phys_glove(&mut self, env: &Env) {
+        if self.melee.aim == 0 && self.melee.target.is_none() {
+            if self.timer < 4 { self.aim_search(env, 11.0, 0.872_664_6, -1.0); }
+        } else {
+            self.target_yaw = self.melee.aim_yaw;
+            self.turn_to(0.05, 0.2, 0.283_121_5, 0);
+        }
+        self.target_speed = if 10 < self.timer && self.timer < 0x12 { 0.3 } else { 0.0 };
+        if 10 < self.timer { self.speed_step(0.052_777_78, 0.025); }
+        if self.melee.aim == 0 { self.set_planar_vel(f32::MAX) } else { self.set_planar_vel(self.melee.aim_yaw) }
+        if 10 < self.timer && self.timer < 0x16 && self.items.hand.is_some() {
+            let (s, c) = self.rot[2].sin_cos();
+            let dir = [c * 2.0, s * 2.0, 1.3];
+            for d in [0.0, -0.872_664_6, 0.872_664_6] {
+                let (s, c) = add_rot(self.rot[2], d).sin_cos();
+                let centre = add(self.pos, [c * 0.8, s * 0.8, 0.55]);
+                self.hits_out.push(super::HeroHit { centre, r: 0.8, damage: 3.0, flags: 0x30000, dir, joints: None });
+            }
+        }
+        if 10 < self.timer { self.edge_brake(env, 3.7, 0.0); }
+        self.wall_check(env, true);
+        if self.air_ticks != 0 { self.gravity_from(self.eff[2], 0.006_111_111) } else { self.vel[2] -= 0.015 }
     }
 
     /// `0x2b76a8(range, yaw cone, pitch cone)`: the aim. Nothing with a gadget item 0x20 or while aiming; with the
@@ -226,6 +265,12 @@ impl Hero {
         let v = anim.view();
         let sw = *self.swing();
         let frame = v.frame;
+        match self.state {
+            0x1f => return self.phys_glove(env),
+            0x6d => return self.phys_ground(env, anim),
+            0x93 => return,
+            _ => {}
+        }
         match self.state {
             0x13 => {
                 if v.blending() || frame < sw[HIT_TO] as f32 { self.items.use_state = 2; }
@@ -342,6 +387,15 @@ impl Hero {
         let sw = *self.swing();
         let frame = v.frame;
         let held_r1 = env.pad.held & button::R1 != 0;
+        match self.state {
+            0x1f => {
+                if self.items.hand.is_some() && !v.blending() && 20.0 < frame { self.set_state(anim, env, 0, false); }
+                return None;
+            }
+            0x6d => return ((sw[IDLE_AFTER] as f32) < frame).then_some(0),
+            0x93 => return None,
+            _ => {}
+        }
         match self.state {
             0x13 | 0x15 => {
                 let mut window = (frame as i32 - sw[REF]) * 2;

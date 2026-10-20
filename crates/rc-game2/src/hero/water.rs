@@ -369,7 +369,10 @@ impl Hero {
                 }
                 if self.state == 0x73 && anim.view().flags & 2 != 0 { return Some(0x33); }
                 if self.timer < 0x33 { return None; }
-                Some(if self.state == 0x72 { 0x36 } else { 0x33 })
+                // `SetState(n, 0)`: the hurt's sequence carries on.
+                let n = if self.state == 0x72 { 0x36 } else { 0x33 };
+                self.set_state(anim, env, n, false);
+                None
             }
             _ => None,
         }

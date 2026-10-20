@@ -121,6 +121,7 @@ impl Hero {
             0x2f => {
                 if env.pad.held & self.items.trigger != 0 || self.stagger != 0 { return None; }
                 if anim.view().seq_b != 0x36 { return Some(0); }
+                self.set_state(anim, env, 0, false);
                 None
             }
             0x30 => {

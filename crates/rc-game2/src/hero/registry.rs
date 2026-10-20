@@ -60,7 +60,7 @@ pub const STATES: &[StateInfo] = &[
     s(0x11, 4, Jump, true), s(0x12, 4, Jump, true), s(0x13, 6, Melee, true), s(0x14, 6, Melee, true),
     s(0x15, 6, Melee, true), s(0x16, 7, Damage, true), s(0x17, 3, Ledge, true), s(0x18, 3, Ledge, true),
     s(0x19, 3, Ledge, true), s(0x1a, 3, Ledge, true), s(0x1b, 4, Jump, true), s(0x1c, 9, Script, true),
-    s(0x1d, 0, Ground, true), s(0x1e, 9, Script, true), s(0x1f, -1, Unported, false), s(0x22, 6, Melee, true),
+    s(0x1d, 0, Ground, true), s(0x1e, 9, Script, true), s(0x1f, -1, Melee, true), s(0x22, 6, Melee, true),
     s(0x23, 0xd, Swing, true), s(0x24, 0xd, Swing, true), s(0x25, 0xd, Swing, true), s(0x26, 8, Misc, true),
     s(0x27, 0xf, Unported, false), s(0x28, 0xf, Unported, false), s(0x29, 0xf, Unported, false), s(0x2a, 0xf, Unported, false),
     s(0x2b, 0xe, Unported, false), s(0x2c, 2, Air, true), s(0x2e, 1, Walk, true), s(0x2f, 8, Misc, true),
@@ -73,14 +73,14 @@ pub const STATES: &[StateInfo] = &[
     s(0x4b, 5, Clank, true), s(0x4d, -1, Clank, true), s(0x4e, 2, Clank, true), s(0x5b, 4, Jump, true),
     s(0x60, -1, Script, true), s(0x61, 0x18, Script, true), s(0x62, 1, Script, true), s(0x63, 1, Script, true),
     s(0x64, 0, Script, true), s(0x65, 0x19, Damage, true), s(0x66, 0x19, Jump, true), s(0x67, 0x14, Damage, true),
-    s(0x6d, 6, Unported, false), s(0x6e, 4, Jump, true), s(0x6f, 9, Script, true), s(0x70, 1, Walk, true),
+    s(0x6d, 6, Melee, true), s(0x6e, 4, Jump, true), s(0x6f, 9, Script, true), s(0x70, 1, Walk, true),
     s(0x71, 0x1a, Unported, false), s(0x72, -1, Water, true), s(0x73, 7, Water, true), s(0x74, 0x14, Damage, true),
     s(0x75, 9, Script, true), s(0x76, 2, Misc, true), s(0x77, 10, Misc, true), s(0x78, 0x19, Damage, true),
     s(0x79, 0x14, Damage, true), s(0x7a, 0x14, Damage, true), s(0x7b, 0x1c, Unported, false), s(0x7c, 0x14, Damage, true),
     s(0x7d, 0x14, Damage, true), s(0x7f, 0x14, Damage, true), s(0x81, 4, Jump, true), s(0x82, 0x1e, Unported, false),
     s(0x83, 6, Melee, true), s(0x85, 0x20, Unported, false), s(0x86, 0x20, Unported, false), s(0x89, 4, Jump, true),
     s(0x8a, 0x21, Unported, false), s(0x8b, 0x21, Unported, false), s(0x8c, 7, Damage, true), s(0x92, 4, Jump, true),
-    s(0x93, 6, Unported, false),
+    s(0x93, 6, Melee, true),
 ];
 
 pub fn info(id: i32) -> Option<&'static StateInfo> { STATES.iter().find(|s| s.id == id) }

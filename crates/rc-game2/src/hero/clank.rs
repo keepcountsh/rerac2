@@ -310,7 +310,11 @@ impl Hero {
             0x42 => {
                 if 0x20 <= self.timer && self.air_ticks != 0 && 1.0 < self.height { return Some(0x41); }
                 if self.timer < 0x24 { return None; }
-                Some(if 0 < self.hp { 0x3f } else { 0x43 })
+                if 0 < self.hp {
+                    self.set_state(anim, env, 0x3f, false);
+                    return None;
+                }
+                Some(0x43)
             }
             0x43 => {
                 if v.flags & 2 != 0 { self.die(); }

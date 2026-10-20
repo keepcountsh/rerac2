@@ -171,12 +171,22 @@ impl Hero {
                 None
             }
             3 => {
+                if held & button::L1 != 0 { return Some(1); }
                 if self.land_lag == 0 && env.pad.pressed & button::CROSS != 0 { return Some(7); }
                 if self.land_lag == 0 && held & button::R1 != 0 { return Some(4); }
                 if 9 <= self.air_ticks && 0.3 < self.height { return Some(6); }
                 if anim.view().flags & 2 != 0 { return Some(0); }
+                // A rail in reach (`0x18a45c` → 0x27): no rail probe yet.
                 if self.stick_mag <= 0.2 || self.land_lag != 0 { return None; }
-                if self.speed == 0.0 { return Some(0); }
+                if self.idle_seq() == 0x51 {
+                    if 10.0 < self.anim_frame && self.set_state(anim, env, 0, false) {
+                        let seq = self.idle_seq();
+                        self.set_anim(anim, 17.0, seq, 0);
+                    }
+                } else if self.speed == 0.0 {
+                    self.set_state(anim, env, 0, false);
+                    return None;
+                }
                 (0.5 < self.stick_mag).then_some(2)
             }
             4 => {
