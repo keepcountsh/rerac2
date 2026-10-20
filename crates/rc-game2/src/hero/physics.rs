@@ -121,6 +121,32 @@ pub fn approach(t: f32, step: f32, x: &mut f32) -> f32 {
     (t - *x).abs()
 }
 
+/// `0x31ed78(t, accel, brake, max, &x, &v)`: x eased toward t — v speeds up by `accel` toward
+/// `min(√(2·brake·|e|), max)`, brakes by `brake` (1.1·brake when it would overshoot) once the stop distance `v²/2·brake`
+/// reaches the error, reverses by `brake` when moving away; x lands on t when within |v|. Returns the step.
+pub fn ease(t: f32, accel: f32, brake: f32, max: f32, x: &mut f32, v: &mut f32) -> f32 {
+    let e = t - *x;
+    if *v == 0.0 && e == 0.0 { return 0.0; }
+    if *v * e < 0.0 {
+        *v += if 0.0 <= *v { -brake } else { brake };
+        *x += *v;
+        return *v;
+    }
+    let stop = *v * *v / brake * 0.5;
+    if e.abs() < stop {
+        approach(0.0, if stop < e.abs() + v.abs() { brake } else { brake * 1.1 }, v);
+    } else {
+        let s = (2.0 * brake * e).abs().sqrt().min(max);
+        approach(if e < 0.0 { -s } else { s }, accel, v);
+    }
+    if e.abs() <= v.abs() {
+        *x = t;
+        return e;
+    }
+    *x += *v;
+    *v
+}
+
 /// `0x31e9c8(e, k, d, max, &v)`: v clamped to ±|e|, `v += k·e − d·v`, clamped to ±max (max > 0) and to ±|e| again.
 pub fn spring_vel(e: f32, k: f32, d: f32, max: f32, v: &mut f32) {
     let ae = e.abs();

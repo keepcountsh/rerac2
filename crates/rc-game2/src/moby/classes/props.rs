@@ -732,3 +732,157 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
 }
 
 fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] { [a[0] + b[0], a[1] + b[1], a[2] + b[2]] }
+
+/// 0x0ac1 (`0x3ced30`, the big lift): as the lifts above (the ends `+0x68`[0x94] / [0x98], [0x80] the end it is at,
+/// its pad 0x0c16 0.25 above), but its pad only starts it at the other end (state 2, up), with a camera tweak of
+/// priority 5 (distance 2, pivot 1.5; `[0x9c]`, `[0xa4]` held) and, the first time (`0x1a790c` = 0), the scene camera
+/// at (246.86, 198.19) — not ported. More than 12 off it comes to Ratchet (the looped sound 0 at the first end, 1 at
+/// the other). Up (2) it eases (`0x31ed78`: 1/514, 1/600, at most 0.1) and turns back down (3) with Ratchet more than
+/// 3 below; down it drops 0.08 a tick, slowing (k 0.02, d 0.3) and held over Ratchet once he is in the cuboid [0xb0].
+/// It waits at the top while he is within 1.2, at the bottom within 1 (the sound 1, the tweak released).
+pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::physics::{dist, ease, spring};
+    let (old, old_yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
+    let hp = ctx.hero.pos;
+    let pad = |w: &MobyWorld| usize::try_from(w.mobys[id].pv_i(0xa0)).ok().filter(|&i| i < w.mobys.len());
+    let stop_loop = |w: &mut MobyWorld, ctx: &mut Ctx| {
+        let h = w.mobys[id].pv_i(0x88);
+        if h != -1 { ctx.host.stop_sound(h); }
+        w.mobys[id].set_pv_i(0x88, -1);
+    };
+    let loop_on = |w: &mut MobyWorld, ctx: &mut Ctx, s: i32| {
+        if !ctx.host.sound_playing(w.mobys[id].pv_i(0x88)) {
+            let h = ctx.host.play_sound(&w.mobys[id], s, 4);
+            w.mobys[id].set_pv_i(0x88, h);
+        }
+    };
+    let release = |w: &mut MobyWorld, ctx: &mut Ctx| {
+        if w.mobys[id].pv_i(0xa4) != 0 {
+            ctx.game.cam_tweaks.release(w.mobys[id].pv_i(0x9c) as usize);
+            w.mobys[id].set_pv_i(0xa4, 0);
+        }
+    };
+    let pad_on = |w: &mut MobyWorld, on: bool| {
+        let coll = on && w.class(0x0c16).is_some_and(|c| c.has_collision);
+        if let Some(p) = pad(w) { w.mobys[p].has_collision = coll; }
+    };
+    match w.mobys[id].state {
+        0 => {
+            let m = &mut w.mobys[id];
+            m.mode |= 0x800;
+            m.set_pv_i(0x5c, m.pv_i(0x5c) | 1);
+            m.set_pv_v(0x60, m.pos);
+            m.set_pv_i(0xac, 0);
+            m.state = 1;
+            let (z, other) = (m.pos[2], m.pv_f(0x8c));
+            let flip = m.pv_i(0x90) != 0;
+            m.set_pv_f(0x94, if flip { other } else { z });
+            m.set_pv_f(0x98, if flip { z } else { other });
+            m.set_pv_i(0x80, flip as i32);
+            m.set_pv_i(0x84, 0);
+            m.set_pv_i(0x88, -1);
+            let (pos, ud, dd) = (m.pos, m.update_dist, m.draw_dist);
+            let p = w.create(0x0c16);
+            let pm = &mut w.mobys[p];
+            pm.update_dist = ud;
+            pm.draw_dist = dd;
+            pm.drawn = 1;
+            pm.pos = add3(pos, [0.0, 0.0, 0.25]);
+            w.mobys[id].set_pv_i(0xa0, p as i32);
+            let ph = ctx.game.rng.rand_angle();
+            w.mobys[id].set_pv_f(0xa8, ph);
+        }
+        1 => {
+            let m = &mut w.mobys[id];
+            m.set_pv_f(0xa8, crate::hero::physics::add_rot(m.pv_f(0xa8), 0.104_719_76));
+            let on = pad(w).is_some_and(|p| ctx.hero.ground_moby == Some(p) && ctx.hero.air_ticks == 0);
+            if on && w.mobys[id].pv_i(0x80) != 0 {
+                w.mobys[id].set_state(2, -1);
+                w.mobys[id].set_pv_i(0xac, 0);
+                pad_on(w, false);
+                loop_on(w, ctx, 0);
+                if let Some(slot) = ctx.game.cam_tweaks.request(5) {
+                    let t = &mut ctx.game.cam_tweaks.slots[slot];
+                    t.dist = 2.0;
+                    t.pivot_h = 1.5;
+                    w.mobys[id].set_pv_i(0x9c, slot as i32);
+                    w.mobys[id].set_pv_i(0xa4, 1);
+                }
+            }
+            let dz = (w.mobys[id].pos[2] - hp[2]).abs();
+            let at = w.mobys[id].pv_i(0x80);
+            if 12.0 < dz && at == 0 {
+                loop_on(w, ctx, 0);
+                w.mobys[id].set_state(3, -1);
+                pad_on(w, false);
+            } else if 12.0 < dz && at == 1 {
+                loop_on(w, ctx, 1);
+                w.mobys[id].set_state(2, -1);
+                w.mobys[id].set_pv_i(0xac, 0);
+                pad_on(w, false);
+            }
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            let t = m.pv_f(0x94);
+            if 0.14 < dist(m.pos, [m.pos[0], m.pos[1], t]) {
+                let (mut z, mut v) = (m.pos[2], m.pv_f(0xac));
+                ease(t, 0.001_944_444, 0.001_666_667, 0.1, &mut z, &mut v);
+                m.pos[2] = z;
+                m.set_pv_f(0xac, v);
+                m.set_pv_i(0x84, m.pv_i(0x84) + 1);
+            } else if 1.2 < dist(m.pos, hp) {
+                release(w, ctx);
+                w.mobys[id].set_pv_i(0x80, 0);
+                stop_loop(w, ctx);
+                w.mobys[id].set_state(1, -1);
+                pad_on(w, true);
+            } else {
+                if 0 < w.mobys[id].pv_i(0x84) {
+                    ctx.host.play_sound(&w.mobys[id], 1, 0);
+                    w.mobys[id].set_pv_i(0x84, 0);
+                }
+                release(w, ctx);
+                stop_loop(w, ctx);
+            }
+            let z = w.mobys[id].pos[2];
+            if 3.0 < (z - hp[2]).abs() && hp[2] < z { w.mobys[id].set_state(3, -1); }
+        }
+        3 => {
+            let m = &mut w.mobys[id];
+            let t = m.pv_f(0x98);
+            if t < m.pos[2] {
+                if !ctx.level.in_cuboid(m.pv_i(0xb0), hp) {
+                    m.pos[2] -= 0.08;
+                    m.set_pv_i(0x84, m.pv_i(0x84) + 1);
+                } else if !(m.pos[2] - hp[2] < 1.8 && hp[2] < m.pos[2]) {
+                    let (mut z, mut v) = (m.pos[2], m.pv_f(0xac));
+                    spring(t, 0.02, 0.3, 0.1, &mut z, &mut v);
+                    m.pos[2] = z;
+                    m.set_pv_f(0xac, v);
+                    m.set_pv_i(0x84, m.pv_i(0x84) + 1);
+                }
+            } else if dist(m.pos, hp) <= 1.0 {
+                release(w, ctx);
+                stop_loop(w, ctx);
+            } else {
+                ctx.host.play_sound(&w.mobys[id], 1, 0);
+                release(w, ctx);
+                w.mobys[id].set_pv_i(0x80, 1);
+                stop_loop(w, ctx);
+                w.mobys[id].set_state(1, -1);
+                pad_on(w, true);
+                w.mobys[id].set_pv_i(0x84, 0);
+            }
+        }
+        _ => {}
+    }
+    let (pos, yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
+    crate::moby::carry_hero(ctx, id, old, old_yaw, pos, yaw);
+    if let Some(p) = pad(w) {
+        let at = add3(pos, [0.0, 0.0, 0.25]);
+        crate::moby::carry_hero(ctx, p, w.mobys[p].pos, yaw, at, yaw);
+        w.mobys[p].pos = at;
+    }
+    w.changed = true;
+}
