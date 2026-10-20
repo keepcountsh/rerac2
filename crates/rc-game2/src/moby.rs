@@ -153,6 +153,63 @@ pub struct Moby {
     pub state_ticks: i16,
 }
 
+/// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
+pub struct SpawnRules<'a> {
+    pub game: &'a mut crate::game::GameState,
+    /// The level's first load (`0x3012a0`'s argument 0); a respawn clears the count of flag-8 records instead.
+    pub fresh: bool,
+    /// The ground height below a point (`0x31ce20`), for the rooted records.
+    pub ground: &'a dyn Fn(V3) -> Option<f32>,
+}
+
+impl SpawnRules<'_> {
+    /// Whether the record stays out, and whether it takes the alternative bolts / XP (words 6 / 8). The rank test
+    /// (word 9 against the mission's rank `0x2e4450`) leaves the challenge mobys out, banking their rewards for the
+    /// mission (`0x1c5400` / `0x1c54c0`); the flags (word 3): 0 always; dead since the checkpoint (`0x21e1c4`):
+    /// never; bits 0 / 1 by the mission's table `0x1b1c60` (bit 1: the uid's bit 3 set, its count cleared, the
+    /// alternative rewards); bit 2 (with 3 clear) once — not while the uid's count is set; bit 3 the count cleared on
+    /// a respawn, not spawned on a first load with a count.
+    pub fn test(&mut self, r: &Rac2MobyInstance) -> (bool, bool) {
+        let b = &r.base;
+        let g = &mut *self.game;
+        let (mission, sub, flags, uid, rank) = (b.unknown_4, b.spawn_flags, b.spawn_id, r.extra[0] as i16, b.unknown_14);
+        if 0 <= mission && 0 < rank {
+            let mut have = g.mission(mission as u8, sub as u8) as i32;
+            if have == 0 { have = 1; }
+            if b.o_class == 0x1f5 || b.o_class == 0x200 {
+                if rank < have { return (true, false); }
+            } else if have < rank {
+                let k = (mission as usize & 0xf) * 3 + (sub as usize & 3);
+                if let Some(x) = g.mission_xp.get_mut(k) { *x += r.extra[3]; }
+                if let Some(x) = g.mission_bolts.get_mut(k) { *x += r.extra[1]; }
+                return (true, false);
+            }
+        }
+        if flags == 0 { return (false, false); }
+        if g.uid_dead.get(uid.max(0) as usize).copied().unwrap_or(0) != 0 { return (true, false); }
+        if flags & 3 == 0 {
+            if flags & 8 == 0 {
+                return (flags & 0xc == 4 && g.uid_count(uid) != 0, false);
+            }
+            if self.fresh { return (g.uid_count(uid) != 0, false); }
+            g.clear_uid(uid);
+            return (false, false);
+        }
+        let active = g.mission_table.get(mission.max(0) as usize).copied().unwrap_or(0) & 0x80 != 0;
+        if !active { return (flags & 1 == 0, false); }
+        if flags & 2 == 0 { return (true, false); }
+        if !g.uid_flag(uid) { g.set_uid_flag(uid); }
+        (false, true)
+    }
+}
+
+/// `0x2eeab0` / `0x2eeae0`: a countdown — 1 down (not below 0); true when it was 0 already or just reached it.
+pub fn countdown(x: &mut i32) -> bool {
+    if *x == 0 { return true; }
+    *x = (*x).max(1) - 1;
+    *x < 1
+}
+
 impl Moby {
     /// `0x31b8d0(moby, state, sub)`: a new state (the last kept, its ticks from 0; `sub` ≥ 0 sets the sub-state).
     pub fn set_state(&mut self, state: u8, sub: i32) {
@@ -303,22 +360,35 @@ impl MobyWorld {
     /// without spawn flags), the scale (class × instance), draw and update distances, position, Euler angles, group,
     /// the mode bits of the record (also OR'd into the class's), and the matrix rebuild when the class is loaded.
     /// `instance(i)` is the engine's placed-instance index of record `i`.
-    pub fn spawn_static(&mut self, records: &[Rac2MobyInstance], data: &SpawnData, host: &dyn MobyHost) {
-        // Record index → runtime moby (`0x1fb5e0`; every record spawns here: the spawn conditions are not ported).
-        let map: Vec<i32> = (0..records.len() as i32).map(|i| self.mobys.len() as i32 + i).collect();
+    pub fn spawn_static(&mut self, records: &[Rac2MobyInstance], data: &SpawnData, host: &dyn MobyHost, rules: &mut SpawnRules) {
+        // Which records spawn (the rules of `0x3012a0`), and the record index → runtime moby (`0x1fb5e0`).
+        let mut map = vec![-1i32; records.len()];
+        let mut alt = vec![false; records.len()];
+        let mut n = self.mobys.len() as i32;
         for (i, r) in records.iter().enumerate() {
+            let (skip, use_alt) = rules.test(r);
+            alt[i] = use_alt;
+            if skip { continue; }
+            map[i] = n;
+            n += 1;
+        }
+        for (i, r) in records.iter().enumerate() {
+            if map[i] < 0 { continue; }
             let b = &r.base;
             let class = self.class(b.o_class as i16).cloned();
             let mut m = Moby::init(self.mobys.len(), b.o_class as i16, class.as_ref());
             m.uid = r.extra[0] as i16;
-            m.bolts = r.extra[1] as i16;
-            m.xp = r.extra[3] as i16;
+            (m.bolts, m.xp) = if alt[i] { (r.extra[2] as i16, b.unknown_10 as i16) } else { (r.extra[1] as i16, r.extra[3] as i16) };
             m.mission = b.unknown_4 as u8;
             m.sub_index = (b.spawn_flags & 0xf) as u8 | if b.spawn_id == 0 { 0x80 } else { 0 };
             if let Some(c) = &class { m.scale = c.scale * b.scale; }
             m.draw_dist = b.draw_distance as i16;
             m.update_dist = b.update_distance as u8;
             m.pos = b.position;
+            // Rooted (word 0x17): on the ground below (`0x31ce20(0.5, pos)`) + the word 0x18.
+            if b.is_rooted != 0 {
+                if let Some(z) = (rules.ground)(m.pos) { if 0.0 < z { m.pos[2] = z + b.rooted_distance; } }
+            }
             m.rot = b.rotation;
             m.group = b.group as i8;
             m.mode |= b.mode_bits as u16;

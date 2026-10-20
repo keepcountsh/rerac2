@@ -68,6 +68,8 @@ struct Play {
     hud: rc_game2::hud::Hud,
     ticks: u64,
     trace: bool,
+    /// The level's objects spawned once (later spawns are respawns).
+    loaded: bool,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -107,7 +109,9 @@ fn tick(
             .unwrap_or(crate::rac2_level::ClassBlobs { collision: Vec::new(), blobs: Default::default() });
         let mut created = Default::default();
         let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut created, hero: None, hero_chains: &[], camera: p.camera.pos };
-        let m = crate::rac2_mobys::Rac2Mobys::load(lv, blobs, &host);
+        let fresh = !p.loaded;
+        let m = crate::rac2_mobys::Rac2Mobys::load(lv, blobs, &host, &mut p.game, fresh);
+        p.loaded = true;
         println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
     }
@@ -217,10 +221,16 @@ fn tick(
     p.ticks += 1;
     // `0x2b31f0`'s respawn request: Ratchet back at his start with full health (the checkpoints and the fade are not
     // ported); the world keeps its state.
+    // `0x2b31f0`'s respawn request: the level restarts from the checkpoint (the spawn points', else Ratchet's start):
+    // the objects spawn again by their rules (the ones gone for good stay out), Ratchet there with full health. The
+    // fade is not ported.
     if p.hero.damage.dead {
         let inst = &lv.mobys.instances[p.instance];
         let armour = p.hero.damage.armour;
-        p.hero = Hero::spawn(inst.position, inst.rotation[2]);
+        let (at, rot) = p.game.checkpoint.unwrap_or((inst.position, inst.rotation));
+        p.game.restart();
+        p.mobys = None;
+        p.hero = Hero::spawn(at, rot[2]);
         p.hero.hp = p.game.max_health;
         p.hero.damage.armour = armour;
         p.anim = RatchetAnim::new(&lv.mobys.anim[p.class]);
@@ -327,7 +337,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     println!("rac2: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
-        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0,
+        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
 }

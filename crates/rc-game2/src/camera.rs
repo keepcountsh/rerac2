@@ -243,9 +243,12 @@ impl CamTweaks {
         if s.face_once { cam.face_toward(rate, s.dir, 0.0); }
         if s.face_rest {
             let sl = &mut self.slots[i];
-            if 0 < sl.rest_t {
+            // `0x2eeae0`: done (already 0, or just run out) → face the direction.
+            if sl.rest_t <= 1 {
+                sl.rest_t = 0;
+                cam.face_toward(rate, sl.dir, 0.0);
+            } else {
                 sl.rest_t -= 1;
-                if sl.rest_t == 0 { cam.face_toward(rate, sl.dir, 0.0); }
             }
             if 0.01 < inp.rstick[0].abs() || 0.01 < inp.rstick[1].abs() { sl.rest_t = sl.rest_len; }
         }

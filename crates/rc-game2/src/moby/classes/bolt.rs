@@ -116,6 +116,11 @@ fn attract(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
 /// `0x382c18`: the value to the bolt count, the counter shown, the bolt gone.
 fn collect(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let v = bolt_value(w.mobys[id].o_class);
+    // A placed bolt stays gone (`0x21d554` / `0x21e1c4`).
+    if w.mobys[id].instance.is_some() {
+        let (uid, mission) = (w.mobys[id].uid, w.mobys[id].mission);
+        ctx.game.uid_gone(uid, mission);
+    }
     ctx.game.bolts = ctx.game.bolts.saturating_add(v as u32);
     ctx.game.show_bolts = Some(0xb4);
     w.delete(id);

@@ -175,7 +175,7 @@ impl MobyHost for Host<'_> {
 
 impl Rac2Mobys {
     /// The class table (core order) and the static spawn of the level's moby instances.
-    pub fn load(lv: &crate::level_load::LoadedLevel, blobs: crate::rac2_level::ClassBlobs, host: &Host) -> Rac2Mobys {
+    pub fn load(lv: &crate::level_load::LoadedLevel, blobs: crate::rac2_level::ClassBlobs, host: &Host, game: &mut rc_game2::game::GameState, fresh: bool) -> Rac2Mobys {
         let m = &lv.mobys;
         let classes = m
             .classes
@@ -201,7 +201,12 @@ impl Rac2Mobys {
             fixups: g2::pvar_fixups(&lv.gameplay, "pvar_pointer_fixups").unwrap_or_default(),
             groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("rac2: moby groups: {e}")).unwrap_or_default(),
         };
-        world.spawn_static(&records, &data, host);
+        let ground = |p: [f32; 3]| -> Option<f32> {
+            let coll = lv.collision.as_ref()?;
+            rc_game::collision_query::coll_line(coll, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.01], rc_game::collision_query::QueryFlags(2)).map(|o| o.point[2])
+        };
+        let mut rules = rc_game2::moby::SpawnRules { game, fresh, ground: &ground };
+        world.spawn_static(&records, &data, host, &mut rules);
         let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
         let hero_chains = m
             .classes

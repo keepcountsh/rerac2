@@ -231,3 +231,32 @@ pub fn update_0919(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         w.mobys[id].set_pv_i(0x28, 0);
     }
 }
+
+/// 0x0c8c (`0x3ec880`): rooms swapped by where Ratchet is — entering its cuboid (`+0x68`[0x10]) hides the members of
+/// its four groups (`[0..0x10]`, those with more than one member alive: mode |= 0x43, hidden and still), leaving it
+/// shows them again.
+pub fn update_0c8c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let vol = w.mobys[id].pv_i(0x10);
+    if w.mobys[id].state == 0 && ctx.level.in_cuboid(vol, ctx.hero.pos) { w.mobys[id].state = 1; }
+    let swap = |w: &mut MobyWorld, hide: bool| {
+        for k in 0..4 {
+            let g = w.mobys[id].pv_i(4 * k);
+            if group_alive(w, g) < 2 { continue; }
+            let members = w.groups[g as usize].clone();
+            for i in members {
+                let m = &mut w.mobys[i];
+                if hide { m.mode |= 0x43 } else { m.mode &= !0x43 }
+            }
+        }
+        w.changed = true;
+    };
+    if w.mobys[id].state == 1 {
+        swap(w, true);
+        w.mobys[id].state = 2;
+    }
+    if w.mobys[id].state == 2 && !ctx.level.in_cuboid(vol, ctx.hero.pos) { w.mobys[id].state = 3; }
+    if w.mobys[id].state == 3 {
+        swap(w, false);
+        w.mobys[id].state = 0;
+    }
+}

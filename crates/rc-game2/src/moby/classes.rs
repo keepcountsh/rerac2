@@ -4,6 +4,7 @@
 pub mod bolt;
 pub mod crate_;
 pub mod props;
+pub mod spawn_point;
 pub mod wrench;
 
 use super::UpdateFn;
@@ -27,6 +28,8 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x12fa | 0x1143 => Some(props::update_breakable),
         0x132d => Some(props::update_132d),
         0x0919 => Some(props::update_0919),
+        0x0c8c => Some(props::update_0c8c),
+        0x0325 => Some(spawn_point::update),
         _ => None,
     }
 }

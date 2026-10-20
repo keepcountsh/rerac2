@@ -42,6 +42,8 @@ pub fn drop(w: &mut MobyWorld, id: usize, flags: u32, limit: i32, ctx: &mut Ctx)
     let table = &BOLT_PERCENT[g.uid_flag(uid) as usize];
     let value = table[g.uid_count(uid) as usize] as i32 * base as i32 / 100;
     g.bump_uid(uid);
+    let mission = w.mobys[id].mission;
+    g.uid_gone(uid, mission);
     let mut f = value as f32 + bank as f32;
     let mut spawn_flags = if flags & 0x100 != 0 { 5 } else { 1 };
     if flags & 0x200 != 0 { spawn_flags |= 2; }

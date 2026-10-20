@@ -52,6 +52,22 @@ pub struct GameState {
     pub mission_area: u8,
     /// The camera-tweak requests (`0x1bb970`).
     pub cam_tweaks: crate::camera::CamTweaks,
+    /// Per uid: `0x21d554` what happened since the checkpoint (the mission + 2), `0x21e1c4` gone for good (a respawn
+    /// leaves it out); `0x1b1c60` the missions' table (bit 7: running); `0x1c5400` / `0x1c54c0` the missions' banked XP
+    /// and bolts (mission·3 + sub).
+    pub uid_pending: Vec<u8>,
+    pub uid_dead: Vec<u8>,
+    pub mission_table: Vec<u8>,
+    pub mission_xp: Vec<i32>,
+    pub mission_bolts: Vec<i32>,
+    /// The checkpoint (`0x21dd70` position, `0x21dd80` angles), from the spawn points.
+    pub checkpoint: Option<([f32; 3], [f32; 3])>,
+    /// `0x21ddc0`: the level's uid bits as the checkpoint kept them (a respawn puts them back).
+    pub checkpoint_bits: Vec<u8>,
+    /// The checkpoint message's ticks to show (`0x327448(0x2dcc, 0x5a)`) and the spawn point that showed it last
+    /// (`$gp + 0x400`).
+    pub checkpoint_message: Option<i32>,
+    pub last_checkpoint: Option<usize>,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -66,7 +82,8 @@ impl Default for GameState {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
-            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(),
+            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None,
         }
     }
 }
@@ -129,6 +146,51 @@ impl GameState {
     pub fn uid_flag(&self, uid: i16) -> bool {
         let b = self.uid_bits.get((uid as i32 >> 1).max(0) as usize).copied().unwrap_or(0);
         (if uid & 1 != 0 { b >> 4 } else { b }) & 8 != 0
+    }
+
+    /// The count cleared (bit 3 kept).
+    pub fn clear_uid(&mut self, uid: i16) {
+        let Some(b) = self.uid_bits.get_mut((uid as i32 >> 1).max(0) as usize) else { return };
+        if uid & 1 != 0 { *b &= 0x8f } else { *b &= 0xf8 }
+    }
+
+    /// Bit 3 set, the count cleared.
+    pub fn set_uid_flag(&mut self, uid: i16) {
+        let Some(b) = self.uid_bits.get_mut((uid as i32 >> 1).max(0) as usize) else { return };
+        if uid & 1 != 0 { *b = (*b | 0x80) & 0x8f } else { *b = (*b | 8) & 0xf8 }
+    }
+
+    /// An object gone (`0x31adc0`, `0x381e60`): marked since the checkpoint (the mission + 2), and for good when
+    /// its mission is none or running and not the table's.
+    pub fn uid_gone(&mut self, uid: i16, mission: u8) {
+        let u = uid.max(0) as usize;
+        if let Some(p) = self.uid_pending.get_mut(u) { *p = mission.wrapping_add(2); }
+        let lv = self.missions.get(self.level.max(0) as usize * 0x10 + mission as usize).copied().unwrap_or(0);
+        if mission == 0xff || (self.mission_table.get(mission as usize).copied().unwrap_or(0) & 0x80 == 0 && lv & 0x80 != 0) {
+            if let Some(d) = self.uid_dead.get_mut(u) { *d = mission.wrapping_add(2); }
+        }
+    }
+
+    /// `0x359b20`: the checkpoint — the position and angles kept, and what happened since the last one made
+    /// permanent (a pending uid of no mission or a running one: gone for good, its save count + 1).
+    pub fn save_checkpoint(&mut self, pos: [f32; 3], rot: [f32; 3]) {
+        for u in 0..self.uid_pending.len().min(0x7ff) {
+            let v = self.uid_pending[u];
+            if v == 0 { continue; }
+            let lv = self.missions.get(self.level.max(0) as usize * 0x10 + (v as usize).wrapping_sub(2) % 0x10).copied().unwrap_or(0);
+            if v == 1 || lv & 0x80 != 0 {
+                self.uid_dead[u] = v;
+                self.bump_uid(u as i16);
+            }
+        }
+        self.checkpoint = Some((pos, rot));
+        self.checkpoint_bits = self.uid_bits.clone();
+    }
+
+    /// The level restarted from the checkpoint (`0x2b31f0`'s request): the uid bits as it kept them, nothing pending.
+    pub fn restart(&mut self) {
+        if !self.checkpoint_bits.is_empty() { self.uid_bits = self.checkpoint_bits.clone(); }
+        self.uid_pending.iter_mut().for_each(|p| *p = 0);
     }
 
     /// The count + 1 (saturating at 7).
