@@ -260,3 +260,43 @@ pub fn update_0c8c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         w.mobys[id].state = 0;
     }
 }
+
+/// 0x0c22 (`0x3e8be8`, the tutorial's help): Ratchet in its cuboids (`+0x68`[0..8]) asks for the help texts —
+/// [0] 0x9ab (slot 2), [1] 0x9ac / 0x9ad by the weapon (slots 3 / 4), [3] with its group [5] alive 0x9b0 / 0x9b2 /
+/// 0x9b1 (7 / 9 / 8), [2] 0x9ae (5), [4] 0x9b3 (10), each until its slot counts a dismissal (the player stats that
+/// also stop some, `0x18c7b0` / `0x18c828` / `0x18c840`, are not kept: 0); near a crate stack
+/// (class 0x326 within 10, not broken) 0x9af (6) with health missing, 0x9e7 (0x3e) right at it. In [6] or [7] the
+/// items are kept away (`0x18c310`).
+pub fn update_0c22(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &w.mobys[id];
+    if m.state == 0 {
+        let m = &mut w.mobys[id];
+        m.state = 1;
+        m.update_dist = 0xff;
+        return;
+    }
+    let p = ctx.hero.pos;
+    let g = &mut *ctx.game;
+    let lv = ctx.level;
+    let v = |k: usize| m.pv_i(4 * k);
+    if g.help_count(6) == 0 && g.help_req.is_none() && g.help_state == 0 {
+        for o in w.mobys.iter().filter(|o| o.o_class == 0x326 && o.state < 0x80) {
+            let d = crate::hero::physics::dist(o.pos, p);
+            if 10.0 <= d || o.state == 1 { continue; }
+            if ctx.hero.hp < g.max_health {
+                g.help(0x9af, 6);
+            } else if d < 1.0 && g.help_count(0x3e) == 0 {
+                g.help(0x9e7, 0x3e);
+            }
+        }
+    }
+    if lv.in_cuboid(v(0), p) && g.help_count(2) == 0 { g.help(0x9ab, 2); }
+    if lv.in_cuboid(v(1), p) && g.help_count(3) == 0 && g.help_count(4) == 0 { g.help(0x9ac, 3); }
+    if lv.in_cuboid(v(3), p) && g.help_count(7) == 0 && g.help_count(8) == 0 && g.help_count(9) == 0 && group_alive(w, v(5)) != 0 {
+        // 0x9b0 (7) with the item 0x2a out, 0x9b1 (8) once the stat `0x18c840` counts: neither is kept here.
+        g.help(0x9b2, 9);
+    }
+    if lv.in_cuboid(v(2), p) && g.help_count(5) == 0 { g.help(0x9ae, 5); }
+    if lv.in_cuboid(v(4), p) && g.help_count(10) == 0 { g.help(0x9b3, 10); }
+    g.no_item_area = lv.in_cuboid(v(6), p) || lv.in_cuboid(v(7), p);
+}

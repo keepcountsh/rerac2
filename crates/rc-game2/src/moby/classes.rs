@@ -34,6 +34,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0325 => Some(spawn_point::update),
         0x02a7 => Some(chute::update),
         0x0ac7 => Some(gate::update),
+        0x0c22 => Some(props::update_0c22),
         _ => None,
     }
 }

@@ -58,7 +58,8 @@ pub const SECTIONS: [(&str, &str); HEADER_WORDS] = [
     ("occlusion_mappings", "content"),
     // New in R&C2: RGBA5551 colours for the ties' vertices (the colour indices of R&C1's tie packets are gone).
     ("tie_colors", "content"),
-    ("unknown_38", "order"),
+    // The trigger areas (L00 `0x3012a0` → `0x1b1a80`, tested by `0x32a848`).
+    ("areas", "content"),
     ("unused_39", "order"),
 ];
 
@@ -297,6 +298,38 @@ pub fn paths(gameplay: &[u8]) -> Result<Vec<Vec<[f32; 4]>>> {
             let n = b.i32(p)?;
             if !(0..=0x10000).contains(&n) { return invalid(format!("path {i}: {n} points")); }
             (0..n as usize).map(|k| { let q = p + 0x10 + 0x10 * k; Ok([b.f32(q)?, b.f32(q + 4)?, b.f32(q + 8)?, b.f32(q + 12)?]) }).collect()
+        })
+        .collect()
+}
+
+/// A trigger area (section 38 `areas`, 0x30 bytes from `+0x20`): its bounding sphere and the volumes it is made of —
+/// paths (xy polygons), cuboids, spheres, cylinders and a fifth kind (unused here) — as indices.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Area {
+    pub sphere: [f32; 4],
+    pub lists: [Vec<i32>; 5],
+}
+
+/// The areas: `s32 count`, the five lists' offsets (`+0x04..+0x14`, from the section's start), then the records
+/// (`+0x10` five s16 counts, `+0x1c` five offsets into their lists).
+pub fn areas(gameplay: &[u8]) -> Result<Vec<Area>> {
+    let Some(s) = section(gameplay, "areas")? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let n = b.i32(0)?;
+    if !(0..=0x1000).contains(&n) { return invalid(format!("areas: count {n}")); }
+    let bases: Vec<usize> = (0..5).map(|k| b.i32(4 + 4 * k).map(|v| v as usize)).collect::<Result<_>>()?;
+    (0..n as usize)
+        .map(|i| {
+            let r = 0x20 + 0x30 * i;
+            let sphere = [b.f32(r)?, b.f32(r + 4)?, b.f32(r + 8)?, b.f32(r + 12)?];
+            let mut lists: [Vec<i32>; 5] = Default::default();
+            for k in 0..5 {
+                let c = b.u16(r + 0x10 + 2 * k)? as i16;
+                if c <= 0 || bases[k] == 0 { continue; }
+                let o = bases[k] + b.i32(r + 0x1c + 4 * k)? as usize;
+                lists[k] = (0..c as usize).map(|j| b.i32(o + 4 * j)).collect::<Result<_>>()?;
+            }
+            Ok(Area { sphere, lists })
         })
         .collect()
 }

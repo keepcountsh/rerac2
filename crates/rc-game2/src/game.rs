@@ -68,6 +68,13 @@ pub struct GameState {
     /// (`$gp + 0x400`).
     pub checkpoint_message: Option<i32>,
     pub last_checkpoint: Option<usize>,
+    /// The help panel (`0x27d7c8` its state, 0 none; `0x27d7ec` / `0x27d7f0` the text asked for and its slot) and
+    /// the slots' counts (`0x18c958 + 0xc·slot`: the times △ dismissed it; −1 off).
+    pub help_state: i32,
+    pub help_req: Option<(i32, i32)>,
+    pub help_counts: Vec<i16>,
+    /// `0x18c310`: Ratchet in one of the tutorial's no-item areas.
+    pub no_item_area: bool,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -83,12 +90,24 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None,
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false,
         }
     }
 }
 
 impl GameState {
+    /// `0x2f5270(text, slot)`: ask for a help text — only with no panel up or asked for, the slot not off, past the
+    /// sixth frame.
+    pub fn help(&mut self, text: i32, slot: i32) -> bool {
+        if self.help_state != 0 || self.help_req.is_some() || self.frame <= 5 { return false; }
+        if self.help_counts.get(slot.max(0) as usize).copied().unwrap_or(-1) == -1 { return false; }
+        self.help_req = Some((text, slot));
+        true
+    }
+
+    /// A help slot's count.
+    pub fn help_count(&self, slot: usize) -> i16 { self.help_counts.get(slot).copied().unwrap_or(0) }
+
     /// The two progress bits of a mission's sub-mission on this level.
     pub fn mission(&self, mission: u8, sub: u8) -> u8 {
         let b = self.missions.get(self.level.max(0) as usize * 0x10 + mission as usize).copied().unwrap_or(0);
