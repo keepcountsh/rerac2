@@ -22,6 +22,7 @@ pub mod air;
 pub mod ground;
 pub mod items;
 pub mod jump;
+pub mod ledge;
 pub mod melee;
 pub mod physics;
 pub mod registry;
@@ -106,6 +107,8 @@ pub struct JumpBlock {
     pub flip_stick_dir: V3,
     pub flip_speed: f32,
     pub flip_push: f32,
+    /// `0x18a2dc`: the climb's forward push.
+    pub climb_push: f32,
 }
 
 /// The hero block. Addresses are L00 (the boot ELF's .bss: the same in every level).
@@ -235,6 +238,10 @@ pub struct Hero {
     pub items: items::ItemBlock,
     /// `0x189f70`: the platform carry of this tick's move (no platforms yet: zero).
     pub carry: V3,
+    /// The ledge block (`0x18a370..`) and the regrab cooldown `0x189ff0`.
+    pub ledge: ledge::LedgeBlock,
+    /// `0x18aa58`: Ratchet's animation frame as the last advance left it (the probes read it).
+    pub anim_frame: f32,
     /// States the port has not got, reported once each.
     pub unported_seen: Vec<i32>,
 }
@@ -258,7 +265,7 @@ impl Hero {
             quick_turn: 0, run_dir: [1.0, 0.0, 0.0], run_yaw: 0.0, anim_speed: 1.0, state: 0, substate: 0, group: 0,
             prev_state: 0, prev_group: 0, prev2_state: 0, prev2_group: 0, prev_timer: 0, cam_mode: 0, mode: 0, jump: JumpBlock { air_turn: 0.250_011_4, terminal: 0.833_333_3, ..JumpBlock::default() },
             pos_hist: [[0.0; 3]; HISTORY], pos_hist_idx: 0, pos_hist_count: 0, yaw_hist: [0.0; HISTORY], yaw_hist_idx: 0,
-            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], unported_seen: Vec::new(),
+            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, unported_seen: Vec::new(),
         }
     }
 
@@ -327,6 +334,7 @@ impl Hero {
         self.seq_timer += 1;
         if self.land_lag != 0 { self.land_lag -= 1; }
         if self.jump.landed != 0 { self.jump.landed = self.jump.landed.saturating_add(1); }
+        if 0 < self.ledge.cooldown { self.ledge.cooldown -= 1; }
     }
 
     /// `0x2ae0e8(n)`: the yaw `n` ticks before the newest in the history (at most 31, at most what it holds).
@@ -357,7 +365,10 @@ pub fn hero_update(hero: &mut Hero, env: &Env, anim: &mut dyn AnimCtl) -> HeroTi
         return HeroTick::Unported(hero.state);
     }
     anim.advance(Pf::f(hero.anim_speed));
+    hero.anim_frame = anim.view().frame;
     hero.input_physics_move(env, anim);
+    // `0x2ad000(pos, rot, 0x18a370)`: the ledge ahead, for the transitions.
+    hero.ledge_tick(env);
     hero.transitions(env, anim);
     HeroTick::Ran
 }

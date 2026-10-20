@@ -75,6 +75,12 @@ impl Hero {
                 (j.hmin, j.hmax, j.f346, j.takeoff, j.bottom) = (h, h + 0.05, 0x1e, -1, 0.6);
                 (j.f_hold, j.f_apex, j.f_land, j.ramp, j.f334, j.air_speed) = (32.0, 43.0, 19.0, 0xe, 1.0, 0.079_166_67);
             }
+            0x1b => {
+                // The climb out of a hang: no gravity for 9 ticks, then up to 2 high, pushed forward by `0x18a2dc`.
+                (j.takeoff, j.bottom, j.f_hold, j.f_apex, j.f_land) = (10, 0.85, 20.0, 29.0, 19.0);
+                (j.hmax, j.hmin, j.f334, j.g, j.ramp, j.no_double, j.f34e) = (2.05, 2.0, 1.0, 0.006_944_444_5, 1, 1, 1);
+                j.climb_push = 0.0;
+            }
             _ => {
                 // 0xb, the flip.
                 (j.f34a, j.takeoff, j.bottom, j.f_hold, j.f_apex, j.f_land) = (0x32, 5, 0.6, 18.0, 31.0, 24.0);
@@ -85,6 +91,7 @@ impl Hero {
         if id == 7 || id == 9 {
             (j.can_double, j.ramp, j.f_hold, j.bottom, j.takeoff, j.f34c, j.f34e) = (1, 0xf, 18.0, 0.6, 5, 1, 1);
         }
+        if id == 0x1b { self.items.no_use = 1; }
         if id == 0xb {
             self.jump.flip_yaw = self.yaw_ago(10);
             self.jump.flip_fwd = self.rows[0];
@@ -98,6 +105,7 @@ impl Hero {
         if j.fallover_h == 0.0 { j.fallover_h = j.h * 1.5; }
         match id {
             7 => Entry::Anim(5.0, 7, 0),
+            0x1b => Entry::Anim(4.0, 0x22, 0),
             9 => {
                 let v = anim.view();
                 Entry::Anim(5.0, if v.seq_a == 4 { RUN_JUMP_SEQ.get(v.frame as usize).copied().unwrap_or(8) } else { 8 }, 0)
@@ -124,12 +132,12 @@ impl Hero {
         }
     }
 
-    pub(super) fn phys_jump(&mut self, env: &Env, _anim: &mut dyn AnimCtl) {
+    pub(super) fn phys_jump(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
         if self.jump.landed != 0 { self.stick_target(env, 0.099_166_67, 0); }
         self.stick_target(env, self.jump.air_speed, 0);
         if self.timer == self.jump.takeoff { self.jump.takeoff_pos = self.pos; }
-        if self.jump.landed == 0 && (self.jump.takeoff <= self.timer || self.state == 0xb) {
-            if self.state == 0xb { self.flip_air() } else { self.air_control() }
+        if self.jump.landed == 0 && (self.jump.takeoff <= self.timer || matches!(self.state, 0xb | 0x10 | 0xc | 0x11 | 0x1b | 0x89 | 0x48)) {
+            if self.state == 0xb { self.flip_air() } else if self.state == 0x1b { self.climb_air(anim) } else { self.air_control() }
         } else {
             self.turn_to(0.015, 0.2, 0.250_011_4, 0);
             let s = self.speed;
@@ -162,6 +170,7 @@ impl Hero {
     /// gravity with the fall speed capped at `0x18a2c0`. Then the height ramp (module docs).
     fn jump_vertical(&mut self, env: &Env) {
         let j = self.jump;
+        let j_vz = self.vel[2];
         if self.timer < j.takeoff {
             self.vel[2] = -0.013_333_334;
         } else if j.landed != 0 {
@@ -173,6 +182,8 @@ impl Hero {
             self.double_jump_rise();
             return;
         }
+        // `0x2b6668`: the climb's first 9 ticks keep the vertical speed.
+        if self.state == 0x1b && self.timer <= 9 { self.vel[2] = j_vz; }
         let first = j.pending == 0.0 && j.applied == 0.0;
         if (env.pad.held & button::CROSS != 0 || first) && j.h < j.hmax && self.timer <= j.ramp {
             let h = (j.h + (j.hmax - j.hmin) / j.ramp as f32).min(j.hmax);
@@ -203,6 +214,24 @@ impl Hero {
             if v < k { approach(k, 0.041_666_668, &mut v); }
             self.vel[2] = v;
         }
+    }
+
+    /// `0x2b6cd0`'s climb 0x1b: after 0x28 ticks the stick steers (0.04, 0.2, 0.25 and 1/180); the forward push
+    /// `0x18a2dc` grows to 1/30 by 1/450 from frame 13 to 27 and falls back to 0 until 30; the velocity is the facing
+    /// · push with the vertical speed kept.
+    fn climb_air(&mut self, anim: &mut dyn AnimCtl) {
+        if 0x28 < self.timer {
+            self.turn_to(0.04, 0.2, 0.250_011_4, 0);
+            self.air_accel(0.005_555_556);
+        }
+        let f = anim.view().frame;
+        if (13.0..=30.0).contains(&f) {
+            let t = if f <= 27.0 { 0.033_333_335 } else { 0.0 };
+            approach(t, 0.002_222_222_3, &mut self.jump.climb_push);
+        }
+        let up = self.vel[2];
+        let p = self.jump.climb_push;
+        self.vel = [self.rows[0][0] * p, self.rows[0][1] * p, up];
     }
 
     /// `0x2b6cd0`'s flip: the facing turns toward the yaw of 10 ticks before (0.04, 0.2, at most 0.1164 a tick); the
@@ -311,6 +340,8 @@ impl Hero {
         if j.landed == 0 && j.no_double == 0 && self.state != 0xe && Self::cross_within(env, window) && j.can_double != 0 && 0xe < self.timer && up_or_top {
             return Some(0xe);
         }
+        // A ledge in reach (`0x18a398`) is grabbed, except from the flip.
+        if self.ledge.found && self.state != 0xb { return Some(0x17); }
         None
     }
 

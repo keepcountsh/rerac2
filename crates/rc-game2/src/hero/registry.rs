@@ -14,6 +14,8 @@ pub enum Module {
     Walk,
     /// `air.rs`: fall 6.
     Air,
+    /// `ledge.rs`: the ledges (group 3: 0x17..0x1a).
+    Ledge,
     /// `melee.rs`: the wrench (group 6: 0x13, 0x14, 0x15, 0x22, 0x83).
     Melee,
     /// `jump.rs`: the jump group (group 4; ported: 7, 9, the flip 0xb, the double jump 0xe).
@@ -42,8 +44,8 @@ pub const STATES: &[StateInfo] = &[
     s(0x09, 4, Jump, true), s(0x0a, 4, Unported, false), s(0x0b, 4, Jump, true), s(0x0c, 4, Unported, false),
     s(0x0d, 4, Unported, false), s(0x0e, 4, Jump, true), s(0x0f, 4, Unported, false), s(0x10, 4, Unported, false),
     s(0x11, 4, Unported, false), s(0x12, 4, Unported, false), s(0x13, 6, Melee, true), s(0x14, 6, Melee, true),
-    s(0x15, 6, Melee, true), s(0x16, 7, Unported, false), s(0x17, 3, Unported, false), s(0x18, 3, Unported, false),
-    s(0x19, 3, Unported, false), s(0x1a, 3, Unported, false), s(0x1b, 4, Unported, false), s(0x1c, 9, Unported, false),
+    s(0x15, 6, Melee, true), s(0x16, 7, Unported, false), s(0x17, 3, Ledge, true), s(0x18, 3, Ledge, true),
+    s(0x19, 3, Ledge, true), s(0x1a, 3, Ledge, true), s(0x1b, 4, Jump, true), s(0x1c, 9, Unported, false),
     s(0x1d, 0, Unported, false), s(0x1e, 9, Unported, false), s(0x1f, -1, Unported, false), s(0x22, 6, Melee, true),
     s(0x23, 0xd, Unported, false), s(0x24, 0xd, Unported, false), s(0x25, 0xd, Unported, false), s(0x26, 8, Unported, false),
     s(0x27, 0xf, Unported, false), s(0x28, 0xf, Unported, false), s(0x29, 0xf, Unported, false), s(0x2a, 0xf, Unported, false),

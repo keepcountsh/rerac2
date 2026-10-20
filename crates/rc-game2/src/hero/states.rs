@@ -50,6 +50,7 @@ impl Hero {
             Module::Air => self.fall_entry(anim, env, id, play),
             Module::Jump => self.jump_entry(anim, env, id, play),
             Module::Melee => self.melee_entry(anim, env, id, play),
+            Module::Ledge => self.ledge_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -73,6 +74,7 @@ impl Hero {
             Module::Air => self.phys_fall(env, anim),
             Module::Jump => self.phys_jump(env, anim),
             Module::Melee => self.phys_melee(env, anim),
+            Module::Ledge => self.phys_ledge(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -91,6 +93,7 @@ impl Hero {
             Module::Air => self.trans_fall(env, anim),
             Module::Jump => self.trans_jump(env, anim),
             Module::Melee => self.trans_melee(env, anim),
+            Module::Ledge => self.trans_ledge(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.

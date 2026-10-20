@@ -38,7 +38,12 @@ impl Hero {
             self.set_anim(anim, 16.0, 0xb, 0);
             self.substate = 1;
         }
-        if self.air_ticks != 0 { return None; }
+        if self.air_ticks != 0 {
+            // In the air: a ledge in reach is grabbed (`0x18a398`); the glide 8 with a Heli-Pack, the grind rails 0x27
+            // and 0x71 are not ported.
+            if self.hp >= 1 && self.ledge.found { return Some(0x17); }
+            return None;
+        }
         self.disp[2] = self.disp[2].max(-0.15);
         self.vel[2] = self.vel[2].max(-0.15);
         if self.hp <= 0 { return Some(0x39); }
