@@ -140,7 +140,8 @@ fn tick(
     });
     {
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let death_z = lv.death_z.is_finite().then_some(lv.death_z);
+        if p.game.death_z.is_none() && lv.death_z.is_finite() { p.game.death_z = Some(lv.death_z); }
+        let death_z = p.game.death_z;
         let classes: Vec<i16> = mobys.world.mobys.iter().map(|m| m.o_class).collect();
         let nodes = rc_game2::moby::classes::swing_nodes(&mobys.world, 0x2f6);
         let hooks = rc_game2::moby::classes::swing_nodes(&mobys.world, 0x323);

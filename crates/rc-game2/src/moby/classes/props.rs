@@ -1,0 +1,142 @@
+//! Aranos's small objects (L00 class updates of a few lines each; the classes have no names in any reference, so
+//! they go by o_class).
+//!
+//! * 0x12f5 (`0x383b90`): deletes itself on its first update (a placeholder the level does not use).
+//! * 0x0c8b (`0x3ec838`): the level's death height by where Ratchet is — 30 inside its cuboid (`+0x68`[0]), else 95
+//!   (`0x1b1a68`).
+//! * 0x0ac3 (`0x3d00a0`): waits for Ratchet within 6 across, then plays its sequence 1 (sound 0), then 2 once that
+//!   wraps (sound 1); its colour word `+0x78` changes with each.
+//! * 0x0ac5 / 0x0ac6 (`0x3d0888` / `0x3d0980`): when Ratchet enters the cuboid `+0x68`[0] (sound 0), slides 0.417 a
+//!   tick backward / forward along its yaw for 100 ticks, then is deleted.
+
+use crate::moby::{Ctx, MobyWorld};
+
+/// The seq the moby's animation shows (`+0x43`), 0xff without one.
+pub fn seq(w: &MobyWorld, id: usize, ctx: &Ctx) -> u8 { ctx.host.anim(&w.mobys[id]).map_or(0xff, |a| a.seq_b) }
+
+/// `+0x60 & 2`: its sequence wrapped this tick.
+pub fn wrapped(w: &MobyWorld, id: usize, ctx: &Ctx) -> bool { ctx.host.anim(&w.mobys[id]).is_some_and(|a| a.flags & 2 != 0) }
+
+/// `0x31b5f0(m, seq, frame, blend)` unless the sequence already plays.
+pub fn set_seq(w: &MobyWorld, id: usize, ctx: &mut Ctx, s: u8, frame: u8, blend: u8) {
+    if seq(w, id, ctx) != s { ctx.host.set_anim(&w.mobys[id], s, frame, blend); }
+}
+
+/// 0x12f5.
+pub fn update_12f5(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) { w.delete(id); }
+
+/// 0x0c8b.
+pub fn update_0c8b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let v = w.mobys[id].pv_i(0);
+    ctx.game.death_z = Some(if ctx.level.in_cuboid(v, ctx.hero.pos) { 30.0 } else { 95.0 });
+}
+
+/// 0x0ac3.
+pub fn update_0ac3(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &w.mobys[id];
+    if m.state == 0 && crate::hero::physics::dist2(m.pos, ctx.hero.pos) < 6.0 {
+        w.mobys[id].state = 1;
+        set_seq(w, id, ctx, 1, 0, 0);
+        ctx.host.play_sound(&w.mobys[id], 0, 0);
+        w.mobys[id].has_collision = false;
+    }
+    if w.mobys[id].state == 1 && wrapped(w, id, ctx) {
+        w.mobys[id].state = 2;
+        set_seq(w, id, ctx, 2, 0, 0);
+        ctx.host.play_sound(&w.mobys[id], 1, 0);
+    }
+}
+
+/// 0x0ac5 (backward) / 0x0ac6 (forward).
+pub fn update_0ac5(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { slide(w, id, ctx, std::f32::consts::PI) }
+pub fn update_0ac6(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { slide(w, id, ctx, 0.0) }
+
+fn slide(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, turn: f32) {
+    let m = &w.mobys[id];
+    if m.state == 0 && ctx.level.in_cuboid(m.pv_i(0), ctx.hero.pos) {
+        let m = &mut w.mobys[id];
+        m.state = 1;
+        m.set_pv_i(4, 0);
+        ctx.host.play_sound(&w.mobys[id], 0, 0);
+    }
+    if w.mobys[id].state == 1 {
+        let m = &mut w.mobys[id];
+        let (s, c) = (m.rot[2] + turn).sin_cos();
+        m.pos[0] += c * 0.416_666_7;
+        m.pos[1] += s * 0.416_666_7;
+        let n = m.pv_i(4) + 1;
+        m.set_pv_i(4, n);
+        w.changed = true;
+        if 100 < n { w.delete(id); }
+    }
+}
+
+/// 0x0c4c (`0x3eb888`, the ships crossing the sky): drawn up to 2800, they fly 1.667 a tick down y from 3000 to −3000
+/// and start over, the scale growing in from the ends (1 − (|y| − 2250) / 750, clamped 0..3) of the class's.
+pub fn update_0c4c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let base = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
+    let m = &mut w.mobys[id];
+    if m.state == 0 {
+        m.draw_dist = 0xaf0;
+        m.update_dist = 0xff;
+        m.state = 1;
+    }
+    let _ = ctx;
+    if m.state == 1 {
+        m.pos[1] -= 1.666_666_7;
+        let f = (1.0 - (750.0 - (3000.0 - m.pos[1].abs())) * 0.001_333_333_3).clamp(0.0, 3.0);
+        m.scale = base * f;
+        if m.pos[1] <= -3000.0 { m.pos[1] = 3000.0; }
+    }
+}
+
+/// 0x0c63 (`0x3ec378`): a mission area — Ratchet in its cuboid (`+0x68`[4]) marks the mission (`+0xb0`) the area's;
+/// the first time (`+0x68`[8] = 0, its bits clear) the sub-mission (`+0xb1`) is done: its bits set to the rank
+/// (`0x2e4450`: 1 without the stats table) and its rewards (the spawn's tables `0x1c5400` XP, `0x1c54c0` bolts: not
+/// read yet, none) banked.
+pub fn update_0c63(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &w.mobys[id];
+    if !ctx.level.in_cuboid(m.pv_i(4), ctx.hero.pos) { return; }
+    ctx.game.mission_area = m.mission;
+    if m.pv_i(8) != 0 || ctx.game.mission(m.mission, m.sub_index) != 0 { return; }
+    let (mission, sub) = (m.mission, m.sub_index);
+    w.mobys[id].set_pv_i(8, 1);
+    ctx.game.set_mission(mission, sub, 1);
+}
+
+/// 0x0ac8 (`0x3d0e00`): rocks back and forth — its pitch springs to a random 5..15° (k 0.00087, d 0.00087, at most
+/// 0.00436), a new aim after 60..120 ticks or once there; the sound by the direction.
+pub fn update_0ac8(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if w.mobys[id].state == 0 {
+        let a = ctx.game.rng.randf(5.0, 15.0);
+        let t = ctx.game.rng.rand_range(0x3c, 0x78);
+        let m = &mut w.mobys[id];
+        m.set_pv_f(8, a);
+        m.set_pv_i(0xc, t);
+        m.state = 1;
+        let s = if m.rot[0] < a * 0.017_453_294 { 0 } else { 1 };
+        ctx.host.play_sound(&w.mobys[id], s, 0);
+    }
+    let m = &mut w.mobys[id];
+    if m.state == 1 {
+        let t = m.pv_f(8) * 0.017_453_294;
+        let (mut x, mut v) = (m.rot[0], m.pv_f(0));
+        crate::hero::physics::spring(t, 0.000_872_664_6, 0.000_872_664_6, 0.004_363_323, &mut x, &mut v);
+        m.rot[0] = x;
+        m.set_pv_f(0, v);
+        let n = m.pv_i(0xc) - 1;
+        m.set_pv_i(0xc, n.max(0));
+        if n <= 0 || m.rot[0] == t { m.state = 0; }
+    }
+}
+
+/// 0x0d1e (`0x3fa808`, the searchlights): sequence 1, the yaw turning 0.0524 a tick; two light cones out of it
+/// (`0x33f550`, the engine's lights: not drawn yet).
+pub fn update_0d1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if w.mobys[id].state == 0 {
+        ctx.host.set_anim(&w.mobys[id], 1, 0, 0);
+        w.mobys[id].state = 1;
+    }
+    let m = &mut w.mobys[id];
+    if m.state == 1 { m.rot[1] = crate::hero::physics::add_rot(m.rot[1], 0.052_359_88); }
+}

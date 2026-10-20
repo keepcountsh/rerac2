@@ -44,6 +44,12 @@ pub struct GameState {
     /// XP of the health level reached and of the next.
     pub nanotech: [bool; 10],
     pub level_xp: [i32; 2],
+    /// `0x1b1a68`: the death height (the level's setting; objects change it).
+    pub death_z: Option<f32>,
+    /// `0x19b2e8 + level·0x10`: the missions' progress, two bits per sub-mission (`mission + level·0x10`, bits
+    /// `2·(sub & 3)`); `0x18c0e6`: the mission whose area Ratchet is in.
+    pub missions: Vec<u8>,
+    pub mission_area: u8,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -58,12 +64,26 @@ impl Default for GameState {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
-            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2],
+            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0,
         }
     }
 }
 
 impl GameState {
+    /// The two progress bits of a mission's sub-mission on this level.
+    pub fn mission(&self, mission: u8, sub: u8) -> u8 {
+        let b = self.missions.get(self.level.max(0) as usize * 0x10 + mission as usize).copied().unwrap_or(0);
+        (b >> ((sub & 0xf) * 2)) & 3
+    }
+
+    pub fn set_mission(&mut self, mission: u8, sub: u8, v: u8) {
+        let i = self.level.max(0) as usize * 0x10 + (mission & 0xf) as usize;
+        if let Some(b) = self.missions.get_mut(i) {
+            let k = (sub & 3) * 2;
+            *b = (*b & !(3 << k)) | ((v & 3) << k);
+        }
+    }
+
     /// `0x2d61d0`: the health the XP gives (4 + one a level of `HP_LEVELS`), and the XP of the level reached and of
     /// the next.
     pub fn xp_health(&self) -> (i32, [i32; 2]) {

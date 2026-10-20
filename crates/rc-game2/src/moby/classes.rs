@@ -3,6 +3,7 @@
 
 pub mod bolt;
 pub mod crate_;
+pub mod props;
 pub mod wrench;
 
 use super::UpdateFn;
@@ -13,6 +14,15 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x47 => Some(wrench::update),
         500 | 501 | 511 => Some(crate_::update),
         13..=19 => Some(bolt::update),
+        0x12f5 => Some(props::update_12f5),
+        0x0c8b => Some(props::update_0c8b),
+        0x0ac3 => Some(props::update_0ac3),
+        0x0ac5 => Some(props::update_0ac5),
+        0x0ac6 => Some(props::update_0ac6),
+        0x0c4c => Some(props::update_0c4c),
+        0x0c63 => Some(props::update_0c63),
+        0x0ac8 => Some(props::update_0ac8),
+        0x0d1e => Some(props::update_0d1e),
         _ => None,
     }
 }
