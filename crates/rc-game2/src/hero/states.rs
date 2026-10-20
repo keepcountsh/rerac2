@@ -70,6 +70,7 @@ impl Hero {
             Module::Water => self.water_entry(anim, env, id, play),
             Module::Clank => self.clank_entry(anim, env, id, play),
             Module::Script => self.script_entry(anim, env, id, play),
+            Module::Gear => self.gear_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -102,6 +103,7 @@ impl Hero {
             Module::Water => self.phys_water(env, anim),
             Module::Clank => self.phys_clank(env, anim),
             Module::Script => self.phys_script(env, anim),
+            Module::Gear => self.phys_gear(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -116,6 +118,7 @@ impl Hero {
         if self.transitions_prologue(env, anim) { return; }
         if self.swingshot_trigger(env, anim) { return; }
         if self.melee_trigger(env, anim) { return; }
+        if self.charge_trigger(env, anim) { return; }
         if self.water_checks(env, anim) { return; }
         // △ (`0x2f79d8`, the quick select, is the menu's): the health and bolt counters show.
         if env.pad.pressed & rc_game::pad::button::TRIANGLE != 0 && self.no_menu == 0 && self.items.no_use == 0 {
@@ -140,6 +143,7 @@ impl Hero {
             Module::Water => self.trans_water(env, anim),
             Module::Clank => self.trans_clank(env, anim),
             Module::Script => self.trans_script(env, anim),
+            Module::Gear => self.trans_gear(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.

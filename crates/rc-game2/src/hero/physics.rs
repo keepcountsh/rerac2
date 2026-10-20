@@ -62,8 +62,11 @@ pub struct Env<'a> {
     /// Heli-Pack, 3 the Thruster-Pack; −1 none).
     pub clank: bool,
     pub pack: i32,
-    /// `0x1a7b13`: the Gravity Boots.
+    /// `0x1a7b13`: the Gravity Boots; the Charge Boots on (`0x1a7b36` with the item `0x1a739c` = 0x36); the level
+    /// `0x1a79f8`.
     pub boots: bool,
+    pub charge_boots: bool,
+    pub level: i32,
     /// Every moby's o_class by its index (the ground moby's class).
     pub classes: &'a [i16],
     /// The Swingshot nodes (class 0x2f6), the hook nodes (0x323) and the pull targets (0x99d).

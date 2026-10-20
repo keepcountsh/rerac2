@@ -21,6 +21,7 @@
 pub mod air;
 pub mod clank;
 pub mod damage;
+pub mod extras;
 pub mod ground;
 pub mod items;
 pub mod jump;
@@ -327,6 +328,7 @@ pub struct Hero {
     pub swing: swing::SwingBlock,
     /// `0x18a026`: the Swingshot's rest after a swing.
     pub swing_cooldown: i16,
+    pub gear: extras::GearBlock,
     pub water: water::WaterBlock,
     /// This tick's request to show the bolt counter (△); `0x18c0dc`-like menu lock for △ (a script's).
     pub show_bolts: Option<i32>,
@@ -380,7 +382,7 @@ impl Hero {
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
             bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
-            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, swing: Default::default(), swing_cooldown: 0, water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), unported_seen: Vec::new(),
+            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, swing: Default::default(), swing_cooldown: 0, gear: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), unported_seen: Vec::new(),
         }
     }
 
@@ -466,6 +468,7 @@ impl Hero {
         if 0 < self.stagger { self.stagger -= 1; }
         if 0 < self.fidget_gap { self.fidget_gap -= 1; }
         if 0 < self.swing_cooldown { self.swing_cooldown -= 1; }
+        if 0 < self.gear.updraft { self.gear.updraft -= 1; }
         for r in &mut self.fidget_rest { if 0 < *r { *r -= 1; } }
         if 0 < self.slide_hold { self.slide_hold -= 1; }
     }

@@ -54,6 +54,8 @@ impl Hero {
         if id != 0x81 && BOUNCE_PADS.contains(&self.ground_class) { return Entry::Return(self.set_state(anim, env, 0x81, true)); }
         if id != 0x6e && self.surf.boots == 1 && id != 0xe && id != 0x38 { return Entry::Return(self.set_state(anim, env, 0x6e, true)); }
         if self.prev_state == 0x11 && !self.wall.high { self.wall.count = self.wall.count.saturating_add(1) } else { self.wall.count = 0 }
+        // An updraft under him: the float.
+        if self.gear.updraft != 0 { return Entry::Return(self.set_state(anim, env, 0x82, true)); }
         self.group = 4;
         self.cam_mode = if matches!(id, 0x28 | 0x29) { 3 } else { 0x50 };
         self.vel = self.eff;
@@ -547,6 +549,7 @@ impl Hero {
                 if ok && env.pad.pressed_within(FLIP_DIRS, 5).is_some() && env.pad.held & button::R1 != 0 { return Some(0xb); }
             }
         }
+        if self.gear.updraft != 0 && matches!(self.state, 7 | 9) && self.timer <= 0x13 { return Some(0x82); }
         // The pack's long jump: R1 within 2 ticks in the first 7.
         if self.timer < 7 && env.pad.pressed_within(button::R1, 2).is_some() && !matches!(self.state, 0x10 | 10 | 0x12 | 0x38 | 0x11 | 0xe | 0x66) && env.clank {
             if env.pack == 2 && 0.015 < self.fwd_speed {

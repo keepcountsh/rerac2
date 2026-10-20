@@ -28,6 +28,8 @@ pub enum Module {
     Swing,
     /// `script.rs`: the states objects and scenes set (group 9 / 0x18, the scripted walk 0x62..0x64, the fidgets).
     Script,
+    /// `extras.rs`: the Charge Boots' dash 0x7b, the updraft 0x82, the rides 0x85 / 0x86.
+    Gear,
     /// `clank.rs`: Clank's own body (`0x18c0d4` = 1: 0x3f..0x4e).
     Clank,
     /// `water.rs`: swimming (groups 0x11 / 0x12: 0x32..0x36) and the water hurts 0x72 / 0x73.
@@ -76,9 +78,9 @@ pub const STATES: &[StateInfo] = &[
     s(0x6d, 6, Melee, true), s(0x6e, 4, Jump, true), s(0x6f, 9, Script, true), s(0x70, 1, Walk, true),
     s(0x71, 0x1a, Unported, false), s(0x72, -1, Water, true), s(0x73, 7, Water, true), s(0x74, 0x14, Damage, true),
     s(0x75, 9, Script, true), s(0x76, 2, Misc, true), s(0x77, 10, Misc, true), s(0x78, 0x19, Damage, true),
-    s(0x79, 0x14, Damage, true), s(0x7a, 0x14, Damage, true), s(0x7b, 0x1c, Unported, false), s(0x7c, 0x14, Damage, true),
-    s(0x7d, 0x14, Damage, true), s(0x7f, 0x14, Damage, true), s(0x81, 4, Jump, true), s(0x82, 0x1e, Unported, false),
-    s(0x83, 6, Melee, true), s(0x85, 0x20, Unported, false), s(0x86, 0x20, Unported, false), s(0x89, 4, Jump, true),
+    s(0x79, 0x14, Damage, true), s(0x7a, 0x14, Damage, true), s(0x7b, 0x1c, Gear, true), s(0x7c, 0x14, Damage, true),
+    s(0x7d, 0x14, Damage, true), s(0x7f, 0x14, Damage, true), s(0x81, 4, Jump, true), s(0x82, 0x1e, Gear, true),
+    s(0x83, 6, Melee, true), s(0x85, 0x20, Gear, true), s(0x86, 0x20, Gear, true), s(0x89, 4, Jump, true),
     s(0x8a, 0x21, Swing, true), s(0x8b, 0x21, Swing, true), s(0x8c, 7, Damage, true), s(0x92, 4, Jump, true),
     s(0x93, 6, Melee, true),
 ];
