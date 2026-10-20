@@ -49,6 +49,7 @@ impl Hero {
             Module::Walk => self.walk_entry(anim, env, id, play),
             Module::Air => self.fall_entry(anim, env, id, play),
             Module::Jump => self.jump_entry(anim, env, id, play),
+            Module::Melee => self.melee_entry(anim, env, id, play),
             Module::Unported => Entry::Done,
         };
         match entry {
@@ -71,6 +72,7 @@ impl Hero {
             Module::Walk => self.phys_walk(env, anim),
             Module::Air => self.phys_fall(env, anim),
             Module::Jump => self.phys_jump(env, anim),
+            Module::Melee => self.phys_melee(env, anim),
             Module::Unported => return false,
         }
         if substate != self.substate { self.substate_timer = 0; }
@@ -81,11 +83,14 @@ impl Hero {
     /// `0x2cb650`: the current state's transitions (the prologue's checks that apply to every state: below the
     /// level's death height `0x1b1a68` with more than 2 above the ground → 0x74, not ported).
     pub fn transitions(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
+        // The prologue's item trigger (`0x2c96d0`: the wrench).
+        if self.melee_trigger(env, anim) { return; }
         let next = match module_of(self.state) {
             Module::Ground => self.trans_ground(env, anim),
             Module::Walk => self.trans_walk(env, anim),
             Module::Air => self.trans_fall(env, anim),
             Module::Jump => self.trans_jump(env, anim),
+            Module::Melee => self.trans_melee(env, anim),
             Module::Unported => None,
         };
         // `break` with a state: `SetState(next, 1)` at the dispatcher's end.

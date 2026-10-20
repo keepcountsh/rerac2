@@ -41,6 +41,7 @@ impl Plugin for Rac2PlayPlugin {
             .init_resource::<PadFrame>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
+            .add_systems(Update, draw_created)
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop));
     }
 }
@@ -59,6 +60,10 @@ struct Play {
     scale: f32,
     pad: PadState,
     camera: FollowCamera,
+    /// The level's mobys (crate::rac2_mobys).
+    mobys: Option<crate::rac2_mobys::Rac2Mobys>,
+    /// The game-wide state (bolts, health limit).
+    game: rc_game2::game::GameState,
     ticks: u64,
     trace: bool,
 }
@@ -94,6 +99,16 @@ fn tick(
     };
     let p = &mut *p;
     let Some(coll) = lv.collision.as_ref() else { return };
+    if p.mobys.is_none() {
+        let blobs = crate::rac2_level::class_blobs(&crate::level_load::extracted_root(), crate::level_load::level_index())
+            .map_err(|e| eprintln!("rac2: no class blobs ({e:#}): no moby collision"))
+            .unwrap_or(crate::rac2_level::ClassBlobs { collision: Vec::new(), blobs: Default::default() });
+        let mut created = Default::default();
+        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut created, hero: None, hero_chains: &[] };
+        let m = crate::rac2_mobys::Rac2Mobys::load(lv, blobs, &host);
+        println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
+        p.mobys = Some(m);
+    }
     let input = match &script.0 {
         Some(s) => s.at(p.ticks),
         None if *source == CameraSource::Play => frame.0,
@@ -101,12 +116,54 @@ fn tick(
     };
     p.pad.update(Some(&input.bytes()), false);
     let class = &lv.mobys.anim[p.class];
+    let mobys = p.mobys.as_mut().expect("mobys");
+    let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
+    // The frame's order (`0x364260`): the moby loop `0x32e398`, then the hero `0x2a6dd0` (with its item pass), then
+    // the camera `0x2d9f38`.
     {
-        let env = Env { coll, pad: &p.pad, cam_yaw: p.camera.yaw(), cam_rows: p.camera.rows, mirror: false };
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
+        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains };
+        let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view };
+        mobys.world.tick(p.camera.pos, &mut ctx);
+    }
+    let targets = mobys.world.targets(p.camera.pos);
+    {
+        let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+        let env = Env { coll, pad: &p.pad, cam_yaw: p.camera.yaw(), cam_rows: p.camera.rows, mirror: false, scene: scene.as_ref(), hero_moby: mobys.hero_moby, targets: &targets };
         let mut ctl = p.anim.ctl(class);
         hero_update(&mut p.hero, &env, &mut ctl);
     }
-    p.camera.update(&cam_input(&p.hero, Some(coll), [p.pad.rx.to_f32(), p.pad.ry.to_f32()]));
+    // `0x2a6dd0`'s write-back: Ratchet's moby takes his position, angles and rows.
+    if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
+        (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
+        h.mode |= rc_game2::moby::mode::KEEP_ROWS;
+    }
+    // The item pass (`0x2b21f0`): the hand item placed at Ratchet's new pose and updated.
+    {
+        let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
+        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains };
+        let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view };
+        rc_game2::hero::items::item_pass(&mut mobys.world, &mut ctx);
+    }
+    if mobys.world.changed {
+        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[] };
+        mobys.snap = Some(crate::rac2_mobys::take_snapshot(&mobys.world, &mobys.coll, &host));
+        mobys.world.changed = false;
+    }
+    if let Some(o) = occl.as_mut() {
+        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some()) {
+            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, None, m.state >= 0x80); }
+        }
+    }
+    {
+        let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+        let mut inp = cam_input(&p.hero, Some(coll), [p.pad.rx.to_f32(), p.pad.ry.to_f32()]);
+        (inp.scene, inp.hero_moby) = (scene.as_ref(), mobys.hero_moby);
+        p.camera.update(&inp);
+    }
     if p.trace {
         let v = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let h = &p.hero;
@@ -130,6 +187,27 @@ fn tick(
     p.ticks += 1;
 }
 
+/// The created mobys' draw (crate::rac2_mobys::CreatedDraw), made on the first frame with mobys.
+#[allow(clippy::too_many_arguments)]
+fn draw_created(
+    mut commands: Commands,
+    level: Res<crate::Level>,
+    play: Option<Res<Play>>,
+    draw: Option<ResMut<crate::rac2_mobys::CreatedDraw>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<crate::moby_render::MobyMaterial>>,
+    mut buffers: ResMut<Assets<bevy::render::storage::ShaderBuffer>>,
+    mut transforms: Query<&mut Transform>,
+) {
+    let Some(mobys) = play.as_ref().and_then(|p| p.mobys.as_ref()) else { return };
+    let Some(mut draw) = draw else {
+        commands.insert_resource(crate::rac2_mobys::CreatedDraw::new(&level.0, &mut buffers));
+        return;
+    };
+    draw.update(mobys, &level.0, &mut commands, &mut meshes, &mut images, &mut materials, &mut buffers, &mut transforms);
+}
+
 /// The hero at Ratchet's instance (class 0).
 fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     let m = &lv.mobys;
@@ -145,14 +223,14 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     println!("rac2: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
-        hero, class, instance, scale, pad: PadState::default(), camera, ticks: 0,
+        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), ticks: 0,
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
 }
 
 /// The camera's inputs: the options' yaw and pitch normal (`0x1a7bb0` / `0x1a7bac`, the defaults).
 fn cam_input<'a>(hero: &'a Hero, coll: Option<&'a rc_formats::collision::Collision>, rstick: [f32; 2]) -> CamInput<'a> {
-    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true }
+    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, scene: None, hero_moby: None }
 }
 
 fn camera_view(c: &FollowCamera) -> CameraView {

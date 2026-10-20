@@ -26,7 +26,7 @@
 //!
 //! **Not ported** (no use on Aranos's opening yet, or no data source): the level's camera-tweak requests `0x2d7568`
 //! (32 slots set by regions and mobys; none active), the camera-collision grid (`0x427758`, `0x4219a0`; empty), the
-//! moby collision of the camera's queries (world only), the moby nudges of the avoidance (classes 0x8ba, 0xd07,
+//! moby nudges of the avoidance (classes 0x8ba, 0xd07,
 //! 0x10d0, 0x477, 0xb), the focus moby `0x1b8e84` / `0x18b270`, the stick auto-centre `$gp+0x2540`, the body cameras
 //! (Clank, Giant Clank), the water settle (D+0x14e), the knock-down view (state 0x74, mode 11), the other camera types
 //! (first person `0x427bf8`, …), the blends between cameras and the shakes.
@@ -34,7 +34,8 @@
 use crate::hero::physics::{add, dot, len, scale, sub, V3};
 use crate::hero::Hero;
 use rc_formats::collision::Collision;
-use rc_game::collision_query::{coll_line, coll_sphere, QueryFlags};
+use rc_game::collision_query::mobys::MobyScene;
+use rc_game::collision_query::{coll_line_m, coll_sphere_m, QueryFlags};
 
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
 /// `$gp+0x2474` (40°) and `+0x2470` (1.75°): the stick pitch's range and step.
@@ -116,14 +117,17 @@ pub struct CamInput<'a> {
     /// Options `0x1a7bb0` (yaw normal) and `0x1a7bac` (pitch normal).
     pub yaw_normal: bool,
     pub pitch_normal: bool,
+    /// The mobys the queries test (None: the world only); they ignore Ratchet's moby.
+    pub scene: Option<&'a MobyScene<'a>>,
+    pub hero_moby: Option<usize>,
 }
 
 impl CamInput<'_> {
     /// `0x2de878(a, b, flags, Ratchet, 0)`: the hit point.
-    fn line(&self, a: V3, b: V3, flags: u32) -> Option<V3> { self.coll.and_then(|c| coll_line(c, a, b, QueryFlags(flags))).map(|o| o.point) }
+    fn line(&self, a: V3, b: V3, flags: u32) -> Option<V3> { self.coll.and_then(|c| coll_line_m(c, self.scene, a, b, QueryFlags(flags), self.hero_moby)).map(|o| o.point) }
     /// `0x2df8d8(r, c, flags, …)`: the closest point and the pushed-out centre.
     fn sphere(&self, r: f32, c: V3, flags: u32) -> Option<(V3, V3)> {
-        self.coll.and_then(|m| coll_sphere(m, c, r, QueryFlags(flags))).map(|o| (o.point, o.pushed_centre.unwrap_or(c)))
+        self.coll.and_then(|m| coll_sphere_m(m, self.scene, c, r, QueryFlags(flags), self.hero_moby)).map(|o| (o.point, o.pushed_centre.unwrap_or(c)))
     }
 }
 

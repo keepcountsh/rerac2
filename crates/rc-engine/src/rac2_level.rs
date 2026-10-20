@@ -40,6 +40,30 @@ fn attach_ratchet(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_
 /// An empty texture-table entry (the armour's textures have no entry in the level's table).
 fn bytemuck_zeroed() -> rc_formats::level::TextureEntry { rc_formats::level::TextureEntry { data_offset: 0, width: 0, height: 0, ty: 0, palette: 0, mipmap: 0, pad: 0 } }
 
+/// What the moby system reads of the level's class blobs, re-read from the level file (the loaded level keeps no
+/// class blobs): the collision blobs (class header +0x10; the same blob and kernels as R&C1's, rc_game2::moby) and
+/// the joint lists of the classes that carry attachments (class header +0x1c; Ratchet's, for his attachment points).
+pub struct ClassBlobs {
+    pub collision: Vec<(i32, rc_formats::moby_collision::MobyCollision)>,
+    pub blobs: std::collections::HashMap<i32, Vec<u8>>,
+}
+
+pub fn class_blobs(root: &Path, index: u32) -> Result<ClassBlobs> {
+    let name = file_name(index);
+    let file = crate::disc_source::read(root, &name)?;
+    let wad = LevelWad::parse(&file).with_context(|| name.clone())?;
+    let core_index = wad.lump(Lump::CoreIndex)?.context("no core index")?;
+    let core_data = rc_formats::wad::decompress(wad.lump(Lump::CoreData)?.context("no core data")?)?;
+    let core = level::parse_level_core_for(Game::Rac2, core_index, core_data.len())?;
+    let collision = rc_formats::moby_collision::parse_level(&core, &core_data)?;
+    let blobs = core
+        .moby_classes
+        .iter()
+        .filter_map(|e| core.block(&core_data, &format!("moby_class/{:04}", e.o_class)).map(|b| (e.o_class, b.to_vec())))
+        .collect();
+    Ok(ClassBlobs { collision, blobs })
+}
+
 pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let mut t = LoadTimings::default();
     let t0 = Instant::now();

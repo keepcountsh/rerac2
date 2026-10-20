@@ -20,7 +20,9 @@
 
 pub mod air;
 pub mod ground;
+pub mod items;
 pub mod jump;
+pub mod melee;
 pub mod physics;
 pub mod registry;
 pub mod states;
@@ -228,6 +230,11 @@ pub struct Hero {
     pub yaw_hist: [f32; HISTORY],
     pub yaw_hist_idx: usize,
     pub yaw_hist_count: usize,
+    /// The wrench (`0x18a9e0..`) and the item slots (`0x18b040..`).
+    pub melee: melee::MeleeBlock,
+    pub items: items::ItemBlock,
+    /// `0x189f70`: the platform carry of this tick's move (no platforms yet: zero).
+    pub carry: V3,
     /// States the port has not got, reported once each.
     pub unported_seen: Vec<i32>,
 }
@@ -251,7 +258,7 @@ impl Hero {
             quick_turn: 0, run_dir: [1.0, 0.0, 0.0], run_yaw: 0.0, anim_speed: 1.0, state: 0, substate: 0, group: 0,
             prev_state: 0, prev_group: 0, prev2_state: 0, prev2_group: 0, prev_timer: 0, cam_mode: 0, mode: 0, jump: JumpBlock { air_turn: 0.250_011_4, terminal: 0.833_333_3, ..JumpBlock::default() },
             pos_hist: [[0.0; 3]; HISTORY], pos_hist_idx: 0, pos_hist_count: 0, yaw_hist: [0.0; HISTORY], yaw_hist_idx: 0,
-            yaw_hist_count: 0, unported_seen: Vec::new(),
+            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], unported_seen: Vec::new(),
         }
     }
 

@@ -77,6 +77,7 @@ mod gs_post;
 mod reactive_render;
 mod rac2;
 mod rac2_level;
+mod rac2_mobys;
 mod rac2_play;
 mod saves;
 mod scene_render;

@@ -24,11 +24,13 @@
 //! | Step snap | `0x2b5358` (mode 0) | [`Hero::step_snap`] |
 //!
 //! Not ported here (noted where they are called): the gravity frames 1 and 2 (`0x18c0e3`, R&C2's gravity surfaces),
-//! the platform carry (`0x189f20`), the moby collision of the queries (world only), the water surfaces of the probe.
+//! the platform carry (`0x189f20`), the water surfaces of the probe. The queries test the mobys when the engine gives
+//! a moby scene ([`Env::scene`], R&C2's moby pass is R&C1's: `crate::moby`), ignoring Ratchet's own moby.
 
 use super::Hero;
 use rc_formats::collision::Collision;
-use rc_game::collision_query::{coll_capsule, coll_line, coll_sphere_hero_groups, CollOutput, QueryFlags};
+use rc_game::collision_query::mobys::MobyScene;
+use rc_game::collision_query::{coll_capsule_m, coll_line_m, coll_sphere_hero_groups, coll_sphere_m, CollOutput, QueryFlags};
 use rc_game::pad::PadState;
 
 pub type V3 = [f32; 3];
@@ -46,11 +48,20 @@ pub struct Env<'a> {
     pub cam_rows: [V3; 3],
     /// Option `0x1a7a4c`: mirrored controls.
     pub mirror: bool,
+    /// The mobys the queries test (None: the world mesh only) and Ratchet's moby (`0x18c0b0`), which they ignore.
+    pub scene: Option<&'a MobyScene<'a>>,
+    pub hero_moby: Option<usize>,
+    /// The target list (`0x1fac60`) as the moby loop left it, for the aims.
+    pub targets: &'a [super::melee::Target],
 }
 
 impl Env<'_> {
     /// `0x2de878(a, b, flags, Ratchet, 0)`: the line query (world mesh only here).
-    pub fn line(&self, a: V3, b: V3, flags: u32) -> Option<CollOutput> { coll_line(self.coll, a, b, QueryFlags(flags)) }
+    pub fn line(&self, a: V3, b: V3, flags: u32) -> Option<CollOutput> { coll_line_m(self.coll, self.scene, a, b, QueryFlags(flags), self.hero_moby) }
+    /// `0x2df8d8(r, c, flags, Ratchet)`: the sphere query.
+    pub fn sphere(&self, c: V3, r: f32, flags: u32) -> Option<CollOutput> { coll_sphere_m(self.coll, self.scene, c, r, QueryFlags(flags), self.hero_moby) }
+    /// `0x2e05c8(r, h, base, flags, Ratchet)`: the capsule query.
+    pub fn capsule(&self, base: V3, h: f32, r: f32, flags: QueryFlags) -> Option<CollOutput> { coll_capsule_m(self.coll, self.scene, base, h, r, flags, self.hero_moby) }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -360,7 +371,7 @@ impl Hero {
         let r = self.cap_radius;
         for _ in 0..8 {
             let h = (self.cap_top - self.cap_bottom).max(0.05);
-            let mut o = coll_capsule(env.coll, self.pos, h, r, QueryFlags::exclude_surface(0) | QueryFlags::MOBY_SUBMASK);
+            let mut o = env.capsule(self.pos, h, r, QueryFlags::exclude_surface(0) | QueryFlags::MOBY_SUBMASK);
             if let Some(g) = coll_sphere_hero_groups(env.coll, self.pos, r) { o = Some(g); }
             let Some(o) = o else { break };
             if let Some(pc) = o.pushed_centre { self.pos = pc; }
