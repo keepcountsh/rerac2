@@ -151,6 +151,9 @@ pub struct Moby {
     pub prev_state: u8,
     pub sub_state: u8,
     pub state_ticks: i16,
+    /// `+0xbe`: bit 0 / 1 the once-flags (`0x32a7c8` / `0x32a7f0`, cleared by a state change), bit 2 hooked
+    /// (`0x32a818`).
+    pub once: u8,
 }
 
 /// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
@@ -216,8 +219,20 @@ impl Moby {
         self.prev_state = self.state;
         self.state = state;
         self.state_ticks = 0;
-        if 0 <= sub { self.sub_state = sub as u8; }
+        self.once &= !1;
+        if 0 <= sub {
+            self.sub_state = sub as u8;
+            self.once &= !2;
+        }
     }
+
+    /// `0x32a7c8`: true the first time since the last state change.
+    pub fn first(&mut self) -> bool {
+        if self.once & 1 != 0 { return false; }
+        self.once |= 1;
+        true
+    }
+
 
     /// `InitMobyInstance(moby, o_class)` `0x311418`: the record cleared, alpha 0x80, group −1, the grid rectangle
     /// none, the key `index << 16`; with the class: its update (none: mode 2), scale, mode bits and collision blob;
@@ -227,7 +242,7 @@ impl Moby {
             index, bsphere: [0.0; 4], pos: [0.0; 3], state: 0, group: -1, slot: 0, alpha: 0x80, scale: 0.0, update_dist: 0,
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0,
+            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0,
         };
         match class {
             Some(c) => {

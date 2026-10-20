@@ -50,6 +50,12 @@ impl LevelData {
             .collect()
     }
 
+    /// A cuboid's position (`+0x30`) and its `+0x70` vector (the angles of the objects that place Ratchet there).
+    pub fn cuboid_place(&self, i: i32) -> Option<(V3, V3)> {
+        let c = usize::try_from(i).ok().and_then(|i| self.cuboids.get(i))?;
+        Some(([c.matrix[3][0], c.matrix[3][1], c.matrix[3][2]], [c.extra[0], c.extra[1], c.extra[2]]))
+    }
+
     /// A cuboid's `+0x78` word (its yaw, for the objects that face along it).
     pub fn cuboid_yaw(&self, i: i32) -> f32 { usize::try_from(i).ok().and_then(|i| self.cuboids.get(i)).map_or(0.0, |c| c.extra[2]) }
 }

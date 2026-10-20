@@ -490,6 +490,19 @@ impl Hero {
         self.yaw_hist[(self.yaw_hist_idx + 63 - k) & 31]
     }
 
+    /// `0x2b9e68(pos, rot)`: placed (the rows from the angles, in the air for the probe, the carried motion off).
+    pub fn teleport(&mut self, pos: V3, rot: V3) {
+        self.pos = pos;
+        self.rot = rot;
+        self.rows = euler_rows(rot);
+        self.air_ticks = 1;
+        self.gear.floating = false;
+        self.vel = [0.0; 3];
+        self.momentum = [0.0; 3];
+        self.push = [0.0; 3];
+        self.pos_hist = [pos; HISTORY];
+    }
+
     /// Write-back to Ratchet's moby: position, Euler angles, rows.
     pub fn moby_pose(&self) -> (V3, V3, [V3; 3]) { (self.pos, self.rot, self.rows) }
 }

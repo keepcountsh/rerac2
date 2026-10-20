@@ -4,6 +4,7 @@
 pub mod bolt;
 pub mod chute;
 pub mod crate_;
+pub mod gate;
 pub mod props;
 pub mod spawn_point;
 pub mod wrench;
@@ -32,6 +33,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0c8c => Some(props::update_0c8c),
         0x0325 => Some(spawn_point::update),
         0x02a7 => Some(chute::update),
+        0x0ac7 => Some(gate::update),
         _ => None,
     }
 }
