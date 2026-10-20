@@ -206,6 +206,19 @@ impl SpawnRules<'_> {
     }
 }
 
+/// `0x322668(block, pos, old_pos, old_angles)`: a mover's step (the block `+0x20` of its pvars, read for whoever
+/// stands on it): Ratchet grounded on moby `id` is carried by its move from `old` (and turned by its yaw's change
+/// about its new place).
+pub fn carry_hero(ctx: &mut Ctx, id: usize, old: V3, old_yaw: f32, new: V3, yaw: f32) {
+    let h = &mut *ctx.hero;
+    if h.ground_moby != Some(id) || h.air_ticks != 0 { return; }
+    let dy = crate::hero::physics::sub_rot(yaw, old_yaw);
+    let (s, c) = dy.sin_cos();
+    let r = [h.pos[0] - old[0], h.pos[1] - old[1]];
+    h.pos = [new[0] + r[0] * c - r[1] * s, new[1] + r[0] * s + r[1] * c, h.pos[2] + new[2] - old[2]];
+    h.rot[2] = crate::hero::physics::add_rot(h.rot[2], dy);
+}
+
 /// `0x2eeab0` / `0x2eeae0`: a countdown — 1 down (not below 0); true when it was 0 already or just reached it.
 pub fn countdown(x: &mut i32) -> bool {
     if *x == 0 { return true; }

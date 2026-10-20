@@ -353,7 +353,7 @@ pub fn spawn_in_place(w: &mut MobyWorld, src: usize, o_class: i16, update_dist: 
 
 /// The wrecks (`0x3d0f50`: 0x0ac9, 0x0c0a..0x0c0d, 0x0e01 / 0x0e02): a hit with the flags 0x10000 while `+0x68`[0x80]
 /// = 0 breaks them — 5 pieces (14 when the frame time `0x1b194c` / `0x1b1950` is short; the class 0x43e flung out,
-/// `0x39c6b8`: the effects pass), the sound 0xc0a, then 0x0c0a..0x0c0d leave the wreck 0x0c10..0x0c13 in their place
+/// `0x39c6b8`: the effects pass), the sound 0xc0a, the sound 0xc0a, then 0x0c0a..0x0c0d leave the wreck 0x0c10..0x0c13 in their place
 /// and are hidden without collision and deleted after 300 ticks; 0x0ac9 (turned 45° at the start) and the 0x0e0x
 /// stay as they are (`+0x7c` = 0x8001).
 pub fn update_wreck(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
@@ -373,7 +373,8 @@ pub fn update_wreck(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             w.clear_hit(id);
         }
         2 => {
-            ctx.host.play_sound(&w.mobys[id], 0xc0a, 0);
+            // The sound 0xc0a (`0x360698`, by its id, not the class's: the sound pass).
+            let _ = &ctx;
             let wreck = match class { 0x0c0a => Some(0x0c10), 0x0c0b => Some(0x0c11), 0x0c0c => Some(0x0c12), 0x0c0d => Some(0x0c13), _ => None };
             if let Some(c) = wreck { spawn_in_place(w, id, c, 0); }
             w.mobys[id].set_state(3, -1);
@@ -526,3 +527,208 @@ pub fn update_0ac4(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         set_seq(w, id, ctx, 0, 0, 0);
     }
 }
+
+/// `0x324430(amp, step, base, m, &phase, &last)`: the height bobs — `base + sin(phase)·amp` (base ≤ 0: by the
+/// change from the last tick's offset), the phase stepped.
+fn bob(m: &mut crate::moby::Moby, amp: f32, step: f32, base: f32, phase: usize, last: usize) {
+    let ph = crate::hero::physics::add_rot(m.pv_f(phase), step);
+    m.set_pv_f(phase, ph);
+    if 0.0 < base {
+        m.pos[2] = ph.sin() * amp + base;
+    } else {
+        m.pos[2] -= m.pv_f(last);
+        let d = ph.sin() * amp;
+        m.set_pv_f(last, d);
+        m.pos[2] += d;
+    }
+}
+
+/// `0x3244e8(tilt, step_a, step_b, m, &a, &b)`: the pitch / roll sway (`tilt·sin a·sin b`, `tilt·sin a·cos b`), the
+/// phases stepped.
+fn sway(m: &mut crate::moby::Moby, tilt: f32, step_a: f32, step_b: f32, a: usize, b: usize) {
+    let (pa, pb) = (m.pv_f(a), m.pv_f(b));
+    m.rot[0] = tilt * pa.sin() * pb.sin();
+    m.rot[1] = tilt * pa.sin() * pb.cos();
+    m.set_pv_f(a, crate::hero::physics::add_rot(pa, step_a));
+    m.set_pv_f(b, crate::hero::physics::add_rot(pb, step_b));
+}
+
+/// 0x0adb (`0x3d1d60`, a hovering craft): after a random 0..39 ticks it bobs 1.5 about its height (100°/s) and sways
+/// 9° (10°/s, 50°/s: the tunables `$gp+0x1128..0x1138`); its thrusters' particles (`0x335bb8`, six a tick) wait for
+/// the effects pass.
+pub fn update_0adb(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    const DEG_S: f32 = 0.000_290_888_25;
+    if w.mobys[id].state == 0 {
+        let t = ctx.game.rng.randi(0x28);
+        let m = &mut w.mobys[id];
+        m.set_pv_i(0x10, t);
+        m.update_dist = 100;
+        m.state = 1;
+        m.set_pv_i(0x18, 0);
+        m.set_pv_f(0x28, m.pos[2]);
+    }
+    let m = &mut w.mobys[id];
+    if m.state == 1 {
+        let mut t = m.pv_i(0x10);
+        if crate::moby::countdown(&mut t) { m.state = 2; }
+        m.set_pv_i(0x10, t);
+    } else if m.state == 2 {
+        let base = m.pv_f(0x28);
+        bob(m, 1.5, 100.0 * DEG_S, base, 0xc, 0);
+        sway(m, 9.0 * 0.017_453_294, 10.0 * DEG_S, 50.0 * DEG_S, 4, 8);
+        w.changed = true;
+    }
+}
+
+/// The lifts 0x0ac2 (`0x3cf6c8`) and 0x0aca (`0x3d1458`): each runs between its height and `+0x68`[0x8c] (`[0x90]`
+/// ≠ 0: starting at the other end; `[0x94]` / `[0x98]` the ends of the states 2 / 3, `[0x80]` the end it is at),
+/// with a pad (0x0c16; 0x0ac2's 0.2 above it, 0x0aca's 0.25 above and 1 ahead; its light pulsing `[0xa0]`: not
+/// drawn) that starts it when Ratchet stands on it — or, with him far off at the first end (0x0ac2: more than 14
+/// below; 0x0aca: more than 6 off and within 25), or more than 6 off at the other (0x0ac2: above), it comes to him —
+/// the pad's collision off, the looped sound 0, the sound 0x8a1 (`0x360698`, the sound pass), 0x0ac2's sequence 2.
+/// It springs there (up: k 0.02, d 0.3, at most 0.1; down: 1/600 and 1/300, the fast spring with Ratchet just under
+/// it, held while he is in the cuboid — 0x0ac2's `[0xa8]`, 0x0aca's `[0xa4]`, the other word the spring's velocity),
+/// carrying Ratchet (`0x322668`). There (0x0ac2: within 0.14; 0x0aca: 0.25) it waits — 0x0ac2 while he is within
+/// 1.2, 0x0aca while he stands on the pad or is within 2 and not below it — the sound 1 on arriving, then the pad
+/// comes back (0x0ac2's sequence 1).
+struct Lift {
+    aca: bool,
+}
+
+pub fn update_0ac2(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { lift(w, id, ctx, Lift { aca: false }) }
+pub fn update_0aca(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { lift(w, id, ctx, Lift { aca: true }) }
+
+fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
+    use crate::hero::physics::{dist, spring};
+    let (old, old_yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
+    let hp = ctx.hero.pos;
+    let (vel, vol) = if l.aca { (0xa8, 0xa4) } else { (0xa4, 0xa8) };
+    let pad = |w: &MobyWorld| usize::try_from(w.mobys[id].pv_i(0x9c)).ok().filter(|&i| i < w.mobys.len());
+    let on_pad = |w: &MobyWorld, ctx: &Ctx| pad(w).is_some_and(|p| ctx.hero.ground_moby == Some(p) && ctx.hero.air_ticks == 0);
+    let pad_at = |m: &crate::moby::Moby, up: f32| {
+        if l.aca {
+            let (s, c) = m.rot[2].sin_cos();
+            add3(m.pos, [c, s, 0.25])
+        } else {
+            add3(m.pos, [0.0, 0.0, up])
+        }
+    };
+    // The trip's start (the states 2 / 3): the pad off, the loop on.
+    let start = |w: &mut MobyWorld, ctx: &mut Ctx, state: u8| {
+        if !ctx.host.sound_playing(w.mobys[id].pv_i(0x88)) {
+            let h = ctx.host.play_sound(&w.mobys[id], 0, 4);
+            w.mobys[id].set_pv_i(0x88, h);
+        }
+        w.mobys[id].set_state(state, -1);
+        if !l.aca { set_seq(w, id, ctx, 2, 0, 6); }
+        if let Some(p) = pad(w) { w.mobys[p].has_collision = false; }
+    };
+    // There: waits while Ratchet is near, then the pad back at the end `at`.
+    let arrive = |w: &mut MobyWorld, ctx: &mut Ctx, at: i32| {
+        let h = w.mobys[id].pv_i(0x88);
+        let d = dist(w.mobys[id].pos, hp);
+        let wait = if l.aca { on_pad(w, ctx) || (d <= 2.0 && w.mobys[id].pos[2] <= hp[2]) } else { d <= 1.2 };
+        if h != -1 { ctx.host.stop_sound(h); }
+        w.mobys[id].set_pv_i(0x88, -1);
+        if wait {
+            if 0 < w.mobys[id].pv_i(0x84) {
+                ctx.host.play_sound(&w.mobys[id], 1, 0);
+                w.mobys[id].set_pv_i(0x84, 0);
+            }
+            if !l.aca { set_seq(w, id, ctx, 1, 0, 6); }
+            return;
+        }
+        w.mobys[id].set_pv_i(0x80, at);
+        w.mobys[id].set_state(1, -1);
+        if !l.aca { set_seq(w, id, ctx, 1, 0, 6); }
+        if l.aca && at == 1 { w.mobys[id].set_pv_i(0x84, 0); }
+        if let Some(p) = pad(w) { w.mobys[p].has_collision = w.class(0x0c16).is_some_and(|c| c.has_collision); }
+    };
+    let step = |m: &mut crate::moby::Moby, t: f32, k: f32, d: f32| {
+        let (mut z, mut v) = (m.pos[2], m.pv_f(vel));
+        spring(t, k, d, 0.1, &mut z, &mut v);
+        m.pos[2] = z;
+        m.set_pv_f(vel, v);
+        m.set_pv_i(0x84, m.pv_i(0x84) + 1);
+    };
+    match w.mobys[id].state {
+        0 => {
+            let m = &mut w.mobys[id];
+            m.set_pv_i(0x5c, m.pv_i(0x5c) | 1);
+            m.set_pv_v(0x60, m.pos);
+            m.state = 1;
+            let (z, other) = (m.pos[2], m.pv_f(0x8c));
+            let flip = m.pv_i(0x90) != 0;
+            m.set_pv_f(0x94, if flip { other } else { z });
+            m.set_pv_f(0x98, if flip { z } else { other });
+            m.set_pv_i(0x80, flip as i32);
+            m.set_pv_i(0x84, 0);
+            m.set_pv_i(0x88, -1);
+            let (at, ud, dd) = (pad_at(m, 0.15), m.update_dist, m.draw_dist);
+            let p = w.create(0x0c16);
+            let pm = &mut w.mobys[p];
+            pm.update_dist = ud;
+            pm.draw_dist = dd;
+            pm.drawn = 1;
+            pm.pos = at;
+            w.mobys[id].set_pv_i(0x9c, p as i32);
+            if !l.aca { set_seq(w, id, ctx, 2, 0, 0); }
+            let ph = ctx.game.rng.rand_angle();
+            w.mobys[id].set_pv_f(0xa0, ph);
+        }
+        1 => {
+            let m = &mut w.mobys[id];
+            m.set_pv_f(0xa0, crate::hero::physics::add_rot(m.pv_f(0xa0), 0.104_719_76));
+            if !l.aca && dist(m.pos, hp) < 6.0 && seq(w, id, ctx) == 2 { ctx.host.set_anim(&w.mobys[id], 1, 0, 6); }
+            let at = w.mobys[id].pv_i(0x80);
+            let z = w.mobys[id].pos[2];
+            let dz = (z - hp[2]).abs();
+            if on_pad(w, ctx) {
+                start(w, ctx, if at == 0 { 3 } else { 2 });
+            } else if l.aca {
+                if 6.0 < dz && at == 0 && dist(w.mobys[id].pos, hp) < 25.0 {
+                    start(w, ctx, 3);
+                } else if 6.0 < dz && at == 1 {
+                    start(w, ctx, 2);
+                }
+            } else if 14.0 < dz && at == 0 && hp[2] < z {
+                start(w, ctx, 3);
+            } else if 6.0 < dz && at == 1 && z < hp[2] {
+                start(w, ctx, 2);
+            }
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            let t = m.pv_f(0x94);
+            if (if l.aca { 0.25 } else { 0.14 }) < dist(m.pos, [m.pos[0], m.pos[1], t]) {
+                step(m, t, 0.02, 0.3);
+            } else {
+                arrive(w, ctx, 0);
+            }
+        }
+        3 => {
+            let t = w.mobys[id].pv_f(0x98);
+            let z = w.mobys[id].pos[2];
+            if t < z {
+                let under = z - hp[2] < 1.8 && hp[2] < z;
+                if !(under && ctx.level.in_cuboid(w.mobys[id].pv_i(vol), hp)) {
+                    let (k, d) = if under { (0.02, 0.3) } else { (0.001_666_667, 0.003_333_333) };
+                    step(&mut w.mobys[id], t, k, d);
+                }
+            } else {
+                arrive(w, ctx, 1);
+            }
+        }
+        _ => {}
+    }
+    let m = &w.mobys[id];
+    let (pos, yaw, at) = (m.pos, m.rot[2], pad_at(m, 0.2));
+    crate::moby::carry_hero(ctx, id, old, old_yaw, pos, yaw);
+    if let Some(p) = pad(w) {
+        crate::moby::carry_hero(ctx, p, w.mobys[p].pos, yaw, at, yaw);
+        w.mobys[p].pos = at;
+    }
+    w.changed = true;
+}
+
+fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] { [a[0] + b[0], a[1] + b[1], a[2] + b[2]] }
