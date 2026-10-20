@@ -201,6 +201,7 @@ impl Rac2Mobys {
             fixups: g2::pvar_fixups(&lv.gameplay, "pvar_pointer_fixups").unwrap_or_default(),
             groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("rac2: moby groups: {e}")).unwrap_or_default(),
             ties: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
+            tie_classes: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.o_class).collect(),
             shrubs: g2::shrub_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
             tie_groups: g2::instance_groups(&lv.gameplay, "tie_groups").map_err(|e| eprintln!("rac2: tie groups: {e}")).unwrap_or_default(),
             shrub_groups: g2::instance_groups(&lv.gameplay, "shrub_groups").map_err(|e| eprintln!("rac2: shrub groups: {e}")).unwrap_or_default(),

@@ -368,6 +368,8 @@ pub struct MobyWorld {
     pub shrubs: Vec<[[f32; 4]; 4]>,
     pub tie_groups: Vec<Vec<u16>>,
     pub shrub_groups: Vec<Vec<u16>>,
+    /// The ties' o_class (the runtime tie's class byte `+0x1d` through `0x226880`).
+    pub tie_classes: Vec<i32>,
     /// The carriers' members by carrier ([`attach`]), and the ties / shrubs a carrier moved since the engine last
     /// took them.
     pub attached: std::collections::HashMap<usize, attach::Carrier>,
@@ -391,6 +393,7 @@ pub struct SpawnData {
     pub shrubs: Vec<[[f32; 4]; 4]>,
     pub tie_groups: Vec<Vec<u16>>,
     pub shrub_groups: Vec<Vec<u16>>,
+    pub tie_classes: Vec<i32>,
 }
 
 impl MobyWorld {
@@ -465,6 +468,7 @@ impl MobyWorld {
         self.shrubs = data.shrubs.clone();
         self.tie_groups = data.tie_groups.clone();
         self.shrub_groups = data.shrub_groups.clone();
+        self.tie_classes = data.tie_classes.clone();
     }
 
     /// `CreateMoby(o_class)` `0x311320`: the first free slot (state ≥ 0xfe), initialised, with zeroed pvars.

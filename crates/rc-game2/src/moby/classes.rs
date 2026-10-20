@@ -23,6 +23,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0ac0 => Some(props::update_0ac0),
         0x0ddf => Some(props::update_0ddf),
         0x0a38 => Some(carriers::update_0a38),
+        0x09c7 => Some(carriers::update_09c7),
         0x0c66 => Some(carriers::update_0c66),
         0x0ac1 => Some(props::update_0ac1),
         0x0ac2 => Some(props::update_0ac2),
