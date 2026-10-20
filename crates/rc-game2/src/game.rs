@@ -77,6 +77,11 @@ pub struct GameState {
     pub no_item_area: bool,
     /// `0x1c92c0`: the level's variant (the scenes and the level code set it; 0 on a load).
     pub variant: i32,
+    /// `0x1a7bd0`: the items had (one byte each); `0x139948`: the quick-select list (28 slots, 0 free).
+    pub items: Vec<u8>,
+    pub quick_select: Vec<i32>,
+    /// `0x139768`: the scenes seen (one bit each).
+    pub scenes_seen: Vec<bool>,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -92,7 +97,7 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0,
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100],
         }
     }
 }
@@ -100,6 +105,24 @@ impl Default for GameState {
 impl GameState {
     /// `0x2f5270(text, slot)`: ask for a help text — only with no panel up or asked for, the slot not off, past the
     /// sixth frame.
+    /// `0x322730(item)`: the item had; a weapon or gadget (below 0x15, or 0x18) goes in the first free
+    /// quick-select slot.
+    pub fn give_item(&mut self, item: i32) {
+        let Some(have) = self.items.get_mut(item.max(0) as usize) else { return };
+        if *have != 0 { return; }
+        *have = 1;
+        if item < 0x15 || item == 0x18 {
+            let n = self.quick_select.iter().filter(|&&q| q != 0).count();
+            if let Some(q) = self.quick_select.get_mut(n) { *q = item; }
+        }
+    }
+
+    /// `0x3132a8(mission)`: the level's mission done (bit 7).
+    pub fn mission_done(&mut self, mission: u8) {
+        if mission == 0xff { return; }
+        if let Some(b) = self.missions.get_mut(self.level.max(0) as usize * 0x10 + mission as usize) { *b |= 0x80; }
+    }
+
     pub fn help(&mut self, text: i32, slot: i32) -> bool {
         if self.help_state != 0 || self.help_req.is_some() || self.frame <= 5 { return false; }
         if self.help_counts.get(slot.max(0) as usize).copied().unwrap_or(-1) == -1 { return false; }

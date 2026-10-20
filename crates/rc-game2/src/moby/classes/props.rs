@@ -929,3 +929,86 @@ pub fn update_0ddf(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &mut w.mobys[id];
     m.state_ticks = m.state_ticks.wrapping_add(1);
 }
+
+/// The stubs 0x0b41 / 0x0b42 / 0x0b45 / 0x0b4d / 0x0b52 / 0x0b53 / 0x0c02 / 0x0c3f (`0x41b058` .. `0x41b170`, one
+/// body each): on the first update, state 1 and mode |= 0x800.
+pub fn update_stub(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    if m.state == 0 {
+        m.state = 1;
+        m.mode |= 0x800;
+    }
+}
+
+/// `0x29fc20[level]`: the scene lists of the level's scene triggers (0x0f6e's `+0x68`[8]); level 0's.
+const SCENES_L0: [&[i32]; 4] = [&[0x21], &[0x23], &[0x22], &[0x16]];
+
+/// 0x0f6e (`0x40ffa0`, a scene trigger with a reward): gone at the start when its item `+0x68`[9] is had or its
+/// mission (`+0xb0`) done. Set off ([0xa], once-flag 2 `0x32a838`, or the timer byte `+0xbc`) with Ratchet in its
+/// cuboid [0] (and not in the ship, alive, the game not paused), it plays its scenes ([8] into `0x29fc20`; one not
+/// seen yet, or any with [0xd]) — the port's scenes end at once: Ratchet is put at the cuboid [4] (`0x2b9e68`) —
+/// then gives the item (`0x322730`; equipping it, `0x325270`, is not ported), marks the mission done (`0x3132a8`),
+/// saves the checkpoint with [0xb] ≥ 1 and the word [0xc]'s top half (at [4], else where Ratchet is) and is
+/// deleted. Its message [0xc] (`0x2f50f8`) and the HUD's flash `0x30d658` are not ported.
+pub fn update_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &w.mobys[id];
+    let item = m.pv_b(9) as i8 as i32;
+    let g = &mut *ctx.game;
+    let done = |g: &crate::game::GameState, mission: u8| mission != 0xff && g.missions.get(g.level.max(0) as usize * 0x10 + mission as usize).is_some_and(|b| b & 0x80 != 0);
+    match m.state {
+        0 => {
+            if (item != -1 && g.items.get(item as usize).is_some_and(|&b| b != 0)) || done(g, m.mission) {
+                w.delete(id);
+                return;
+            }
+            w.mobys[id].set_state(1, -1);
+        }
+        1 => {
+            if m.pv_b(0xa) != 0 || m.once & 4 != 0 || m.timer != 0 {
+                let m = &mut w.mobys[id];
+                m.set_pv_b(0xa, 1);
+                m.set_state(2, -1);
+            }
+        }
+        2 => {
+            if m.pv_b(0xa) == 0 {
+                w.mobys[id].set_state(1, -1);
+                return;
+            }
+            if ctx.hero.hp < 1 { return; }
+            let vol = m.pv_i(0);
+            if vol != -1 && !ctx.level.in_cuboid(vol, ctx.hero.pos) { return; }
+            let force = m.pv_b(0xd) != 0;
+            let list = if g.level == 0 { SCENES_L0.get(m.pv_b(8) as usize).copied().unwrap_or(&[]) } else { &[] };
+            let mut played = false;
+            for &sc in list {
+                if force || !g.scenes_seen.get(sc as usize).copied().unwrap_or(true) {
+                    if let Some(s) = g.scenes_seen.get_mut(sc as usize) { *s = true; }
+                    played = true;
+                }
+            }
+            let m = &mut w.mobys[id];
+            m.set_pv_b(0xf, played as u8);
+            m.set_state(if played { 3 } else { 4 }, -1);
+        }
+        3 => {
+            if let Some((p, r)) = ctx.level.cuboid_place(m.pv_i(4)) {
+                ctx.hero.teleport(p, r);
+                ctx.hero.request_state(0, true);
+            }
+            w.mobys[id].set_state(4, -1);
+        }
+        4 => {
+            if item != -1 { g.give_item(item); }
+            if !done(g, m.mission) { g.mission_done(m.mission); }
+            if 1 <= m.pv_b(0xb) as i8 && m.pv_i(0xc) as u32 & 0xffff_0000 != 0 {
+                match ctx.level.cuboid_place(m.pv_i(4)) {
+                    Some((p, r)) => g.save_checkpoint(p, r),
+                    None => g.save_checkpoint(ctx.hero.pos, ctx.hero.rot),
+                }
+            }
+            w.delete(id);
+        }
+        _ => {}
+    }
+}
