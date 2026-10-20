@@ -373,6 +373,8 @@ pub struct MobyWorld {
     pub attached: std::collections::HashMap<usize, attach::Carrier>,
     pub moved_ties: Vec<usize>,
     pub moved_shrubs: Vec<usize>,
+    /// The ties hidden by the level's objects (the runtime tie's `+0x1e` bit 2), for the engine.
+    pub hidden_ties: std::collections::HashSet<usize>,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).

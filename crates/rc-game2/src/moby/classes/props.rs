@@ -886,3 +886,46 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     w.changed = true;
 }
+
+/// 0x0ddf (`0x3fefc0`, a view volume): while the camera (`0x1b8d40`) is in its cuboid `+0x68`[0x38] or its area
+/// [0x3c] (both −1: it is deleted), the ties of its 14 tie groups [0..0x34] are hidden (`+0x1e` |= 4); leaving
+/// shows them again.
+pub fn update_0ddf(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    let (vol, area) = (m.pv_i(0x38), m.pv_i(0x3c));
+    if m.state == 0 {
+        if vol == -1 && area == -1 {
+            w.delete(id);
+            return;
+        }
+        m.update_dist = 0xff;
+        m.state = 1;
+        m.state_ticks = m.state_ticks.wrapping_add(1);
+        return;
+    }
+    let cam = ctx.host.camera_pos();
+    let inside = (vol != -1 && ctx.level.in_cuboid(vol, cam)) || (area != -1 && ctx.level.in_area(area, cam));
+    let groups: Vec<i32> = (0..14).map(|k| m.pv_i(4 * k)).collect();
+    let hide = |w: &mut MobyWorld, on: bool| {
+        for g in &groups {
+            let Some(list) = usize::try_from(*g).ok().and_then(|g| w.tie_groups.get(g)) else { continue };
+            for &t in list {
+                if on { w.hidden_ties.insert(t as usize); } else { w.hidden_ties.remove(&(t as usize)); }
+            }
+        }
+    };
+    match w.mobys[id].state {
+        1 if inside => {
+            hide(w, true);
+            w.mobys[id].state = 2;
+        }
+        2 if inside => hide(w, true),
+        2 => {
+            hide(w, false);
+            w.mobys[id].state = 1;
+        }
+        _ => {}
+    }
+    let m = &mut w.mobys[id];
+    m.state_ticks = m.state_ticks.wrapping_add(1);
+}

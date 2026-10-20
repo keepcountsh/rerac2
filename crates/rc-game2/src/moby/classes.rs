@@ -21,6 +21,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x12f5 => Some(props::update_12f5),
         0x0c8b => Some(props::update_0c8b),
         0x0ac0 => Some(props::update_0ac0),
+        0x0ddf => Some(props::update_0ddf),
         0x0a38 => Some(carriers::update_0a38),
         0x0c66 => Some(carriers::update_0c66),
         0x0ac1 => Some(props::update_0ac1),
