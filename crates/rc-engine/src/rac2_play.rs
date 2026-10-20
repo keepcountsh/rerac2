@@ -295,7 +295,7 @@ fn draw_hud(
     let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
     let mut quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
     let p: &mut Play = p;
-    quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs));
+    quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs, &hud.data.assets().sprites));
     let mut d = crate::hud_render::Hud2d::default();
     for q in quads {
         let tex = match q.tex {

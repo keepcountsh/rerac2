@@ -286,7 +286,8 @@ the class 0xac), never on Aranos.
 **The help panel** (`rc_game2::help`, drawn with the HUD): the requests the objects make (`0x2f5270`), the
 panel's states `0x2f5680` (open, grow, fade in, show for 7 ticks a character, △ dismisses and counts in the slot,
 fade out, shrink), the word wrap `0x2ea908` and the rounded box `0x2e9548`, over the level's English help texts.
-Not yet: the border sprites (`0x42f3b0`), the help voice, the HUD hiding while it shows.
+The border is the GUI sprites 0x57 / 0x58 (`0x42f3b0`). Not yet: the help voice, the prompt slot it holds
+(`0x327ae0`).
 
 **Engine gaps the objects left** (the game side is done): the ties and shrubs the carriers move
 (`MobyWorld::moved_ties` / `moved_shrubs` with their new matrices in `ties` / `shrubs`: the tie and shrub instance

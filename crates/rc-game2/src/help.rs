@@ -12,20 +12,25 @@
 //! The panel shows from the first frame on a level (`0x27d7f8`; a level index below 0 would wait for a direction
 //! and 120 ticks) with the help text on and the voice off (the options `0x1a7b9d` / `0x1a7b9c`).
 //!
-//! Not ported: the help voice (the dialogue player `0x1a63cc`, the voice table `0x14df60`), the border sprites
-//! (`0x42f3b0` on the GUI's `+0x222c` / `+0x2230`), the HUD's hiding while it shows (`0x327ae0(5, 0, 1)`), the slot's
-//! last-shown time and level bits (`0x18c95c` / `0x18c960`), the help log `0x2f6538`, the multi-page help
-//! (`0x27d800`), the shake offset `0x27d808`.
+//! The border (`0x30d8d0` → `0x42f3b0`, `0x55f0c070`): the GUI sprites 0x57 down the sides and 0x58 along the top and
+//! bottom (`0x444de0`), mirrored, their frame stretching them to the box's height and width.
+//!
+//! Not ported: the help voice (the dialogue player `0x1a63cc`, the voice table `0x14df60`), the prompt slot it holds
+//! (`0x327ae0(5, 0, 1)`), the slot's last-shown time and level bits (`0x18c95c` / `0x18c960`), the help log
+//! `0x2f6538`, the multi-page help (`0x27d800`), the shake offset `0x27d808`, PAL's height (0.9).
 
 use crate::game::GameState;
 use crate::gui::{self, Quad, Tex};
 use rc_formats::rac2::boot::Glyph;
+use rc_formats::rac2::gui_sprite::Sprite;
 use rc_formats::strings::Message;
+use std::collections::HashMap;
 
 /// The screen height (`0x1a7344`).
 const SCREEN_H: i32 = 416;
 const BOX_RGBA: u32 = 0x0044_2d00;
 const TEXT_RGB: u32 = 0x00ff_a888;
+const BORDER_RGB: u32 = 0x00f0_c070;
 
 /// `0x2eb050`'s layout (the words `+0..+0x16`): the lines drawn between `top` and `bottom`, the text between `x0` and
 /// `x1` anchored at `x` (flags bit 0: centred), at `y` (bit 1: centred on it), `line` apart; bit 2 measures only.
@@ -133,6 +138,26 @@ fn rounded_box(out: &mut Vec<Quad>, y0: i32, y1: i32, x0: i32, x1: i32, alpha: i
     rect(y0 + 1, y1 - 1, x1, x1 + 2);
     rect(y0 + 2, y1 - 2, x1 + 2, x1 + 3);
     rect(y0 + 4, y1 - 4, x1 + 3, x1 + 4);
+}
+
+/// `0x42f3b0(y0, y1, x0, x1, gui, alpha, colour)`: the border — the side piece 0x57 at the left (mirrored) and
+/// right edges, its frame `((y1 − y0) − 26) / 112 · 0.311 + 0.0375`; the top and bottom piece 0x58 16 in from both
+/// corners, mirrored to the four, its frame `((x1 − x0) − 150) / 306 · 0.433 + 0.102`.
+fn border(out: &mut Vec<Quad>, sprites: &HashMap<u32, Sprite>, y0: i32, y1: i32, x0: i32, x1: i32, alpha: i32, colour: u32) {
+    let rgba = gui::rgba(((alpha as u32) << 24) | colour);
+    let (y0, y1, x0, x1) = (y0 as f32, y1 as f32, x0 as f32, x1 as f32);
+    let fy = ((y1 - y0) - 26.0) * 0.008_928_572 * 0.311 + 0.0375;
+    let fx = ((x1 - x0) - 150.0) * 0.003_267_974 * 0.433 + 0.102;
+    if let Some(s) = sprites.get(&0x57) {
+        gui::sprite(out, s, [x0, y0], fy, [-1.0, 1.0], rgba);
+        gui::sprite(out, s, [x1, y0], fy, [1.0, 1.0], rgba);
+    }
+    if let Some(s) = sprites.get(&0x58) {
+        gui::sprite(out, s, [x0 + 16.0, y0], fx, [-1.0, 1.0], rgba);
+        gui::sprite(out, s, [x1 - 16.0, y0], fx, [1.0, 1.0], rgba);
+        gui::sprite(out, s, [x0 + 16.0, y1], fx, [-1.0, -1.0], rgba);
+        gui::sprite(out, s, [x1 - 16.0, y1], fx, [1.0, -1.0], rgba);
+    }
 }
 
 /// The panel (`0x27d7c8..0x27d810`; its state is [`GameState::help_state`]).
@@ -249,7 +274,7 @@ impl Panel {
     }
 
     /// `0x2f5fb0`: the box and the text as GUI quads.
-    pub fn draw(&mut self, g: &GameState, texts: &[Message], glyphs: &[Glyph; 256]) -> Vec<Quad> {
+    pub fn draw(&mut self, g: &GameState, texts: &[Message], glyphs: &[Glyph; 256], sprites: &HashMap<u32, Sprite>) -> Vec<Quad> {
         let mut out = Vec::new();
         if g.help_state != 0 && !self.measured { self.measure(texts, glyphs); }
         let [x, y] = self.centre;
@@ -258,16 +283,19 @@ impl Panel {
             1 => {
                 self.drawn = [8, 8];
                 rounded_box(&mut out, y - 8, y + 8, x - 8, x + 8, 0x60, BOX_RGBA);
+                border(&mut out, sprites, y - 8, y + 8, x - 8, x + 8, 0x60, BORDER_RGB);
             }
             3 => {
                 self.drawn = [(self.half[0] - 0x20) * t8 / 8 + 0x20, (self.half[1] - 0x20) * t8 / 8 + 0x20];
                 let [dx, dy] = self.drawn;
                 rounded_box(&mut out, y - dy, y + dy, x - dx, x + dx, 0x60, BOX_RGBA);
+                border(&mut out, sprites, y - dy, y + dy, x - dx, x + dx, 0x60, BORDER_RGB);
             }
             4..=6 => {
                 self.drawn = self.half;
                 let [dx, dy] = self.half;
                 rounded_box(&mut out, y - dy, y + dy, x - dx, x + dx, 0x60, BOX_RGBA);
+                border(&mut out, sprites, y - dy, y + dy, x - dx, x + dx, 0x60, BORDER_RGB);
                 let t4 = self.timer.clamp(0, 4);
                 let alpha = match g.help_state { 4 => t4 * 0x20, 6 => (4 - t4) * 0x20, _ => 0x80 };
                 let text = self.index.and_then(|i| texts.get(i)).map_or(&[][..], |m| &m.text[..]);
@@ -277,6 +305,7 @@ impl Panel {
                 let [dx, dy] = self.drawn;
                 let (dx, dy) = (dx - (dx - 8) * t8 / 8, dy - (dy - 8) * t8 / 8);
                 rounded_box(&mut out, y - dy, y + dy, x - dx, x + dx, (8 - t8) * 0xc, BOX_RGBA);
+                border(&mut out, sprites, y - dy, y + dy, x - dx, x + dx, (8 - t8) * 0xc, BORDER_RGB);
             }
             _ => {}
         }
