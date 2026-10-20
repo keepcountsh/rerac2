@@ -41,7 +41,7 @@ impl Plugin for Rac2PlayPlugin {
             .init_resource::<PadFrame>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
-            .add_systems(Update, draw_created)
+            .add_systems(Update, (draw_created, draw_hud))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop));
     }
 }
@@ -64,6 +64,8 @@ struct Play {
     mobys: Option<crate::rac2_mobys::Rac2Mobys>,
     /// The game-wide state (bolts, health limit).
     game: rc_game2::game::GameState,
+    /// The HUD's counters (rc_game2::hud).
+    hud: rc_game2::hud::Hud,
     ticks: u64,
     trace: bool,
 }
@@ -116,7 +118,6 @@ fn tick(
     };
     p.pad.update(Some(&input.bytes()), false);
     p.game.frame += 1;
-    if 0 < p.game.bolt_counter_show { p.game.bolt_counter_show -= 1; }
     let class = &lv.mobys.anim[p.class];
     let mobys = p.mobys.as_mut().expect("mobys");
     let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
@@ -166,6 +167,9 @@ fn tick(
         (inp.scene, inp.hero_moby) = (scene.as_ref(), mobys.hero_moby);
         p.camera.update(&inp);
     }
+    // The HUD (`0x443c08`) with this tick's requests.
+    let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
+    p.hud.tick(p.hero.hp, p.game.max_health, sb, sh);
     if p.trace {
         let v = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let h = &p.hero;
@@ -187,6 +191,67 @@ fn tick(
     }
     commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR });
     p.ticks += 1;
+}
+
+/// The in-game HUD's layer: the front end's texture set (its fonts, slot 1) and the level's HUD icons after it.
+#[derive(Resource)]
+struct GameHud {
+    layer: crate::hud_render::Layer,
+    data: crate::rac2::Data,
+    /// `(icon, frame)` → layer texture and texel size.
+    icons: std::collections::HashMap<(u16, u16), (usize, [f32; 2])>,
+}
+
+/// The HUD layer, made on the first frame with a game (its own 2D camera above the world's), then drawn each frame.
+#[allow(clippy::too_many_arguments)]
+fn draw_hud(
+    mut commands: Commands,
+    play: Option<Res<Play>>,
+    hud: Option<Res<GameHud>>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<crate::hud_render::HudMaterial>>,
+    mut composites: ResMut<Assets<crate::hud_render::HudComposite>>,
+) {
+    let Some(p) = play else { return };
+    let Some(hud) = hud else {
+        let root = crate::level_load::extracted_root();
+        let data = match crate::rac2::Data::load(&root) {
+            Ok(d) => d,
+            Err(e) => { eprintln!("rac2: no HUD ({e:#})"); return; }
+        };
+        let mut textures: Vec<rc_formats::texture::Texture> = data.textures().to_vec();
+        let mut icons = std::collections::HashMap::new();
+        match crate::rac2_level::hud(&root, crate::level_load::level_index()) {
+            Ok(h) => {
+                for id in [0x7567u16] {
+                    let f = h.icon_frame(id, 0);
+                    if let Ok(t) = h.decode_frame_raw(f) {
+                        icons.insert((id, 0), (textures.len(), [t.width as f32, t.height as f32]));
+                        textures.push(t);
+                    }
+                }
+            }
+            Err(e) => eprintln!("rac2: no HUD icons ({e:#})"),
+        }
+        let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::None, ..default() }, Name::new("rac2 HUD camera"))).id();
+        let scaling = crate::hud_render::scaling(crate::graphics::Hud::Original);
+        let layer = crate::hud_render::Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &textures, scaling, cam);
+        commands.insert_resource(GameHud { layer, data, icons });
+        return;
+    };
+    let draws = p.hud.draw(p.game.bolts);
+    let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
+    let quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
+    let mut d = crate::hud_render::Hud2d::default();
+    for q in quads {
+        let tex = match q.tex {
+            rc_game2::gui::Tex::Slot(i) => crate::hud_render::Tex::Frame(i),
+            _ => crate::hud_render::Tex::None,
+        };
+        d.screen_prim(tex, q.pos, q.uv, u32::from_le_bytes(q.rgba), false);
+    }
+    if let Some(mut m) = meshes.get_mut(&hud.layer.mesh) { *m = hud.layer.build(&d); }
 }
 
 /// The created mobys' draw (crate::rac2_mobys::CreatedDraw), made on the first frame with mobys.
@@ -225,7 +290,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     println!("rac2: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
-        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), ticks: 0,
+        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0,
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
 }

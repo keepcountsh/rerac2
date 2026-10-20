@@ -117,6 +117,6 @@ fn attract(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
 fn collect(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let v = bolt_value(w.mobys[id].o_class);
     ctx.game.bolts = ctx.game.bolts.saturating_add(v as u32);
-    ctx.game.bolt_counter_show = 0xb4;
+    ctx.game.show_bolts = Some(0xb4);
     w.delete(id);
 }

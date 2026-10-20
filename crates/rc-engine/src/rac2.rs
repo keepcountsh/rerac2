@@ -52,6 +52,10 @@ pub struct Data {
 }
 
 impl Data {
+    /// The GUI sprites, the glyphs and the texture set (the in-game HUD's too: crate::rac2_play).
+    pub(crate) fn assets(&self) -> &FrontAssets { &self.assets }
+    pub(crate) fn textures(&self) -> &[Texture] { &self.textures }
+
     pub fn load(root: &Path) -> Result<Data> {
         let read = |rel: &str| crate::disc_source::read(root, rel);
         let hdr = read("RC2.HDR")?;

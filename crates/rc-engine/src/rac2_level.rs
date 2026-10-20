@@ -64,6 +64,20 @@ pub fn class_blobs(root: &Path, index: u32) -> Result<ClassBlobs> {
     Ok(ClassBlobs { collision, blobs })
 }
 
+/// The level's HUD textures (`0x2ff200`): the header is lump 3, its five banks lumps 4..8 (WAD-compressed; the
+/// absent ones 16-byte stubs); R&C1's HUD format (rc_formats::hud).
+pub fn hud(root: &Path, index: u32) -> Result<rc_formats::hud::Hud> {
+    let name = file_name(index);
+    let file = crate::disc_source::read(root, &name)?;
+    let wad = LevelWad::parse(&file).with_context(|| name.clone())?;
+    let header = wad.lump(Lump::Lump3)?.context("no HUD header")?;
+    let bank = |l: Lump| -> Vec<u8> {
+        wad.lump(l).ok().flatten().filter(|b| 16 < b.len()).map(|b| if rc_formats::wad::is_wad(b) { rc_formats::wad::decompress(b).unwrap_or_default() } else { b.to_vec() }).unwrap_or_default()
+    };
+    let banks = [bank(Lump::HudHeader), bank(Lump::HudBank0), bank(Lump::HudBank1), bank(Lump::HudBank2), bank(Lump::HudBank3)];
+    Ok(rc_formats::hud::parse_hud(header, [&banks[0], &banks[1], &banks[2], &banks[3], &banks[4]])?)
+}
+
 pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let mut t = LoadTimings::default();
     let t0 = Instant::now();

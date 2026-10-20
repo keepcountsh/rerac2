@@ -21,8 +21,9 @@ pub struct GameState {
     /// The per-level save bytes of the uids (`0x19b4a8 + level·0x400`, 3 bits per uid: low nibble even uids, high
     /// odd): how often a crate was broken (the bolt percentage table's row) and bit 3 (the second table).
     pub uid_bits: Vec<u8>,
-    /// `0x30d910(n)`: the HUD's bolt counter shows for n more ticks.
-    pub bolt_counter_show: i32,
+    /// This tick's HUD requests: `0x30d910(n)` (the bolt counter shows for n ticks) and `0x30d9f8(n)` (the health).
+    pub show_bolts: Option<i32>,
+    pub show_health: Option<i32>,
     /// The random stream (`0x1163b0`).
     pub rng: crate::rng::Rng,
     /// Recent crate breaks (`$gp+0x3fc`, decays): fewer bolt mobys a drop the more.
@@ -36,7 +37,7 @@ impl Default for GameState {
     fn default() -> Self {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
-            bolt_counter_show: 0, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
+            show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
         }
     }
 }

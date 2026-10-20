@@ -36,6 +36,9 @@ pub fn drop(w: &mut MobyWorld, id: usize, flags: u32, limit: i32, ctx: &mut Ctx)
         bank = (g.bolt_bank + 0x31) / 0x32;
         g.bolt_bank -= bank;
     }
+    // The XP part (`+0xb6`): the health and XP widget shows for 720 ticks (`0x30d9f8(0x2d0)`; the XP itself is not
+    // ported).
+    if w.mobys[id].xp != 0 { g.show_health = Some(0x2d0); }
     let table = &BOLT_PERCENT[g.uid_flag(uid) as usize];
     let value = table[g.uid_count(uid) as usize] as i32 * base as i32 / 100;
     g.bump_uid(uid);

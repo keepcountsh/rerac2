@@ -23,6 +23,20 @@ fn main() -> anyhow::Result<()> {
             println!("class {c}: mode {:#x} ty {:#x} mode2 {:#x} scale {} coll {:#x} seqs {} joints {}", k.header.mode_bits, k.header.ty, k.header.mode_bits2, k.header.scale, k.header.collision, k.header.sequence_count, k.header.joint_count);
         }
     }
+    {
+        use rac2::level::Lump;
+        let hh = w.lump(Lump::Lump3)?.unwrap_or(&[]);
+        let dec = |l: Lump| -> Vec<u8> { w.lump(l).ok().flatten().map(|b| if wad::is_wad(b) { wad::decompress(b).unwrap_or_default() } else { b.to_vec() }).unwrap_or_default() };
+        let banks: Vec<Vec<u8>> = vec![dec(Lump::HudHeader), dec(Lump::HudBank0), dec(Lump::HudBank1), dec(Lump::HudBank2), dec(Lump::HudBank3)];
+        println!("hud header {} bytes, banks {:?}", hh.len(), banks.iter().map(|b| b.len()).collect::<Vec<_>>());
+        match hud::parse_hud(hh, [&banks[0], &banks[1], &banks[2], &banks[3], &banks[4]]) {
+            Ok(h) => {
+                println!("hud: {} icons, {} frames, {} textures", h.icons.len(), h.frames.len(), h.textures.len());
+                for id in [0x7567u16, 0xeaa2, 0xeaa8, 0x301e] { let i = h.icon_index(id); println!("  icon {id:#x}: index {i} frame {:?}", h.frame_size(h.icon_frame(id, 0))); }
+            }
+            Err(e) => println!("hud parse: {e}"),
+        }
+    }
     let mut by: BTreeMap<i32, Vec<&rac2::gameplay::Rac2MobyInstance>> = BTreeMap::new();
     for m in &mobys { by.entry(m.base.o_class).or_default().push(m); }
     println!("{} instances, {} classes", mobys.len(), by.len());

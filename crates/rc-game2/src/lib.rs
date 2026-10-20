@@ -9,5 +9,6 @@ pub mod front_end;
 pub mod game;
 pub mod gui;
 pub mod hero;
+pub mod hud;
 pub mod moby;
 pub mod rng;
