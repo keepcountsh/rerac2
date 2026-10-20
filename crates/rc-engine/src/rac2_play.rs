@@ -186,7 +186,7 @@ fn tick(
         mobys.world.changed = false;
     }
     if let Some(o) = occl.as_mut() {
-        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some()) {
+        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
             if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, None, m.state >= 0x80 || m.mode & 1 != 0); }
         }
     }

@@ -73,6 +73,7 @@ impl MobyWorld {
                 if out.len() >= max { break; }
                 let m = &mut self.mobys[i];
                 m.mode |= mode::KEEP_ROWS | mode::NO_MATRIX;
+                m.drive = true;
                 let (offset, rows) = local(m.pos, &m.rows);
                 out.push(Member { kind: Kind::Moby, index: i, offset, rows });
             }

@@ -245,6 +245,7 @@ pub fn update_0c8c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let members = w.groups[g as usize].clone();
             for i in members {
                 let m = &mut w.mobys[i];
+                m.drive = true;
                 if hide { m.mode |= 0x43 } else { m.mode &= !0x43 }
             }
         }
@@ -465,6 +466,7 @@ fn show_group(w: &mut MobyWorld, group: i32, show: bool) {
     for i in w.groups[group as usize].clone() {
         let coll = w.class(w.mobys[i].o_class).is_some_and(|c| c.has_collision);
         let m = &mut w.mobys[i];
+        m.drive = true;
         if show {
             m.mode &= 0xffbc;
             m.has_collision = coll;

@@ -155,6 +155,9 @@ pub struct Moby {
     /// `+0xbe`: bit 0 / 1 the once-flags (`0x32a7c8` / `0x32a7f0`, cleared by a state change), bit 2 hooked
     /// (`0x32a818`).
     pub once: u8,
+    /// The port's: another moby moves or hides this one (a carrier, a group shown or hidden), so the engine keeps
+    /// its draw following it even without an update of its own.
+    pub drive: bool,
 }
 
 /// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
@@ -256,7 +259,7 @@ impl Moby {
             index, bsphere: [0.0; 4], pos: [0.0; 3], state: 0, group: -1, slot: 0, alpha: 0x80, scale: 0.0, update_dist: 0,
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0,
+            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false,
         };
         match class {
             Some(c) => {
