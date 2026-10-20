@@ -61,6 +61,7 @@ impl Hero {
         if 0x1f <= self.timer && !held { return Some(6); }
         if self.ledge.found { return Some(0x17); }
         if self.air_ticks != 0 && 0.4 <= self.height { return None; }
+        if self.timer < 10 { self.glide_lag = 0xc - self.timer as i16; }
         self.stick_target(env, 1.0, 0);
         if self.prev_state == 0x10 && self.timer < 4 {
             if self.set_state(anim, env, 3, false) {

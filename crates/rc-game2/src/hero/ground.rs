@@ -2,9 +2,13 @@
 //! entries (L00 `0x2c4560`), physics (`0x2ba8e0`, the case shared by 0, 1, 3, 4, 0x1c, 0x1d, 0x1e, 0x39, 0x6d, 0x6f,
 //! 0x7d) and transitions (`0x2cb650`).
 //!
-//! Not ported (the branches are noted in place): the sliding floors (`0x18b2b2` → 0x2e / 0x2f, `0x18b2ba` → 0x76),
-//! the look / strafe stance 1 (L1), the weapon stances (`0x2cb1c8`), the idle fidgets and back items, the water
-//! effects, the crouch's pack jumps (in `0x2cadb0`; its flip and plain jump are ported) and the ledges (0x27).
+//! Also the look stance 1 (L1 held: the camera's mode 4; it gives way after 31 ticks) and its scripted twin 0x1d
+//! (camera mode 0x51), and the ice floor's variants (the drag 0.7, the crouch's slide 1/2118) and the magnetic
+//! walkway with the Gravity Boots (held to the floor).
+//!
+//! Not ported (the branches are noted in place): the weapon stances (`0x2cb1c8`, `0x18c0da`), the idle fidgets
+//! (`0x2ca788` → 0x3c) and the back items' poses, the water effects, the cutscene lock `0x18c0d5` (the look stance
+//! faces the camera), the rails (0x27), the updraft `0x18c30f` (→ 0x82).
 
 use super::physics::*;
 use super::states::{Entry, FLIP_DIRS};
@@ -29,6 +33,13 @@ impl Hero {
                 let seq = if v.seq_a == 4 && 3.0 < v.frame && v.frame < 16.0 { 5 } else { 6 };
                 Entry::Anim(9.0, seq, 4)
             }
+            1 | 0x1d => {
+                self.group = 0;
+                self.cam_mode = if id == 1 { 4 } else { 0x51 };
+                let seq = self.idle_seq();
+                if anim.view().seq_b == seq { return Entry::Done; }
+                Entry::Anim(if id == 1 { 18.0 } else { 5.0 }, seq, 0)
+            }
             4 => {
                 self.group = 0xc;
                 self.speed = len2(self.eff).min(7.0 * DT);
@@ -46,7 +57,7 @@ impl Hero {
 
     /// The ground case of `0x2ba8e0`.
     pub(super) fn phys_ground(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
-        self.drag(0.5, 1.0 / 30.0);
+        if self.surf.ice { self.drag(0.7, 0.0) } else { self.drag(0.5, 1.0 / 30.0) }
         self.edge_brake(env, 3.7, 0.0);
         self.stick_target(env, 1.0, 0);
         if self.state == 4 {
@@ -79,12 +90,26 @@ impl Hero {
                 }
                 dec
             }
-            4 => 0.0075,
+            4 => if self.surf.ice { 0.000_472_222_25 } else { 0.0075 },
             _ => 0.004_916_667,
         };
         self.speed_step(0.0, dec);
         self.vel = [0.0; 3];
         self.momentum_decay(dec);
+        // The magnetic walkway with the Gravity Boots: held to the floor (on a moby, on its surface).
+        if self.surf.magnet && env.boots {
+            if 0.2 < self.height {
+                self.gravity_from(self.eff[2], 0.006_111_111);
+                return;
+            }
+            self.vel[2] -= 0.015;
+            if self.ground_moby.is_some() {
+                self.pos = self.ground_point;
+                self.air_ticks = 0;
+                self.height = 0.0;
+            }
+            return;
+        }
         self.wall_check(env, false);
         if self.air_ticks != 0 {
             self.gravity_from(self.eff_v[2], 0.006_944_44);
@@ -98,19 +123,50 @@ impl Hero {
         let held = env.pad.held;
         match self.state {
             0 => {
+                // L1: the look stance (`0x4287b0`, a level's veto, is not ported).
+                if held & button::L1 != 0 { return Some(1); }
                 self.stick_target(env, 1.0, 0);
+                if self.surf.mud && self.f16c == 0 { return Some(0x76); }
                 if 5 <= self.air_ticks && 0.4 < self.height {
                     if self.prev_state == 8 && self.timer < 0xf { return None; }
                     return Some(6);
                 }
                 if self.land_lag != 0 { return None; }
                 let from_look = (self.prev_state == 1 || self.prev_state == 0x1d) && self.timer < 5;
-                if !from_look && self.try_jump(anim, env, 7, false) { return None; }
-                if held & button::R1 != 0 && self.grounded_ticks != 0 { return Some(4); }
-                let from_look = (self.prev_state == 1 || self.prev_state == 0x1d) && self.timer < 0x18;
-                if from_look { return None; }
-                // `0x2b3370(0.1745)`: the stick moved past 10° this tick (the flick); or a magnitude above 0.22.
-                if 0.22 < self.stick_mag { return Some(2); }
+                if self.surf.boots == 1 {
+                    if Self::cross_within(env, 7) { return Some(0x6e); }
+                } else if !from_look {
+                    let n = if self.glide_lag != 0 { 1 } else { 7 };
+                    if self.try_jump(anim, env, n, false) { return None; }
+                }
+                if held & button::R1 != 0 && self.grounded_ticks != 0 && !(anim.view().seq_b == 0x1a && self.anim_frame < 108.0) { return Some(4); }
+                // A rail in reach (`0x18a45c` → 0x27): no rail probe yet. A sloped ice floor: the slide 0x2e.
+                if self.surf.ice && 0.087_266_47 < self.slope { return Some(0x2e); }
+                if (self.prev_state == 1 || self.prev_state == 0x1d) && self.timer < 0x18 && self.surf.boots != 1 {
+                    self.stick_target(env, 1.0, 0);
+                    if 1.221_730_6 < rot_dist(self.target_yaw, env.cam_yaw) && dist(self.pos, env.cam_pos) < 2.5 { return None; }
+                }
+                // `0x2b3370(0.1745)`: strafing and turned 10° from the camera; or a magnitude above 0.22.
+                if self.strafe_turned(env, 0.174_532_9) || 0.22 < self.stick_mag { return Some(2); }
+                None
+            }
+            1 | 0x1d => {
+                if self.mode == 0 {
+                    let seq = if held & button::R1 != 0 { 0xd } else { self.idle_seq() };
+                    if anim.view().seq_b != seq { self.set_anim(anim, 8.0, seq, 0); }
+                }
+                if self.state == 0x1d {
+                    if held & button::L1 != 0 { return None; }
+                } else {
+                    // The wrench busy (thrown or swinging) keeps the stance too.
+                    let busy = self.items.thrown != 0;
+                    if (held & button::L1 != 0 || busy) && self.timer < 0x1f { return None; }
+                    if held & button::R1 != 0 { return Some(4); }
+                }
+                if self.set_state(anim, env, 0, false) {
+                    let seq = self.idle_seq();
+                    if anim.view().seq_b != seq { self.set_anim(anim, 8.0, seq, 0); }
+                }
                 None
             }
             3 => {

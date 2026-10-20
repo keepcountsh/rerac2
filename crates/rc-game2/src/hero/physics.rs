@@ -44,6 +44,8 @@ pub struct Env<'a> {
     pub pad: &'a PadState,
     /// The camera's yaw `0x1b8d58` (the camera update of the previous tick).
     pub cam_yaw: f32,
+    /// The camera's position `0x1b8d40`.
+    pub cam_pos: V3,
     /// The camera's matrix `0x1b8f70`: rows forward, left, up (the stick turns through it).
     pub cam_rows: [V3; 3],
     /// Option `0x1a7a4c`: mirrored controls.
@@ -64,6 +66,12 @@ pub struct Env<'a> {
     pub boots: bool,
     /// Every moby's o_class by its index (the ground moby's class).
     pub classes: &'a [i16],
+}
+
+/// `0x330368(n)`: the stick's angle `min(n, count)` ticks back in the pad's history (1: this tick).
+pub fn stick_angle_ago(pad: &PadState, n: i32) -> f32 {
+    let k = n.min(pad.hist_count);
+    pad.hist_angle[(pad.hist_index as i32 - k).rem_euclid(0x1e) as usize].to_f32()
 }
 
 impl Env<'_> {
@@ -214,12 +222,70 @@ impl Hero {
             self.stick_dir = self.rows[0];
             return;
         }
+        // Strafing: the stick's sector (`0x18b277`: 0 left, 1 right, 2 ahead, 3 back within 45°; `0x18b276`: back
+        // past 0.15).
+        if self.strafe != 0 {
+            let a = atan2(x, y);
+            let q = PI / 4.0;
+            self.stick_sector = if rot_dist(a, PI / 2.0) < q { 3 } else if rot_dist(a, 0.0) < q { 1 } else if rot_dist(a, PI) < q { 0 } else { 2 };
+            self.strafe_back = self.stick_sector == 3 && 0.15 < self.stick_mag;
+        }
         self.target_yaw = add_rot(atan2(-y, -x), env.cam_yaw);
         let (sx, sy) = (if env.mirror { x } else { -x }, -y);
         // `0x2ef318(out, (−y, −x), camera)`: the stick turned into the world through the camera's rows.
         let r = &env.cam_rows;
         self.stick_dir = [sy * r[0][0] + sx * r[1][0], sy * r[0][1] + sx * r[1][1], sy * r[0][2] + sx * r[1][2]];
         self.target_speed = scale * (x * x + y * y).sqrt();
+    }
+
+    /// `0x2b36a8`: the strafe's turn. The stick's yaw and direction are kept (`0x18b278` / `0x18b260`); the speed flips
+    /// a quarter back when the stick swings from right to left within 5 ticks (and ramps back in from left to right);
+    /// the facing springs to the camera's yaw (0.037, 0.25, 0.2036) on its own yaw velocity `0x18b27c`.
+    pub fn strafe_turn(&mut self, env: &Env) {
+        self.strafe_yaw = self.target_yaw;
+        self.strafe_dir = self.stick_dir;
+        if 0 < self.strafe_flip[0] { self.strafe_flip[0] -= 1; }
+        if 0 < self.strafe_flip[1] { self.strafe_flip[1] -= 1; }
+        let mut k = 1.0;
+        if self.mode == 0 {
+            if self.stick_sector == 0 {
+                self.strafe_flip[1] = 5;
+                if self.strafe_flip[0] != 0 { k = -0.25; }
+            } else if self.stick_sector == 1 {
+                self.strafe_flip[0] = 5;
+                if self.strafe_flip[1] != 0 { k = (4.0 - self.strafe_flip[1] as f32) * 0.25; }
+            }
+        }
+        self.speed *= k;
+        self.target_yaw = env.cam_yaw;
+        self.stick_dir = env.cam_rows[0];
+        self.yaw_vel = self.strafe_yaw_vel;
+        self.turn_to(0.036_999_997, 0.25, 0.203_622_93, 0);
+        self.strafe_yaw_vel = self.yaw_vel;
+        self.yaw_vel = 0.0;
+        self.yaw_residual = 0.0;
+    }
+
+    /// `0x2b43e0(dir)`: the velocity = `dir` · speed.
+    pub fn vel_along(&mut self, dir: V3) { self.vel = scale(dir, self.speed); }
+
+    /// `0x2b4410`: on the ground (under 0.15 up) moving up against a wall steeper than 50°: the velocity's part into
+    /// it taken away, and 0.03 down.
+    pub fn edge_slide(&mut self) {
+        if self.air_ticks == 0 || 0.15 <= self.height || self.disp[2] <= 0.0 || self.cap_hit == 0 || self.contact_normal[2] <= 0.0 { return; }
+        if slope_of(self.contact_normal) < 0.872_664_7 { return; }
+        let mut n = [self.contact_normal[0], self.contact_normal[1], 0.0];
+        n = unit(n);
+        if 0.0 < -self.vel[0] * n[0] - self.vel[1] * n[1] {
+            let f = -(self.vel[0] * n[0] + self.vel[1] * n[1]);
+            self.vel = add(self.vel, scale(n, f));
+            self.vel[2] -= 0.03;
+        }
+    }
+
+    /// `0x2b3370(a)`: strafing (L2 / R2 held) and the facing at least `a` from the camera's yaw.
+    pub fn strafe_turned(&self, env: &Env, a: f32) -> bool {
+        env.pad.held & (rc_game::pad::button::L2 | rc_game::pad::button::R2) != 0 && a <= rot_dist(self.rot[2], env.cam_yaw)
     }
 
     /// `0x2b3e18`: [`Hero::stick_target`] (1, 0), then target speed = run speed `0x1a7dc0` (5.95) · stick magnitude

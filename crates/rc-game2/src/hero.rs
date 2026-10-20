@@ -291,6 +291,22 @@ pub struct Hero {
     pub glide_sink: f32,
     /// `0x18b6e0`: the lava hops in a row.
     pub hot_hops: i32,
+    /// `0x18a00e`: after a glide's landing the next jump's ✕ window is 1 tick (counted down); `0x18a220` / `0x18a224`:
+    /// the ice slide's speed along the stick and the slope it last had.
+    pub glide_lag: i16,
+    pub ice_along: f32,
+    pub ice_slope: f32,
+    /// `0x18b274`: strafing (L2 / R2 held: 1; counted down when let go; never in the Thruster-Pack's boost); `0x18b278`
+    /// / `0x18b260`: the strafe's kept yaw and facing.
+    pub strafe: i16,
+    pub strafe_yaw: f32,
+    pub strafe_dir: V3,
+    /// `0x18b277` / `0x18b276`: the stick's sector while strafing and "back"; `0x18b28c` / `0x18b28e`: the ticks since
+    /// it was right / left; `0x18b27c`: the strafe turn's yaw velocity.
+    pub stick_sector: u8,
+    pub strafe_back: bool,
+    pub strafe_flip: [i16; 2],
+    pub strafe_yaw_vel: f32,
     /// Hits Ratchet's body deals this tick (the Thruster-Pack's ram), delivered by the item pass.
     pub hits_out: Vec<HeroHit>,
     /// States the port has not got, reported once each.
@@ -328,7 +344,7 @@ impl Hero {
             pos_hist: [[0.0; 3]; HISTORY], pos_hist_idx: 0, pos_hist_count: 0, yaw_hist: [0.0; HISTORY], yaw_hist_idx: 0,
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
-            bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, hits_out: Vec::new(), unported_seen: Vec::new(),
+            bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0, hits_out: Vec::new(), unported_seen: Vec::new(),
         }
     }
 
@@ -352,9 +368,11 @@ impl Hero {
         self.anim_speed = 1.0;
     }
 
-    /// `0x2a4e48(weapon)`: the idle sequence — 0, or 0x67 / 0x51 with the items that change Ratchet's stance (not
-    /// ported: 0).
-    pub fn idle_seq(&self) -> u8 { 0 }
+    /// `0x2a4e48(0)`: the idle sequence — 0x51 with 1 health left, 0x67 on ice, else 0 (the weapon stances of
+    /// `0x2a4e48(1)` with `0x18c0da`: not ported, the held items' stance table `0x262518`).
+    pub fn idle_seq(&self) -> u8 {
+        if self.mode == 1 { 0 } else if self.hp == 1 { 0x51 } else if self.surf.ice { 0x67 } else { 0 }
+    }
 
     /// `0x2b3a08`: the stick's magnitude, `(max(|x|, |y|) + |stick|) / 2`, at most 1.
     fn stick_magnitude(&self) -> f32 {
@@ -365,6 +383,12 @@ impl Hero {
     /// `0x2b37e8`: the stick (the d-pad below 0.25), the per-state physics, the histories, the rows, the capsule, the
     /// move and the post-move. `false` when the state has no ported physics.
     pub fn input_physics_move(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> bool {
+        if env.pad.held & (rc_game::pad::button::L2 | rc_game::pad::button::R2) == 0 {
+            if 0 < self.strafe { self.strafe -= 1; }
+        } else if self.strafe < 1 {
+            self.strafe = 1;
+        }
+        if self.state == 0x10 { self.strafe = 0; }
         self.stick_mag_prev = self.stick_magnitude();
         self.stick = [env.pad.lx.to_f32(), env.pad.ly.to_f32()];
         if (self.stick[0] * self.stick[0] + self.stick[1] * self.stick[1]).sqrt() < 0.25 {
@@ -402,6 +426,7 @@ impl Hero {
         if 0 < self.damage.invincible { self.damage.invincible -= 1; }
         if 0 < self.wall.timer { self.wall.timer -= 1; }
         if 0 < self.wall.regrab { self.wall.regrab -= 1; }
+        if 0 < self.glide_lag { self.glide_lag -= 1; }
     }
 
     /// `0x2ae0e8(n)`: the yaw `n` ticks before the newest in the history (at most 31, at most what it holds).
