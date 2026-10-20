@@ -10,3 +10,4 @@ pub mod game;
 pub mod gui;
 pub mod hero;
 pub mod moby;
+pub mod rng;

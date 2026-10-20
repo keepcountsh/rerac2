@@ -27,12 +27,13 @@
 //! ([`MobyWorld::new`]). The slot only orders the run list.
 //!
 //! **Not ported yet:** the spawn conditions of the static spawn (missions, the save's bits `0x19b2e8` / `0x19b4a8`,
-//! the bolt / XP tallies `0x1c5400` / `0x1c54c0`), the instance pvars (sections 23 / 24), the moby groups (section 20:
-//! no groups, so no group-added mobys), the ground snap of rooted instances, the lights and colours (`0x3132e0`), the
+//! the bolt / XP tallies `0x1c5400` / `0x1c54c0`), the pvar pointer fixups (kept relative), the ground snap of
+//! rooted instances, the lights and colours (`0x3132e0`), the
 //! animation advance `0x313420` (the engine animates every placed moby itself), the deletion and the created mobys'
 //! pvar pool.
 
 pub mod classes;
+pub mod bolts;
 pub mod hits;
 
 use crate::hero::physics::{add, scale, V3};
@@ -62,6 +63,8 @@ pub mod mode {
 
 /// Class slots of the run-list builder (`0x70000000..0x70000780`, 8 bytes each).
 pub const CLASS_SLOTS: usize = 0xf0;
+/// Moby slots (the level's instances plus the slots the loader leaves for created ones).
+pub const MAX_MOBYS: usize = 1024;
 /// Bytes of a created moby's pvars (`CreateMoby`: `0x1b1e2c + index·0x80`).
 pub const PVAR_BYTES: usize = 0x80;
 
@@ -134,6 +137,14 @@ pub struct Moby {
     pub hit_slot: i8,
     /// `+0xb8`: the moby that owns it (the hand items: Ratchet).
     pub parent: Option<usize>,
+    /// The instance record's pvar index (−1: none or a created moby).
+    pub pvar_index: i32,
+    /// `+0xb4` / `+0xb6`: the bolts and the XP the moby gives (the record's words 5 / 7).
+    pub bolts: i16,
+    pub xp: i16,
+    /// `+0xbc`: the class's timer byte; `+0x7f` the drop count.
+    pub timer: u8,
+    pub drops: u8,
 }
 
 impl Moby {
@@ -145,7 +156,7 @@ impl Moby {
             index, bsphere: [0.0; 4], pos: [0.0; 3], state: 0, group: -1, slot: 0, alpha: 0x80, scale: 0.0, update_dist: 0,
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None,
+            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0,
         };
         match class {
             Some(c) => {
@@ -161,6 +172,30 @@ impl Moby {
         }
         m
     }
+
+    /// The pvar word at `off` (zero past the block).
+    pub fn pv_i(&self, off: usize) -> i32 { self.pvars.get(off..off + 4).map_or(0, |b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])) }
+    pub fn pv_f(&self, off: usize) -> f32 { f32::from_bits(self.pv_i(off) as u32) }
+    pub fn pv_s(&self, off: usize) -> i16 { self.pvars.get(off..off + 2).map_or(0, |b| i16::from_le_bytes([b[0], b[1]])) }
+    pub fn pv_b(&self, off: usize) -> u8 { self.pvars.get(off).copied().unwrap_or(0) }
+    pub fn pv_v(&self, off: usize) -> V3 { [self.pv_f(off), self.pv_f(off + 4), self.pv_f(off + 8)] }
+    fn grow(&mut self, n: usize) { if self.pvars.len() < n { self.pvars.resize(n, 0); } }
+    pub fn set_pv_i(&mut self, off: usize, v: i32) {
+        self.grow(off + 4);
+        self.pvars[off..off + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    pub fn set_pv_f(&mut self, off: usize, v: f32) { self.set_pv_i(off, v.to_bits() as i32); }
+    pub fn set_pv_s(&mut self, off: usize, v: i16) {
+        self.grow(off + 2);
+        self.pvars[off..off + 2].copy_from_slice(&v.to_le_bytes());
+    }
+    pub fn set_pv_b(&mut self, off: usize, v: u8) {
+        self.grow(off + 1);
+        self.pvars[off] = v;
+    }
+    pub fn set_pv_v(&mut self, off: usize, v: V3) { for (k, x) in v.iter().enumerate() { self.set_pv_f(off + 4 * k, *x); } }
+    /// A moby link in the pvars (a runtime moby index; 0 / negative: none, as the game's null pointer).
+    pub fn pv_link(&self, off: usize) -> Option<usize> { usize::try_from(self.pv_i(off)).ok().filter(|&i| i != 0) }
 
     /// `+0xac`: `index << 16 | rebuild count`.
     pub fn key(&self) -> u32 { (self.index as u32) << 16 | self.rebuilds as u32 }
@@ -192,6 +227,8 @@ pub trait MobyHost {
     fn anim(&self, _m: &Moby) -> Option<AnimState> { None }
     /// `0x31b5f0(moby, seq, frame, blend)`: start sequence `seq` at `frame`, blended over `blend` ticks.
     fn set_anim(&mut self, _m: &Moby, _seq: u8, _frame: u8, _blend: u8) {}
+    /// The camera's position (`0x1b8d40`).
+    fn camera_pos(&self) -> V3 { [0.0; 3] }
     /// `+0x48`: the playback speed.
     fn set_anim_speed(&mut self, _m: &Moby, _speed: f32) {}
     /// The position of joint `j` of moby `m` in the world (`0x3127c8`: the posed joint's translation · scale / 1024,
@@ -217,13 +254,26 @@ pub struct MobyWorld {
     pub changed: bool,
     /// The hit log (`0x1c3400`).
     pub hits: hits::HitLog,
+    /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
+    pub groups: Vec<Vec<usize>>,
+}
+
+/// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).
+#[derive(Clone, Debug, Default)]
+pub struct SpawnData {
+    pub pvars: Vec<Vec<u8>>,
+    /// `(pvar index, offset)`: a moby record index there becomes the runtime moby's (−1: did not spawn).
+    pub links: Vec<(usize, usize)>,
+    /// `(pvar index, offset)`: a pointer relative to its own block (kept relative here: the classes read offsets).
+    pub fixups: Vec<(usize, usize)>,
+    pub groups: Vec<Vec<u16>>,
 }
 
 impl MobyWorld {
     /// The class table from the level's classes in core-index order (slot = that order).
     pub fn new(mut classes: Vec<ClassInfo>) -> MobyWorld {
         for (i, c) in classes.iter_mut().enumerate() { c.slot = i.min(CLASS_SLOTS - 1) as u8; }
-        MobyWorld { mobys: Vec::new(), classes, grid: MobyGrid::new(), changed: true, hits: Default::default() }
+        MobyWorld { mobys: Vec::new(), classes, grid: MobyGrid::new(), changed: true, hits: Default::default(), groups: Vec::new() }
     }
 
     pub fn class(&self, o_class: i16) -> Option<&ClassInfo> { self.classes.iter().find(|c| c.o_class == o_class) }
@@ -233,12 +283,16 @@ impl MobyWorld {
     /// without spawn flags), the scale (class × instance), draw and update distances, position, Euler angles, group,
     /// the mode bits of the record (also OR'd into the class's), and the matrix rebuild when the class is loaded.
     /// `instance(i)` is the engine's placed-instance index of record `i`.
-    pub fn spawn_static(&mut self, records: &[Rac2MobyInstance], host: &dyn MobyHost) {
+    pub fn spawn_static(&mut self, records: &[Rac2MobyInstance], data: &SpawnData, host: &dyn MobyHost) {
+        // Record index → runtime moby (`0x1fb5e0`; every record spawns here: the spawn conditions are not ported).
+        let map: Vec<i32> = (0..records.len() as i32).map(|i| self.mobys.len() as i32 + i).collect();
         for (i, r) in records.iter().enumerate() {
             let b = &r.base;
             let class = self.class(b.o_class as i16).cloned();
             let mut m = Moby::init(self.mobys.len(), b.o_class as i16, class.as_ref());
             m.uid = r.extra[0] as i16;
+            m.bolts = r.extra[1] as i16;
+            m.xp = r.extra[3] as i16;
             m.mission = b.unknown_4 as u8;
             m.sub_index = (b.spawn_flags & 0xf) as u8 | if b.spawn_id == 0 { 0x80 } else { 0 };
             if let Some(c) = &class { m.scale = c.scale * b.scale; }
@@ -249,10 +303,27 @@ impl MobyWorld {
             m.group = b.group as i8;
             m.mode |= b.mode_bits as u16;
             m.instance = Some(i);
+            // `+0x68`: the record's pvar block (word 0x1a), its moby links made runtime indices.
+            if b.o_class != 0 {
+                if let Some(block) = usize::try_from(b.pvar_index).ok().and_then(|k| data.pvars.get(k)) {
+                    let mut pv = block.clone();
+                    for &(k, off) in &data.links {
+                        if k as i32 != b.pvar_index || off + 4 > pv.len() { continue; }
+                        let rec = i32::from_le_bytes([pv[off], pv[off + 1], pv[off + 2], pv[off + 3]]);
+                        if rec >= 0 {
+                            let to = map.get(rec as usize).copied().unwrap_or(-1);
+                            pv[off..off + 4].copy_from_slice(&to.to_le_bytes());
+                        }
+                    }
+                    m.pvars = pv;
+                    m.pvar_index = b.pvar_index;
+                }
+            }
             self.mobys.push(m);
             let id = self.mobys.len() - 1;
             if class.is_some() { self.rebuild(id, host); }
         }
+        self.groups = data.groups.iter().map(|g| g.iter().filter_map(|&r| map.get(r as usize).and_then(|&x| usize::try_from(x).ok())).collect()).collect();
     }
 
     /// `CreateMoby(o_class)` `0x311320`: the first free slot (state ≥ 0xfe), initialised, with zeroed pvars.
@@ -284,6 +355,7 @@ impl MobyWorld {
     /// the walk; the port has no groups yet). The additions go to per-slot lists, chained in slot order.
     pub fn run_list(&self, cam: V3) -> Vec<usize> {
         let mut slots: Vec<Vec<usize>> = vec![Vec::new(); CLASS_SLOTS];
+        let mut flagged = vec![false; self.groups.len()];
         for m in &self.mobys {
             if m.state == 0xff { break; }
             if m.state >= 0x80 || m.mode & mode::NO_UPDATE != 0 { continue; }
@@ -291,7 +363,18 @@ impl MobyWorld {
             let [dx, dy, dz] = [m.pos[0] - cam[0], m.pos[1] - cam[1], m.pos[2] - cam[2]];
             let near = ((d * d - dx * dx) - dy * dy) - dz * dz >= 0.0;
             if !(m.drawn != 0 || m.update_dist == 0xff || near) { continue; }
-            if m.group < 0 { slots[m.slot as usize].push(m.index); }
+            match usize::try_from(m.group) {
+                Ok(g) => if let Some(f) = flagged.get_mut(g) { *f = true },
+                Err(_) => slots[m.slot as usize].push(m.index),
+            }
+        }
+        // The flagged groups' members (state < 0x80, not mode 2), in group order.
+        for (g, members) in self.groups.iter().enumerate() {
+            if !flagged[g] { continue; }
+            for &i in members {
+                let m = &self.mobys[i];
+                if m.state < 0x80 && m.mode & mode::NO_UPDATE == 0 { slots[m.slot as usize].push(i); }
+            }
         }
         slots.concat()
     }
@@ -307,6 +390,9 @@ impl MobyWorld {
             if self.mobys[id].mode & mode::NO_MATRIX == 0 { self.rebuild(id, &*ctx.host); }
         }
     }
+
+    /// `0x1b1d40`: the free moby slots.
+    pub fn free_slots(&self) -> usize { MAX_MOBYS.saturating_sub(self.mobys.iter().filter(|m| m.state < 0xfe).count()) }
 
     /// Adds a class the level's table does not have (the gadget classes `0x306018` loads), with the next slot.
     pub fn add_class(&mut self, mut c: ClassInfo) {

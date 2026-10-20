@@ -17,6 +17,12 @@ fn main() -> anyhow::Result<()> {
     let ids: Vec<i32> = core.moby_classes.iter().map(|e| e.o_class).collect();
     println!("core moby classes ({}): {ids:?}", ids.len());
     println!("gadget words: {:x?}", core.gadgets.iter().take(16).collect::<Vec<_>>());
+    for c in [0, 13, 14, 71, 500, 501, 511] {
+        let Some(b) = core.block(&data, &format!("moby_class/{c:04}")) else { continue };
+        if let Ok(k) = moby::parse_moby_class_for(Game::Rac2, b) {
+            println!("class {c}: mode {:#x} ty {:#x} mode2 {:#x} scale {} coll {:#x} seqs {} joints {}", k.header.mode_bits, k.header.ty, k.header.mode_bits2, k.header.scale, k.header.collision, k.header.sequence_count, k.header.joint_count);
+        }
+    }
     let mut by: BTreeMap<i32, Vec<&rac2::gameplay::Rac2MobyInstance>> = BTreeMap::new();
     for m in &mobys { by.entry(m.base.o_class).or_default().push(m); }
     println!("{} instances, {} classes", mobys.len(), by.len());
@@ -25,6 +31,18 @@ fn main() -> anyhow::Result<()> {
         let pv = v.iter().filter(|m| m.base.pvar_index >= 0).count();
         println!("class {c:#06x} ({c:4}): {:3} × first at ({:.1}, {:.1}, {:.1}) pvars {pv} group {} upd {} flags {:#x}/{:#x} extra {:x?}",
             v.len(), m.position[0], m.position[1], m.position[2], m.group, m.update_distance, m.spawn_flags, m.mode_bits, v[0].extra);
+    }
+    let pv = rac2::gameplay::pvar_blocks(&g)?;
+    if let Ok(k) = std::env::var("PVAR_CLASS") {
+        let k: i32 = k.parse()?;
+        for m in mobys.iter().filter(|m| m.base.o_class == k).take(3) {
+            let Some(b) = usize::try_from(m.base.pvar_index).ok().and_then(|i| pv.get(i)) else { continue };
+            println!("class {k} pvar {} ({:#x} bytes):", m.base.pvar_index, b.len());
+            for (r, c) in b.chunks(16).enumerate() {
+                let w: Vec<String> = c.chunks(4).map(|x| format!("{:08x}", u32::from_le_bytes(x.try_into().unwrap_or([0; 4])))).collect();
+                println!("  +{:03x}: {}", r * 16, w.join(" "));
+            }
+        }
     }
     for name in ["moby_groups", "shared_data", "pvar_moby_links", "pvar_table", "pvar_data", "pvar_pointer_fixups"] {
         let s = rac2::gameplay::section(&g, name)?;

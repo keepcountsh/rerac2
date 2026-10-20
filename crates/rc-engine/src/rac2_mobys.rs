@@ -65,6 +65,8 @@ pub struct Host<'a> {
     pub created: &'a mut HashMap<usize, Created>,
     pub hero: Option<HeroPose<'a>>,
     pub hero_chains: &'a [Vec<u8>],
+    /// The camera's position (`0x1b8d40`).
+    pub camera: V3,
 }
 
 impl Host<'_> {
@@ -88,6 +90,8 @@ fn rows_f(r: [[f32; 4]; 4]) -> ([V3; 3], V3) {
 }
 
 impl MobyHost for Host<'_> {
+    fn camera_pos(&self) -> V3 { self.camera }
+
     /// `0x313420` for a created moby (the placed ones advance in crate::moby_anim).
     fn advance(&mut self, m: &Moby) {
         let lv = self.lv;
@@ -181,12 +185,19 @@ impl Rac2Mobys {
                 has_collision: c.class.header.collision != 0,
                 mode: c.class.header.mode_bits as u16,
                 animated: m.anim.get(ci).and_then(|a| a.sequences.first()).and_then(Option::as_ref).is_some_and(|q| q.header.frame_count >= 2),
-                kind: c.class.header.ty as i16,
+                kind: (c.class.header.ty as u16 | (c.class.header.mode_bits2 as u16) << 8) as i16,
             })
             .collect();
         let mut world = MobyWorld::new(classes);
-        let records = rc_formats::rac2::gameplay::moby_instances(&lv.gameplay).unwrap_or_default();
-        world.spawn_static(&records, host);
+        use rc_formats::rac2::gameplay as g2;
+        let records = g2::moby_instances(&lv.gameplay).unwrap_or_default();
+        let data = rc_game2::moby::SpawnData {
+            pvars: g2::pvar_blocks(&lv.gameplay).map_err(|e| eprintln!("rac2: pvars: {e}")).unwrap_or_default(),
+            links: g2::pvar_fixups(&lv.gameplay, "pvar_moby_links").unwrap_or_default(),
+            fixups: g2::pvar_fixups(&lv.gameplay, "pvar_pointer_fixups").unwrap_or_default(),
+            groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("rac2: moby groups: {e}")).unwrap_or_default(),
+        };
+        world.spawn_static(&records, &data, host);
         let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
         let hero_chains = m
             .classes
@@ -281,9 +292,18 @@ impl CreatedDraw {
         let mut palette = crate::moby_anim::identity_palette(DRAW_SLOTS as u32 * SLOT_JOINTS);
         let mut records = vec![0u8; DRAW_SLOTS * moby_render::EXTRA_RECORD_SIZE];
         let mut live: Vec<u32> = Vec::new();
-        for (&id, c) in &mobys.created {
-            let Some(m) = mobys.world.mobys.get(id) else { continue };
-            if m.state >= 0x80 { continue; }
+        for m in mobys.world.mobys.iter().filter(|m| m.instance.is_none() && m.state < 0x80 && m.mode & 1 == 0 && m.o_class != 0) {
+            let id = m.index;
+            let fallback;
+            let c = match mobys.created.get(&id) {
+                Some(c) => c,
+                None => {
+                    let Some(ci) = lv.classes.iter().position(|c| c.o_class == m.o_class as i32) else { continue };
+                    let Some(ac) = lv.anim.get(ci) else { continue };
+                    fallback = Created { class: ci, state: AnimState::spawn(ac), snapshot: None };
+                    &fallback
+                }
+            };
             let used: Vec<u32> = self.slots.values().copied().collect();
             let next = (0..DRAW_SLOTS as u32).find(|s| !used.contains(s)).unwrap_or(DRAW_SLOTS as u32);
             let slot = *self.slots.entry(id).or_insert(next);
@@ -329,7 +349,7 @@ impl CreatedDraw {
             }
             self.shown.remove(&s);
         }
-        self.slots.retain(|id, _| mobys.created.contains_key(id) && mobys.world.mobys.get(*id).is_some_and(|m| m.state < 0x80));
+        self.slots.retain(|id, _| mobys.world.mobys.get(*id).is_some_and(|m| m.instance.is_none() && m.state < 0x80 && m.mode & 1 == 0));
         crate::asset_write::set_buffer(buffers, &self.extra.palette, &palette);
         crate::asset_write::set_buffer(buffers, &self.extra.instances, &records);
     }

@@ -159,3 +159,62 @@ pub fn moby_instances(gameplay: &[u8]) -> Result<Vec<Rac2MobyInstance>> {
     }
     Ok(out)
 }
+
+/// The instance pvars (sections 23 `pvar_table` and 24 `pvar_data`): `{s32 offset, s32 size}` per pvar index into the
+/// data. The loader (L00 `0x3012a0`) copies each moby's block (its record's pvar index, `+0x68`) out of the data.
+pub fn pvar_blocks(gameplay: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let (Some(table), Some(data)) = (section(gameplay, "pvar_table")?, section(gameplay, "pvar_data")?) else { return Ok(Vec::new()) };
+    let t = Buf(table);
+    let n = table.len() / 8;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let (off, size) = (t.i32(8 * i)?, t.i32(8 * i + 4)?);
+        if off < 0 || size < 0 || off as usize + size as usize > data.len() { return invalid(format!("pvar {i}: {off:#x} + {size:#x} past the data")); }
+        out.push(data[off as usize..off as usize + size as usize].to_vec());
+    }
+    Ok(out)
+}
+
+/// `{pvar index, byte offset}` pairs up to a negative index: section 22 `pvar_moby_links` (the word there is a moby
+/// record index, which the loader turns into the runtime moby's) and section 25 `pvar_pointer_fixups` (a pointer
+/// relative to its own block, which the loader makes absolute).
+pub fn pvar_fixups(gameplay: &[u8], name: &str) -> Result<Vec<(usize, usize)>> {
+    let Some(s) = section(gameplay, name)? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let mut out = Vec::new();
+    let mut p = 0;
+    while p + 8 <= s.len() {
+        let (i, off) = (b.i32(p)?, b.i32(p + 4)?);
+        if i < 0 { break; }
+        out.push((i as usize, off.max(0) as usize));
+        p += 8;
+    }
+    Ok(out)
+}
+
+/// The moby groups (section 20): `s32 count, s32 bytes, pad[2]`, then `count` offsets (−1 none) into the lists after
+/// them; a list is u16 moby record indices, the last with bit 15 (L00 `0x3012a0`: the members become runtime moby
+/// indices, records that did not spawn are dropped; the group table `0x1fa8a0`).
+pub fn moby_groups(gameplay: &[u8]) -> Result<Vec<Vec<u16>>> {
+    let Some(s) = section(gameplay, "moby_groups")? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let count = b.i32(0)?;
+    if !(0..=0xf0).contains(&count) { return invalid(format!("moby groups: count {count}")); }
+    let lists = 0x10 + 4 * count as usize;
+    let mut out = Vec::with_capacity(count as usize);
+    for g in 0..count as usize {
+        let off = b.i32(0x10 + 4 * g)?;
+        let mut members = Vec::new();
+        if off >= 0 {
+            let mut p = lists + off as usize;
+            loop {
+                let v = b.u16(p)?;
+                members.push(v & 0x7fff);
+                if v & 0x8000 != 0 { break; }
+                p += 2;
+            }
+        }
+        out.push(members);
+    }
+    Ok(out)
+}
