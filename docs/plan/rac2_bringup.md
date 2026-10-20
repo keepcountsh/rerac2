@@ -239,24 +239,6 @@ opening).
 lock-on `0x2cb2e0`, the quick select, the vehicles' bodies (`0x18c0d4` 2 / 3), the sounds, the effects (sparks,
 splashes, bubbles) and the body lean.
 
-### 6.6 Aranos's objects (milestone G, 2026-10-21)
-
-The level's update table (`lvl.vtbl` at `0x2a2e80`, 233 records `{o_class, update, 0x2a3978}`) covers the level's
-own classes and every weapon and gadget; a class not in it (or with a null update) has none. Of the 76 classes with
-instances on Aranos, 50 have an update. Ported (`rc_game2::moby::classes`): the wrench 0x47, the crates 500 / 501 /
-511, the bolts 13..19, and in `props`: 0x0ac3, 0x0ac5 / 0x0ac6, 0x0ac8, 0x0c4c (the sky ships), 0x0c63 (a mission
-area), 0x0c8b (the death height), 0x0d1e (searchlights), 0x1143 / 0x12fa (breakables), 0x12f5, 0x12f9 (a barrier
-held by two objects), 0x132d (the sun flare's object). Shared services: the volumes and paths (`rc_game2::level`),
-moby states `0x31b8d0`, the sound hooks of the moby host.
-
-**To do**, by size of the update (lines of the export): 0x0919 camera volume (42), 0x0cda steam (75), 0x0c8c
-interior swap (80), 0x0c5c puffs (85), 0x0c66 / 0x0a38 carriers (the group attach `0x3246c0` / `0x324bd0`, which
-moves ties and shrubs too), 0x0340 (65), 0x0ce9 (110), 0x0325 spawn points (134), 0x02a7 chute (144), 0x0ac7 (145),
-0x0ddf (149), 0x0c22 (151), 0x0ac0 (172), 0x0ac9 family (187, seven classes), 0x0f13 (187), 0x1330 (204), 0x0ac4 (209),
-0x09c7 (238), 0x0adb (249), 0x0ac2 (290), 0x0aca (295), 0x0ac1 (302), 0x099c (319), 0x0b0b (783), 0x0b0a, 0x0b51,
-0x0f6e and the 0x41b0xx stubs (not in the export: decompile them in Ghidra). The visual effects they start
-(particles, lights, debris, the lens flare) wait for an effects pass.
-
 ### 6.5 The follow camera (milestone F, 2026-10-16)
 
 **What the code shows.** The camera update `0x2d9f38` calls the current camera's type update from the table at
@@ -280,3 +262,21 @@ while it is set). The port is `rc_game2::camera` (one function per step, the L00
 **Not ported** (none is in use on Aranos's opening): the camera-tweak requests `0x2d7568`, the camera-collision grid,
 the moby collision of the camera's queries, the avoidance's moby nudges, the focus mobys, the stick auto-centre, the
 Clank and Giant Clank cameras, water, the knock-down view, the other camera types, the blends and the shakes.
+
+### 6.6 Aranos's objects (milestone G, 2026-10-21)
+
+The level's update table (`lvl.vtbl` at `0x2a2e80`, 233 records `{o_class, update, 0x2a3978}`) covers the level's
+own classes and every weapon and gadget; a class not in it (or with a null update) has none. Of the 76 classes with
+instances on Aranos, 50 have an update. Ported (`rc_game2::moby::classes`): the wrench 0x47, the crates 500 / 501 /
+511, the bolts 13..19, and in `props`: 0x0ac3, 0x0ac5 / 0x0ac6, 0x0ac8, 0x0c4c (the sky ships), 0x0c63 (a mission
+area), 0x0c8b (the death height), 0x0d1e (searchlights), 0x1143 / 0x12fa (breakables), 0x12f5, 0x12f9 (a barrier
+held by two objects), 0x132d (the sun flare's object). Shared services: the volumes and paths (`rc_game2::level`),
+moby states `0x31b8d0`, the sound hooks of the moby host.
+
+**To do**, by size of the update (lines of the export): 0x0919 camera volume (42), 0x0cda steam (75), 0x0c8c
+interior swap (80), 0x0c5c puffs (85), 0x0c66 / 0x0a38 carriers (the group attach `0x3246c0` / `0x324bd0`, which
+moves ties and shrubs too), 0x0340 (65), 0x0ce9 (110), 0x0325 spawn points (134), 0x02a7 chute (144), 0x0ac7 (145),
+0x0ddf (149), 0x0c22 (151), 0x0ac0 (172), 0x0ac9 family (187, seven classes), 0x0f13 (187), 0x1330 (204), 0x0ac4 (209),
+0x09c7 (238), 0x0adb (249), 0x0ac2 (290), 0x0aca (295), 0x0ac1 (302), 0x099c (319), 0x0b0b (783), 0x0b0a, 0x0b51,
+0x0f6e and the 0x41b0xx stubs (not in the export: decompile them in Ghidra). The visual effects they start
+(particles, lights, debris, the lens flare) wait for an effects pass.
