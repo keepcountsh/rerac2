@@ -17,13 +17,13 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
     }
 }
 
-/// The Swingshot nodes (class 0x2f6) for the hero's search `0x2c4098`: shown ones (mode 0x1000) with their pvars
-/// `+0x68`[0] in use, [4] radius, [8] kind, [0x20] range.
-pub fn swing_nodes(w: &super::MobyWorld) -> Vec<crate::hero::swing::Node> {
+/// The Swingshot's targets for the hero's searches: the nodes (class 0x2f6, `0x2c4098`: shown ones, mode 0x1000), the
+/// hook nodes (0x323, `0x2c3e30`) and the pull targets (0x99d, `0x2c4340`), with their pvars `+0x68`.
+pub fn swing_nodes(w: &super::MobyWorld, class: i16) -> Vec<crate::hero::swing::Node> {
     w.mobys
         .iter()
         .enumerate()
-        .filter(|(_, m)| m.o_class == 0x2f6 && m.state < 0x80 && m.mode & 0x1000 != 0)
+        .filter(|(_, m)| m.o_class == class && m.state < 0x80 && (class != 0x2f6 || m.mode & 0x1000 != 0))
         .map(|(id, m)| crate::hero::swing::Node {
             id,
             pos: m.pos,
@@ -33,6 +33,10 @@ pub fn swing_nodes(w: &super::MobyWorld) -> Vec<crate::hero::swing::Node> {
             range: m.pv_f(0x20),
             drawn: m.drawn != 0,
             hidden: m.mode & 1 != 0,
+            cap: m.pv_f(0x10),
+            spring: [m.pv_f(0x24), m.pv_f(0x28), m.pv_f(0x2c)],
+            keep_yaw: m.pv_i(0x34) != 0,
+            yaw: m.rot[2],
         })
         .collect()
 }

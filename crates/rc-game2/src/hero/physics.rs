@@ -66,8 +66,10 @@ pub struct Env<'a> {
     pub boots: bool,
     /// Every moby's o_class by its index (the ground moby's class).
     pub classes: &'a [i16],
-    /// The Swingshot nodes (class 0x2f6).
+    /// The Swingshot nodes (class 0x2f6), the hook nodes (0x323) and the pull targets (0x99d).
     pub nodes: &'a [super::swing::Node],
+    pub hooks: &'a [super::swing::Node],
+    pub pulls: &'a [super::swing::Node],
 }
 
 /// `0x330368(n)`: the stick's angle `min(n, count)` ticks back in the pad's history (1: this tick).

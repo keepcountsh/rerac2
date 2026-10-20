@@ -24,7 +24,7 @@ pub enum Module {
     Jump,
     /// `pack.rs`: the glide 8 (group 5).
     Pack,
-    /// `swing.rs`: the Swingshot (group 0xd: 0x23, 0x24, 0x25).
+    /// `swing.rs`: the Swingshot (group 0xd: 0x23, 0x24, 0x25; the hook swing 0x2b; the pull 0x8a / 0x8b).
     Swing,
     /// `script.rs`: the states objects and scenes set (group 9 / 0x18, the scripted walk 0x62..0x64, the fidgets).
     Script,
@@ -63,7 +63,7 @@ pub const STATES: &[StateInfo] = &[
     s(0x1d, 0, Ground, true), s(0x1e, 9, Script, true), s(0x1f, -1, Melee, true), s(0x22, 6, Melee, true),
     s(0x23, 0xd, Swing, true), s(0x24, 0xd, Swing, true), s(0x25, 0xd, Swing, true), s(0x26, 8, Misc, true),
     s(0x27, 0xf, Unported, false), s(0x28, 0xf, Unported, false), s(0x29, 0xf, Unported, false), s(0x2a, 0xf, Unported, false),
-    s(0x2b, 0xe, Unported, false), s(0x2c, 2, Air, true), s(0x2e, 1, Walk, true), s(0x2f, 8, Misc, true),
+    s(0x2b, 0xe, Swing, true), s(0x2c, 2, Air, true), s(0x2e, 1, Walk, true), s(0x2f, 8, Misc, true),
     s(0x30, 0x10, Misc, true), s(0x31, 9, Script, true), s(0x32, 0x11, Water, true), s(0x33, 0x11, Water, true),
     s(0x34, 0x11, Water, true), s(0x35, 0x12, Water, true), s(0x36, 0x12, Water, true), s(0x37, 9, Script, true),
     s(0x38, 4, Jump, true), s(0x39, 0x14, Damage, true), s(0x3c, -1, Script, true), s(0x3d, -1, Script, true), s(0x3e, 0xf, Unported, false),
@@ -79,7 +79,7 @@ pub const STATES: &[StateInfo] = &[
     s(0x79, 0x14, Damage, true), s(0x7a, 0x14, Damage, true), s(0x7b, 0x1c, Unported, false), s(0x7c, 0x14, Damage, true),
     s(0x7d, 0x14, Damage, true), s(0x7f, 0x14, Damage, true), s(0x81, 4, Jump, true), s(0x82, 0x1e, Unported, false),
     s(0x83, 6, Melee, true), s(0x85, 0x20, Unported, false), s(0x86, 0x20, Unported, false), s(0x89, 4, Jump, true),
-    s(0x8a, 0x21, Unported, false), s(0x8b, 0x21, Unported, false), s(0x8c, 7, Damage, true), s(0x92, 4, Jump, true),
+    s(0x8a, 0x21, Swing, true), s(0x8b, 0x21, Swing, true), s(0x8c, 7, Damage, true), s(0x92, 4, Jump, true),
     s(0x93, 6, Melee, true),
 ];
 
