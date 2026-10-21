@@ -5,7 +5,7 @@
 //! bolt more than 32 from Ratchet that is not drawn goes to the bank.
 //!
 //! Not ported: the bolt's spin (`+0x30` axis, `+0x50` / `+0x58` angles), the ground settle arc (`0x382e20`), the
-//! platforms a bolt rests on (`+0x5c`), the sparkle (`0x33a6a0`), the sound (`0x3605f0`), the per-level tally
+//! platforms a bolt rests on (`+0x5c`), the sparkle (`0x33a6a0`), the per-level tally
 //! (`0x18d208`).
 
 use crate::hero::physics::{add, dist, dist2, len, scale, sub, V3};
@@ -93,6 +93,8 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let d = sub(target, m.pos);
             let l = len(d);
             if l <= s.max(0.0) {
+                // Its pickup sound (class sound 0, flags 0x20), from where it was.
+                ctx.host.play_sound(&w.mobys[id], 0, 0x20);
                 collect(w, id, ctx);
                 return;
             }
