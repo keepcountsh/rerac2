@@ -284,7 +284,8 @@ fn footstep_base(gameplay: &[u8]) -> usize {
 impl Rac2Mobys {
     /// `0x2aa278` for the head item (`rc_game2::hero::items::head_pass`): a keyframe of its own built from Ratchet's
     /// current pose (`0x3181c0`: his blended key as a frame, [`moby_anim::snapshot`]) — joint 0 at rest, joints 1 and
-    /// 2 his [`rc_game2::hero::items::HEAD_JOINTS`]' quaternions, their scale where it is not 1 (inherited) and their
+    /// 2 his [`rc_game2::hero::items::HEAD_JOINTS`]' quaternions, their scale where it is not 1 (inherited; with his
+    /// joint modifiers' scale, not their rotations: the head look is not carried yet) and their
     /// translation where it differs from the head item's rest — evaluated with the head item's class as key A. It is
     /// drawn in his frame, so it follows his head.
     pub fn skin_head(&mut self, lv: &crate::level_load::LoadedLevel, head: Option<usize>, pose: Option<&HeroPose>) {
@@ -299,9 +300,12 @@ impl Rac2Mobys {
         for (k, &j) in joints.iter().enumerate() {
             let (j, i) = (j as usize, k + 1);
             quats.push(f.quat_at(j));
-            if let Some(r) = f.scales.iter().find(|r| r.joint as usize == j).filter(|r| r.scale != [0x1000; 3]) {
-                scales.push(moby_anim::ScaleRec { scale: r.scale, joint: i as u8, flags: 0x80 });
-            }
+            // The scale his joint has as the draw poses it: its key's, times his joint modifiers' (his head's 0.875,
+            // which shrinks his head into the helmet, reaches the helmet too: the game's joint data carries it).
+            let key = f.scales.iter().find(|r| r.joint as usize == j).map_or([1.0; 3], |r| r.value());
+            let s: [f32; 3] = h.mods.iter().filter(|m| m.joint as usize == j).fold(key, |a, m| std::array::from_fn(|c| a[c] * m.scale[c]));
+            let s = s.map(|c| (c * 4096.0).round().clamp(0.0, 65535.0) as u16);
+            if s != [0x1000; 3] { scales.push(moby_anim::ScaleRec { scale: s, joint: i as u8, flags: 0x80 }); }
             let t = f.trans.iter().find(|r| r.joint as usize == j).map(|r| r.trans).or_else(|| ac.rest.get(j).map(|v| v.map(|c| c as i16)));
             let rest = hc.rest.get(i).map(|v| v.map(|c| c as i16));
             if let Some(t) = t.filter(|&t| Some(t) != rest) { trans.push(moby_anim::TransRec { trans: t, joint: i as u8, pad: 0 }); }
@@ -483,7 +487,8 @@ impl CreatedDraw {
         images: &mut Assets<Image>,
         materials: &mut Assets<MobyMaterial>,
         buffers: &mut Assets<ShaderBuffer>,
-        _transforms: &mut Query<&mut Transform>,
+        _transforms: &mut Query<&mut Transform, Without<crate::fly_cam::FlyCam>>,
+        view: Option<(Vec3, [Vec3; 3], (f32, f32))>,
     ) {
         let lv = &level.mobys;
         let mut palette = crate::moby_anim::identity_palette(DRAW_SLOTS as u32 * SLOT_JOINTS);
@@ -508,7 +513,21 @@ impl CreatedDraw {
             let Some(next) = (0..DRAW_SLOTS as u32).find(|s| !used.contains(s)) else { continue };
             let slot = *self.slots.entry(id).or_insert(next);
             let model = moby_render::extra_model(m.rows, m.scale, m.pos);
-            let look = moby_render::SlotLook { model, alpha: 0x80, fading: false, mode: m.mode, glow: 0, shine: 0, e: [[0.0; 3]; 3], late: false };
+            // MobyProc's shine gate (crate::moby_lod: `+0x73` is 0x18 for a class with metal packets): the metal pass
+            // (chrome, glass: the ship's canopy) within its distance, with its sphere-map basis.
+            let (shine, e) = view.map_or((0, [[0.0; 3]; 3]), |(eye, cam, tans)| {
+                let h = &class.class.header;
+                let shine_distance = if h.metal_count > 0 { crate::moby_lod::SHINE_DISTANCE } else { 0 };
+                let inp = crate::moby_lod::ProcInput { position: m.pos, rows: m.rows, scale: m.scale, draw_distance: i32::MAX, lod_trans: h.lod_trans, shine_distance, alpha: 0x80 };
+                let Some(ac) = lv.anim.get(c.class) else { return (0, [[0.0; 3]; 3]) };
+                let sphere = crate::moby_lod::world_sphere(&inp, crate::moby_lod::seq_sphere(ac, &c.state, h.bsphere));
+                let v = crate::moby_lod::view_centre(sphere, eye, &cam);
+                match crate::moby_lod::moby_proc_view(v, sphere[3], &inp, tans) {
+                    Ok(p) if p.shine > 0 => (p.shine, crate::moby_lod::shine_basis(sphere, eye, &cam, &inp.rows)),
+                    _ => (0, [[0.0; 3]; 3]),
+                }
+            });
+            let look = moby_render::SlotLook { model, alpha: 0x80, fading: false, mode: m.mode, glow: 0, shine, e, late: false };
             self.extra.show_slot(commands, level, slot, Some((class, look)), meshes, images, materials, buffers);
             shown.push(slot);
             if let Some(f) = mobys.skinned.get(&id).cloned().or_else(|| lv.anim.get(c.class).map(|ac| moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref()))) {

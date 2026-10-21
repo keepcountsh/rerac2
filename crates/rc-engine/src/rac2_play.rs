@@ -823,14 +823,20 @@ fn draw_created(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<crate::moby_render::MobyMaterial>>,
     mut buffers: ResMut<Assets<bevy::render::storage::ShaderBuffer>>,
-    mut transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform, Without<crate::fly_cam::FlyCam>>,
+    cams: Query<(&Transform, &Projection), With<crate::fly_cam::FlyCam>>,
 ) {
     let Some(mobys) = play.as_ref().and_then(|p| p.mobys.as_ref()) else { return };
     let Some(mut draw) = draw else {
         commands.insert_resource(crate::rac2_mobys::CreatedDraw::new(&level.0, &mut buffers));
         return;
     };
-    draw.update(mobys, &level.0, &mut commands, &mut meshes, &mut images, &mut materials, &mut buffers, &mut transforms);
+    // The frame's camera for MobyProc's shine gate (crate::moby_lod).
+    let view = cams.iter().next().map(|(t, p)| {
+        let [fwd, left, up] = crate::game_camera::game_rows(t);
+        (crate::game_camera::game_eye(t), crate::moby_lod::camera_rows(fwd, left, up), crate::game_camera::projection_tans(Some(p)))
+    });
+    draw.update(mobys, &level.0, &mut commands, &mut meshes, &mut images, &mut materials, &mut buffers, &mut transforms, view);
 }
 
 /// The ties and shrubs the level's objects moved or hid (`MobyWorld::moved_ties` / `moved_shrubs` / `hidden_ties`)
