@@ -1,11 +1,18 @@
 //! The hand item (slot 0 of the item slots `0x18b040 + 0x50·k`): its creation `0x2afc68` (the item's moby class from
-//! the item record table `0x262500` row `0x139568[item]`: the wrench, item 10, is class 0x47), its placement at
-//! Ratchet's attachment matrix `0x2b09e0` (`0x18aa70 + 0x40·k`, k = the record's word 0: 0 for the wrench) and the
-//! requests the states make of it (its animation, the throw). The world side ([`item_pass`]) runs after the hero
-//! update, as `0x2b21f0` / `0x2b09e0` do inside it.
+//! the item record table `0x262500` row `0x139568[item]`, [`ItemRow`]), its placement at Ratchet's attachment matrix
+//! `0x2b09e0` (`0x18aa70 + 0x40·k`, k = the record's word 0), the item change `0x2b13c8` (□ takes the wrench out, ○
+//! the last weapon back; the old item is deleted on the next pass and the new one created two frames on, `0x2b12a8`),
+//! the use stance (`0x2af5e0` / `0x2af848` / `0x2af8d8`: Ratchet's sequence while a weapon fires) and the requests
+//! the states make of it (its animation, the throw). The world side ([`item_pass`]) runs after the hero update, as
+//! `0x2b21f0` / `0x2b09e0` do inside it.
 //!
-//! Not ported: the other slots (the back item `0x18b130`: Clank, the packs), item changes (`0x18c104`, the quick
-//! select), the gadget class loader `0x306018` (the engine adds the class), the strafe / look stance marker.
+//! A game starts with the Lancer (crate::game::GameState::start_items), so Ratchet arrives holding it.
+//!
+//! Not ported: the other slots (the back item `0x18b130`: Clank, the packs), the quick select and the requested item
+//! `0x18c0e8` (`0x3227d8`), the item a forced wrench gives back (`0x18c120`), the class streaming (`0x305cc0` /
+//! `0x305ab0`: the engine loads every hand class with the level), the upper-body layers of a use (`0x311e10`, rows
+//! `+0x1c` / `+0x20`: the Lancer has none), the L2 + R2 weapon pull (`0x1a7a88` bit 0x20, `0x2d67b8`), the strafe /
+//! look stance marker.
 
 use super::physics::V3;
 use crate::moby::{mode, Ctx, MobyWorld};
@@ -17,6 +24,37 @@ pub const WRENCH: i32 = 10;
 /// The Lancer: item 0x1e, class 0x5d2 (`0x262504` of its row; a gadget, `G/GADGET.WAD`).
 pub const LANCER: i32 = 0x1e;
 pub const LANCER_CLASS: i16 = 0x5d2;
+
+/// An item record (`0x262500 + 0xe0·row`, row `0x139568[item]` = the item): the fields the port reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ItemRow {
+    pub item: i32,
+    /// `+0x00`: Ratchet's attachment it sits at; `+0x04` its moby class.
+    pub attach: usize,
+    pub class: i16,
+    /// `+0x0c`: its stance type (`0x18c0db`; 0 the wrench's).
+    pub stance: u8,
+    /// `+0x18`: Ratchet's sequence while it is used standing; `+0x24`: the use keeps his stance (`0x18c0da`).
+    pub use_seq: i32,
+    pub keep: bool,
+    /// `+0x40`: its shots' speed (per second); `+0x44` the shots a second; `+0x60` the damage.
+    pub speed: f32,
+    pub rate: f32,
+    pub damage: f32,
+    /// `+0x78` ≠ 0: it has ammo; `+0x7e` the most; `+0x82` what it comes with.
+    pub ammo: bool,
+    pub max_ammo: i32,
+    pub start_ammo: i32,
+}
+
+/// The rows the port has (L00 `0x262dc0`, `0x263f40`).
+pub const ROWS: [ItemRow; 2] = [
+    ItemRow { item: WRENCH, attach: 0, class: WRENCH_CLASS, stance: 0, use_seq: 0, keep: false, speed: 0.0, rate: 0.0, damage: 1.0, ammo: false, max_ammo: 0, start_ammo: 0 },
+    ItemRow { item: LANCER, attach: 0, class: LANCER_CLASS, stance: 1, use_seq: 0x38, keep: true, speed: 60.0, rate: 7.0, damage: 0.5, ammo: true, max_ammo: 200, start_ammo: 200 },
+];
+
+/// Item `item`'s row.
+pub fn row(item: i32) -> Option<&'static ItemRow> { ROWS.iter().find(|r| r.item == item) }
 
 /// The head item's moby class (slot 2, `0x18b0e0`: item 0x2f, the pilot's helmet; `0x2d5138` names it).
 pub const HEAD_CLASS: i16 = 0x50a;
@@ -61,13 +99,84 @@ pub struct ItemBlock {
     /// Requests for the item pass: the hand item's sequence `(seq, frame, blend)` (`0x31b5f0`), the throw.
     pub hand_anim: Option<(u8, u8, u8)>,
     pub throw: Option<Throw>,
+    /// `0x18c104`: the item to hold (0: the default, [`item_pass`]); `0x18c0d6`: the wrench asked for (the items
+    /// locked away); `0x18b054`: the frame the next item may be created after.
+    pub selected: i32,
+    pub wrench_req: bool,
+    pub next_create: i32,
+    /// `0x18b058`: 0xff when the item has ammo and none is left.
+    pub empty: u8,
+    /// `0x18c0db`: the held item's stance type (its row's `+0x0c`).
+    pub stance: u8,
+    /// The use stance: `0x18c0d8` in use, `0x18c0da` it keeps Ratchet's stance, `0x18c2d0` his sequence, `0x18c2d4` the
+    /// item, `0x189ff8` the ticks in use.
+    pub using: bool,
+    pub keep: bool,
+    pub use_seq: i32,
+    pub use_item: i32,
+    pub use_ticks: i32,
+    /// `0x18c354`: in the scripted look stance 0x1d, the ticks before a weapon may fire (0x28).
+    pub look_wait: i32,
+    /// The pad as the hero tick read it (`0x138320` held, `0x138324` pressed; □ pressed within 3 ticks,
+    /// `0x330240(0x80, 3)`).
+    pub held: u32,
+    pub pressed: u32,
+    pub square_recent: bool,
+    /// A sequence for Ratchet `(blend, seq)` the use stance asks for (`0x2d2508`; the engine plays it after the pass).
+    pub hero_anim: Option<(f32, u8)>,
 }
 
-/// After the hero's transitions (`0x2b21f0`): create the hand item when there is none (`0x2afc68`: the wrench; draw
-/// distance 0x20, drawn, ready, □, sequence 1), place it at Ratchet's attachment 0 while it is in the hand (`0x2b09e0`:
-/// the rebuild, then the attachment matrix for its rows, mode 6: out of the moby loop), carry out the states' requests,
-/// and run its update (`0x2b2060`: the item slots' updates are called here, not by the moby loop; the item tick
-/// `0x18b060` counts).
+impl ItemBlock {
+    /// `0x2d43e0(-1)`: the held item's ammo is not out (an item without ammo always can).
+    pub fn has_ammo(&self, game: &crate::game::GameState) -> bool {
+        match row(self.item) { Some(r) if r.ammo => game.ammo.get(self.item.max(0) as usize).is_some_and(|&a| a != 0), _ => true }
+    }
+
+    /// `0x2d42d0(-1, n)`: take `n` of the held item's ammo; false when there is too little.
+    pub fn take_ammo(&self, game: &mut crate::game::GameState, n: i32) -> bool {
+        if !row(self.item).is_some_and(|r| r.ammo) { return true; }
+        let Some(a) = game.ammo.get_mut(self.item.max(0) as usize) else { return false };
+        if n <= *a { *a -= n; true } else { false }
+    }
+
+    /// `0x2af5e0`: the held item in use. Its row's stance: kept (`+0x24`); standing (group 0), Ratchet takes its
+    /// sequence (`+0x18`) blended over 0xb ticks (stance type 0), 2 (sequence 0x36, items 0x24 / 0x1a) or 5 (items
+    /// 0x1e / 0x19 / 0x46). Moving, its upper-body layer (`+0x1c`, not ported; the Lancer has none).
+    pub fn use_start(&mut self, group: i32) {
+        if self.ready != 2 { return; }
+        let Some(r) = row(self.item) else { return };
+        self.using = true;
+        self.keep = r.keep;
+        let blend = if r.stance == 0 {
+            0xb
+        } else if r.use_seq == 0x36 || matches!(self.item, 0x24 | 0x1a) {
+            2
+        } else if matches!(self.item, 0x1e | 0x19 | 0x46) {
+            5
+        } else {
+            -1
+        };
+        self.use_item = self.item;
+        if group == 0 {
+            self.use_seq = r.use_seq;
+            self.hero_anim = Some((blend as f32, r.use_seq as u8));
+        }
+    }
+
+    /// `0x2af848`: the use over; standing (state 0) in the use's sequence, Ratchet's idle back (blend −2).
+    pub fn use_end(&mut self, state: i32, seq_b: u8, idle: u8) {
+        if !self.using { return; }
+        if state == 0 && seq_b as i32 == self.use_seq { self.hero_anim = Some((-2.0, idle)); }
+        self.keep = false;
+        self.using = false;
+    }
+}
+
+/// After the hero's transitions (`0x2b21f0`): create the hand item when there is none ([`create_hand`]), place it at
+/// its row's attachment of Ratchet while it is in the hand (`0x2b09e0`: the rebuild, then the attachment matrix for its
+/// rows, mode 6: out of the moby loop), carry out the states' requests, test for a change ([`switch`]) and run its
+/// update (`0x2b2060`: the item slots' updates are called here, not by the moby loop; the item tick `0x18b060`
+/// counts).
 pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     // The body's hits of this tick (the Thruster-Pack's ram).
     for h in std::mem::take(&mut ctx.hero.hits_out) {
@@ -91,21 +200,12 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     }
     let away = in_water || h.group == 3 || matches!(h.state, 0x31 | 0x12 | 0x82);
     head_pass(world, ctx);
+    create_hand(world, ctx);
+    let Some(id) = ctx.hero.items.hand else {
+        switch(world, ctx);
+        return;
+    };
     let it = &mut ctx.hero.items;
-    if it.hand.is_none() && world.class(WRENCH_CLASS).is_some() {
-        let id = world.create(WRENCH_CLASS);
-        let m = &mut world.mobys[id];
-        m.draw_dist = 0x20;
-        m.drawn = 1;
-        m.parent = ctx.hero_moby;
-        it.hand = Some(id);
-        it.hand_class = WRENCH_CLASS;
-        it.item = WRENCH;
-        it.ready = 2;
-        it.trigger = 0x80;
-        ctx.host.set_anim(&world.mobys[id], 1, 0, 1);
-    }
-    let Some(id) = it.hand else { return };
     if let Some((seq, frame, blend)) = it.hand_anim.take() { ctx.host.set_anim(&world.mobys[id], seq, frame, blend); }
     if let Some(t) = it.throw.take() {
         let m = &mut world.mobys[id];
@@ -116,7 +216,8 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     // `0x313420`: the hand item is out of the moby loop; its placement `0x2b09e0` advances its animation.
     ctx.host.advance(&world.mobys[id]);
     if it.thrown == 0 {
-        if let Some((rows, pos)) = ctx.host.hero_attach(0) {
+        let attach = row(it.item).map_or(0, |r| r.attach);
+        if let Some((rows, pos)) = ctx.host.hero_attach(attach) {
             {
                 let m = &mut world.mobys[id];
                 m.pos = pos;
@@ -135,10 +236,110 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
         m.mode &= !1;
         if away && ctx.hero.items.item == WRENCH { m.mode |= 0x41; }
     }
-    ctx.hero.items.item_ticks += 1;
+    // `0x2af8d8`: a kept stance ends when the ammo runs out.
+    {
+        let h = &mut *ctx.hero;
+        if h.items.using && h.items.keep && !h.items.has_ammo(ctx.game) {
+            let idle = h.idle_seq();
+            h.items.use_end(h.state, ctx.hero_view.seq_b, idle);
+        }
+        // `0x2c3330`: the ticks in use.
+        h.items.use_ticks = if h.items.using { h.items.use_ticks + 1 } else { 0 };
+    }
+    // `0x2b2060`: ready (2), the change test then the update; changing (3), the old item goes (`0x2b12a8`).
+    match ctx.hero.items.ready {
+        2 => {
+            ctx.hero.items.item_ticks += 1;
+            switch(world, ctx);
+        }
+        3 => {
+            let it = &mut ctx.hero.items;
+            it.next_create = ctx.game.frame + 2;
+            it.ready = 0;
+            it.item = 0;
+            it.hand = None;
+            if let Some(h) = it.throw_sound.take() { ctx.host.stop_sound(h); }
+            world.delete(id);
+            return;
+        }
+        _ => {}
+    }
     if world.mobys[id].state < 0xfe {
         if let Some(f) = world.mobys[id].update { f(world, id, ctx); }
     }
+}
+
+/// `0x2afc68`'s slot 0: with no hand item, once the frame passed `0x18b054` — the item to hold (`0x18c104`; else the
+/// wrench when it was out, else the last weapon `0x1a7398`, else the wrench), its row's class: draw distance 0x20,
+/// drawn, ready; the wrench takes □ (0x80) and its sequence 1, the others ○ (0x20); an item with ammo and none left
+/// is marked empty.
+fn create_hand(world: &mut MobyWorld, ctx: &mut Ctx) {
+    let it = &mut ctx.hero.items;
+    if it.hand.is_some() || ctx.game.frame <= it.next_create { return; }
+    let mut item = it.selected;
+    if item == 0 { item = if ctx.game.wrench_out || ctx.game.held == 0 { WRENCH } else { ctx.game.held }; }
+    let Some(r) = row(item) else { return };
+    if world.class(r.class).is_none() {
+        if it.next_create != i32::MAX { eprintln!("rc_game2::hero::items: item {item:#x}'s class {:#x} is not loaded: no hand item", r.class); }
+        it.next_create = i32::MAX;
+        return;
+    }
+    let id = world.create(r.class);
+    let m = &mut world.mobys[id];
+    m.draw_dist = 0x20;
+    m.drawn = 1;
+    m.parent = ctx.hero_moby;
+    it.hand = Some(id);
+    it.hand_class = r.class;
+    it.item = item;
+    it.ready = 2;
+    it.empty = if r.ammo && ctx.game.ammo.get(item as usize).is_some_and(|&a| a == 0) { 0xff } else { 0 };
+    if item == WRENCH {
+        it.trigger = 0x80;
+        ctx.host.set_anim(&world.mobys[id], 1, 0, 1);
+    } else {
+        it.trigger = 0x20;
+    }
+    it.stance = r.stance;
+}
+
+/// `0x2b13c8(0)`: the hand item's change. Locked away (`0x18c0d7`), a weapon asks for the wrench; with the items
+/// kept away (`0x18c0dc`) nothing changes unless that. □ within 3 ticks (or the wrench asked for) takes the wrench
+/// out; ○ pressed brings the last weapon (`0x1a7398`) back. Not while the thrown wrench flies or a swing's window
+/// (`0x18b059`, counted down here) is open. A change: the use ends, the wrench-out flag follows, the item plays its
+/// sequence 2 and goes out on the next pass (ready 3).
+fn switch(world: &mut MobyWorld, ctx: &mut Ctx) {
+    let h = &mut *ctx.hero;
+    let idle = h.idle_seq();
+    let it = &mut h.items;
+    if h.no_menu != 0 && it.item != WRENCH { it.wrench_req = true; }
+    if it.no_use != 0 && (!it.wrench_req || it.item == WRENCH) {
+        it.wrench_req = false;
+        return;
+    }
+    let mut changed = false;
+    if (it.square_recent || it.wrench_req) && it.item != WRENCH {
+        it.selected = WRENCH;
+        changed = true;
+    }
+    if it.pressed & rc_game::pad::button::CIRCLE != 0 && h.no_menu == 0 && ctx.game.held != it.item && ctx.game.held != 0 {
+        it.selected = ctx.game.held;
+        changed = true;
+    }
+    if it.flying == 2 { changed = false; }
+    if it.use_state != 0 {
+        it.use_state -= 1;
+        if it.use_state != 0 { changed = false; }
+    }
+    if !changed { return; }
+    it.item_ticks = 3;
+    it.use_end(h.state, ctx.hero_view.seq_b, idle);
+    ctx.game.wrench_out = it.selected == WRENCH;
+    if it.selected != WRENCH { ctx.game.held = it.selected; }
+    it.thrown = 0;
+    it.wrench_req = false;
+    if let Some(id) = it.hand { ctx.host.set_anim(&world.mobys[id], 2, 0, 2); }
+    it.ready = 3;
 }
 
 /// The head item (slot 2): `0x2afc68` creates it when there is none (item `0x1a73a0`, else 0x2f: class

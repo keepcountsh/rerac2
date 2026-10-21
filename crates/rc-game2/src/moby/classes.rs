@@ -7,7 +7,9 @@ pub mod chute;
 pub mod crate_;
 pub mod enemies;
 pub mod gate;
+pub mod lancer;
 pub mod props;
+pub mod shot;
 pub mod spawn_point;
 pub mod wrench;
 
@@ -17,6 +19,8 @@ use super::UpdateFn;
 pub fn update_for(o_class: i16) -> Option<UpdateFn> {
     match o_class {
         0x47 => Some(wrench::update),
+        0x5d2 => Some(lancer::update),
+        0xbfe => Some(shot::update),
         500 | 501 | 511 => Some(crate_::update),
         13..=19 => Some(bolt::update),
         0x12f5 => Some(props::update_12f5),

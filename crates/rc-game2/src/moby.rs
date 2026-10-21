@@ -34,6 +34,7 @@
 
 pub mod classes;
 pub mod ai;
+pub mod aim;
 pub mod attach;
 pub mod bolts;
 pub mod hits;

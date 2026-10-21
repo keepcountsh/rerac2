@@ -37,7 +37,8 @@ impl Hero {
                 self.group = 0;
                 self.cam_mode = if id == 1 { 4 } else { 0x51 };
                 let seq = self.idle_seq();
-                if anim.view().seq_b == seq { return Entry::Done; }
+                // `0x2c4560`: a use that keeps the stance keeps its sequence.
+                if self.items.keep || anim.view().seq_b == seq { return Entry::Done; }
                 Entry::Anim(if id == 1 { 18.0 } else { 5.0 }, seq, 0)
             }
             4 => {
@@ -154,7 +155,7 @@ impl Hero {
                 None
             }
             1 | 0x1d => {
-                if self.mode == 0 {
+                if self.mode == 0 && !self.items.keep {
                     let seq = if held & button::R1 != 0 { 0xd } else { self.idle_seq() };
                     if anim.view().seq_b != seq { self.set_anim(anim, 8.0, seq, 0); }
                 }

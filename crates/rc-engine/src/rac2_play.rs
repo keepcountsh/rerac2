@@ -363,6 +363,11 @@ fn tick(
         let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
         rc_game2::hero::items::item_pass(&mut mobys.world, &mut ctx);
     }
+    // The use stance's sequence for Ratchet (`0x2af5e0` / `0x2af848` call `0x2d2508` from the item pass).
+    if let Some((blend, seq)) = p.hero.items.hero_anim.take() {
+        let mut ctl = p.anim.ctl(class);
+        p.hero.set_anim(&mut ctl, blend, seq, 0);
+    }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
         for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {

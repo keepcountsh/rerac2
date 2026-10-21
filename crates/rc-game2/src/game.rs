@@ -86,6 +86,11 @@ pub struct GameState {
     /// `0x1a7bd0`: the items had (one byte each); `0x139948`: the quick-select list (28 slots, 0 free).
     pub items: Vec<u8>,
     pub quick_select: Vec<i32>,
+    /// `0x139688 + 4·item`: the ammo (items whose row has ammo, crate::hero::items::ItemRow).
+    pub ammo: Vec<i32>,
+    /// `0x1a7398`: the last weapon held (the hand item ○ brings back), `0x1a7a10`: the wrench was out.
+    pub held: i32,
+    pub wrench_out: bool,
     /// `0x139768`: the scenes seen (one bit each).
     pub scenes_seen: Vec<bool>,
     /// The scene queue, the modes and the scene playing (crate::scene).
@@ -117,7 +122,7 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None,
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], ammo: vec![0; 0x50], held: 0, wrench_out: false, scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None,
         }
     }
 }
@@ -152,9 +157,35 @@ impl GameState {
             help_counts: old.help_counts,
             items: old.items,
             quick_select: old.quick_select,
+            ammo: old.ammo,
+            held: old.held,
+            wrench_out: old.wrench_out,
             scenes_seen: old.scenes_seen,
             ..Default::default()
         };
+        self.start_items();
+    }
+
+    /// `0x2fcf60` (every level start, `0x2fcd40`): the items a game starts with, when not had yet — the Lancer (the
+    /// weapon held, `0x1a7398`) and the pilot's helmet (`0x1a73a0`; the head item is its default already). Not
+    /// ported: the Gravity Bomb (item 0x2a, no row in crate::hero::items), the quick-select slots `0x1a7b70`.
+    pub fn start_items(&mut self) {
+        use crate::hero::items::LANCER;
+        if self.items.get(LANCER as usize).is_some_and(|&b| b == 0) {
+            self.get_item(LANCER);
+            self.held = LANCER;
+        }
+        if let Some(b) = self.items.get_mut(0x2f) { *b = 1; }
+    }
+
+    /// `0x2f46e0(item)`: the item had, with its row's starting ammo when it has none.
+    pub fn get_item(&mut self, item: i32) {
+        let Some(have) = self.items.get_mut(item.max(0) as usize) else { return };
+        if *have != 0 { return; }
+        *have = 1;
+        if let (Some(r), Some(a)) = (crate::hero::items::row(item), self.ammo.get_mut(item.max(0) as usize)) {
+            if r.ammo && *a == 0 { *a = r.start_ammo; }
+        }
     }
 
     /// `0x322730(item)`: the item had; a weapon or gadget (below 0x15, or 0x18) goes in the first free

@@ -439,8 +439,9 @@ impl Hero {
         self.anim_speed = 1.0;
     }
 
-    /// `0x2a4e48(0)`: the idle sequence — 0x51 with 1 health left, 0x67 on ice, else 0 (the weapon stances of
-    /// `0x2a4e48(1)` with `0x18c0da`: not ported, the held items' stance table `0x262518`).
+    /// `0x2a4e48(0)`: the idle sequence — 0x51 with 1 health left, 0x67 on ice, else 0. (`0x2a4e48(1)` gives the
+    /// held item's use sequence while a use keeps the stance; the look states that call it skip their sequence then,
+    /// [`items::ItemBlock::keep`].)
     pub fn idle_seq(&self) -> u8 {
         if self.mode == 1 { 0 } else if self.hp == 1 { 0x51 } else if self.surf.ice { 0x67 } else { 0 }
     }
@@ -553,6 +554,10 @@ pub fn hero_update(hero: &mut Hero, env: &Env, anim: &mut dyn AnimCtl) -> HeroTi
     }
     hero.frame = hero.frame.wrapping_add(1);
     hero.hits_out.clear();
+    // The pad as the item pass reads it (`0x2b13c8`, the weapons' updates).
+    hero.items.held = env.pad.held;
+    hero.items.pressed = env.pad.pressed;
+    hero.items.square_recent = env.pad.pressed_within(rc_game::pad::button::SQUARE, 3).is_some();
     if let Some(r) = hero.state_req.take() { hero.set_state(anim, env, r.id, r.play); }
     anim.advance(Pf::f(hero.anim_speed));
     hero.anim_frame = anim.view().frame;
