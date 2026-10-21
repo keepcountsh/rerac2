@@ -46,10 +46,12 @@ pub struct HitRecord {
 pub struct HitLog {
     pub records: Vec<HitRecord>,
     pub next: usize,
+    /// `0x1bf198`: the moby the last sphere test touched first (the wrench's sound reads it).
+    pub last_target: Option<usize>,
 }
 
 impl Default for HitLog {
-    fn default() -> Self { HitLog { records: vec![HitRecord::default(); HIT_RECORDS], next: 0 } }
+    fn default() -> Self { HitLog { records: vec![HitRecord::default(); HIT_RECORDS], next: 0, last_target: None } }
 }
 
 impl MobyWorld {
@@ -102,6 +104,7 @@ impl MobyWorld {
     pub fn sphere_hit(&mut self, scene: Option<&MobyScene>, centre: V3, r: f32, flags: u32, ignore: Option<usize>, t: Option<&HitTemplate>) -> usize {
         let Some(sc) = scene else { return 0 };
         let ids = coll_sphere_mobys(sc, centre, r, QueryFlags(flags), ignore);
+        self.hits.last_target = ids.first().copied();
         if let Some(t) = t {
             for &id in &ids { self.deliver_hit(id, t, [0.0, 0.0, 0.0, 1.0]); }
         }

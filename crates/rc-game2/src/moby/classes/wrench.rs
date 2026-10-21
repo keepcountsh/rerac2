@@ -8,8 +8,13 @@
 //! **pvars**: +0x40 the throw's direction, +0x60 its speed, +0x64 the speed's change, +0x6c the wall-hit timer,
 //! +0x70 the trail, +0x74 the swing counter (s16), +0x76 the "skimmed the floor" flag (s16), +0x7c the trail's swing.
 //!
-//! Not ported: the sounds (`0x3605f0`), the sparks (`0x38ce80`), the trail (`0x323c90`, `+0x70`), the look stance
-//! marker (`0x2db498`), the glow (`0x2e7920`), the gravity frames, the floor skim of the throw (`0x31ce20`).
+//! **Sounds** (its class sounds, once a swing or a throw: `0x18aa1e`, `MeleeBlock::wall_hit`): 2 when it strikes a wall
+//! or the floor, else on a moby [`hit_sound`]'s 0 or 1 (none on a moby whose health block says so); 0xb looped while
+//! it flies (started as it leaves the hand, stopped when it is caught).
+//!
+//! Not ported: the sparks (`0x38ce80`), the trail (`0x323c90`, `+0x70`), the look stance marker (`0x2db498`), the glow
+//! (`0x2e7920`), the gravity frames, the floor skim of the throw (`0x31ce20`), the jump attack's floor strike
+//! (`0x2b3aa0`: its sound 2 and sparks).
 
 use crate::hero::items::Throw;
 use crate::hero::melee::{HIT_FROM, HIT_TO, SWINGS};
@@ -44,6 +49,21 @@ pub fn start_throw(m: &mut Moby, t: Throw) {
     set_pv_f(m, 0x60, t.push);
     set_pv_f(m, 0x64, 0.0);
 }
+
+/// `0x31fa20(moby)`: the health block of a moby the enemy framework runs (mode 0x20; its pvars' word 0 points at it).
+fn health(w: &MobyWorld, m: Option<usize>) -> Option<(usize, usize)> {
+    let m = m.filter(|&m| w.mobys.get(m).is_some_and(|x| x.mode & crate::moby::ai::AI != 0))?;
+    Some((m, crate::moby::ai::block(&w.mobys[m], 0)))
+}
+
+/// `0x38cbf8`: the wrench's hit sound on moby `m`: 1 when its health block's byte +9 is 1, else 0.
+fn hit_sound(w: &MobyWorld, m: Option<usize>) -> i32 { health(w, m).is_some_and(|(m, b)| w.mobys[m].pv_b(b + 9) == 1) as i32 }
+
+/// `0x38cc48`: moby `m`'s health block has bit 1 of `+0x1e` set: no hit sound.
+fn silent(w: &MobyWorld, m: Option<usize>) -> bool { health(w, m).is_some_and(|(m, b)| w.mobys[m].pv_s(b + 0x1e) & 2 != 0) }
+
+/// The class of moby `m` is 0x14 (`*(m + 0x24) + 0x46`): no hit sound on it.
+fn is_class(w: &MobyWorld, m: Option<usize>, c: i16) -> bool { m.and_then(|m| w.mobys.get(m)).is_some_and(|x| x.o_class == c) }
 
 /// `0x38d318`.
 pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
@@ -142,6 +162,7 @@ fn in_hand(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let crate_hit = o.moby.is_some_and(|m| (500..=540).contains(&w.mobys.get(m).map_or(0, |x| x.o_class)) && w.mobys[m].o_class != 0x1f6);
             if o.moby.is_none() || !crate_hit {
                 ctx.hero.melee.wall_hit = 1;
+                ctx.host.play_sound(&w.mobys[id], 2, 0);
                 if let Some(m) = o.moby {
                     let t = HitTemplate::new(1.0, Some(id), 0x10000, [yaw.cos(), yaw.sin(), 0.0, 0.0]);
                     w.deliver_hit_any(m, &t, [o.point[0], o.point[1], o.point[2], 1.0]);
@@ -164,6 +185,11 @@ fn in_hand(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         if let Some(o) = ctx.coll.and_then(|c| rc_game::collision_query::coll_line_m(c, ctx.scene, a, b, rc_game::collision_query::QueryFlags(0), ctx.hero_moby)) {
             if let Some(m) = o.moby { w.deliver_hit_any(m, &t, [o.point[0], o.point[1], o.point[2], 1.0]); }
             hit = true;
+            // A moby struck along the sweep: its hit sound, once a swing.
+            if o.moby.is_some() && !silent(w, o.moby) && ctx.hero.melee.wall_hit == 0 && !is_class(w, o.moby, 0x14) {
+                ctx.hero.melee.wall_hit = 1;
+                ctx.host.play_sound(&w.mobys[id], hit_sound(w, o.moby), 0);
+            }
             break;
         }
     }
@@ -173,7 +199,12 @@ fn in_hand(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let l = len(dd);
     if 0.0 < l { dd = scale(dd, (l - 0.085) / l); }
     let c = add(base, dd);
-    w.sphere_hit(ctx.scene, c, r, 0, ctx.hero_moby, Some(&t));
+    let n = w.sphere_hit(ctx.scene, c, r, 0, ctx.hero_moby, Some(&t));
+    if n == 0 { return; }
+    let target = w.hits.last_target;
+    if is_class(w, target, 0x12) || silent(w, target) || ctx.hero.melee.wall_hit != 0 { return; }
+    ctx.hero.melee.wall_hit = 1;
+    ctx.host.play_sound(&w.mobys[id], hit_sound(w, target), 0);
 }
 
 /// `0x38d270(&d)`: the reach shrinks with the angle off the facing (full 0.7 + 0.30 at 0°, 0.7 at 105°).
@@ -187,6 +218,11 @@ fn reach(yaw: f32, d: V3) -> V3 {
 fn flight(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     ctx.hero.items.flying = 2;
     w.mobys[id].parent = ctx.hero_moby;
+    // Its whirr while it flies out (`0x18c250`: unless it still plays).
+    if w.mobys[id].state == 10 && !ctx.hero.items.throw_sound.is_some_and(|h| ctx.host.sound_playing(h)) {
+        let h = ctx.host.play_sound(&w.mobys[id], 0xb, 4);
+        ctx.hero.items.throw_sound = (0 <= h).then_some(h);
+    }
     let prev = w.mobys[id].pos;
     {
         let carry = scale(ctx.hero.carry, 0.98);
@@ -218,6 +254,7 @@ fn flight(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             if arrived || far {
                 ctx.hero.items.thrown = 0;
                 m.state = 0;
+                if let Some(h) = ctx.hero.items.throw_sound.take() { ctx.host.stop_sound(h); }
             }
         }
     }
@@ -226,7 +263,10 @@ fn flight(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     // A wall on the way back sends it home.
     let pos = w.mobys[id].pos;
     if let Some(_o) = ctx.coll.and_then(|c| rc_game::collision_query::coll_line_m(c, None, prev, pos, rc_game::collision_query::QueryFlags(2), None)) {
-        if ctx.hero.melee.wall_hit == 0 { ctx.hero.melee.wall_hit = 1; }
+        if ctx.hero.melee.wall_hit == 0 {
+            ctx.hero.melee.wall_hit = 1;
+            ctx.host.play_sound(&w.mobys[id], 2, 0);
+        }
         if m_state == 10 {
             let m = &mut w.mobys[id];
             let s = pv_f(m, 0x60) * 0.5;
@@ -239,9 +279,16 @@ fn flight(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let mut t = HitTemplate::new(DAMAGE, Some(id), 0x10000, [dir[0] * k, dir[1] * k, 1.0, NO_KNOCK_LIMIT]);
     t.kind = ((ctx.hero.melee.throw_toggle + 1) << 16) | 0x100;
     let at = ctx.host.joint(&w.mobys[id], 1).unwrap_or(pos);
-    if w.sphere_hit(ctx.scene, at, 0.4, 0, ctx.hero_moby, Some(&t)) == 0 {
+    let mut n = w.sphere_hit(ctx.scene, at, 0.4, 0, ctx.hero_moby, Some(&t));
+    if n == 0 {
         let at = ctx.host.joint(&w.mobys[id], 0).unwrap_or(pos);
-        w.sphere_hit(ctx.scene, at, 0.4, 0, ctx.hero_moby, Some(&t));
+        n = w.sphere_hit(ctx.scene, at, 0.4, 0, ctx.hero_moby, Some(&t));
+    }
+    // A moby struck in flight: its hit sound, once a throw.
+    let target = w.hits.last_target;
+    if 0 < n && ctx.hero.melee.wall_hit == 0 && target.is_some() && !is_class(w, target, 0x14) {
+        ctx.hero.melee.wall_hit = 1;
+        ctx.host.play_sound(&w.mobys[id], hit_sound(w, target), 0);
     }
     let _ = dist;
 }

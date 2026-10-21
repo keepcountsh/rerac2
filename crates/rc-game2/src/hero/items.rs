@@ -39,6 +39,8 @@ pub struct ItemBlock {
     pub item: i32,
     /// `0x18b0e0`: the head item's moby ([`head_pass`]).
     pub head: Option<usize>,
+    /// `0x18c250`: the thrown wrench's loop sound (its class sound 0xb).
+    pub throw_sound: Option<i32>,
     /// `0x18b064`: 2 = in the hand, ready.
     pub ready: i32,
     /// `0x18b050`: the buttons that use it (the wrench: □ 0x80, the others ○ 0x20).

@@ -47,6 +47,8 @@ pub struct Rac2Mobys {
     /// The ship's canopy (`rc_game2::canopy`, from the level overlay) and this tick's for the draw.
     pub canopy: Option<rc_game2::canopy::Canopy>,
     pub canopy_frame: Option<rc_game2::canopy::CanopyFrame>,
+    /// The mobys' loop-sound voice slots (`+0x6d`, [`HostSound::loops`]).
+    pub loop_slots: HashMap<usize, u8>,
     /// Ratchet's joint lists (chains) for his attachment points, and the joint each list's modifiers act on
     /// (`rc_formats::moby_anim::list_target`; 0xff none).
     pub hero_chains: Vec<Vec<u8>>,
@@ -108,6 +110,8 @@ pub struct HostSound<'a> {
     pub system: &'a mut rc_game::audio::AudioSystem,
     pub listener: rc_game::audio::voices::Listener,
     pub tick: u64,
+    /// `+0x6d` per moby: the voice slot of its sequence's loop sound ([`Rac2Mobys::loop_slots`]).
+    pub loops: &'a mut HashMap<usize, u8>,
 }
 
 impl Host<'_> {
@@ -134,6 +138,30 @@ impl Host<'_> {
 
     fn class_of(&self, o_class: i16) -> Option<usize> { self.lv.classes.iter().position(|c| c.o_class == o_class as i32) }
 
+    /// `0x3117a0`: the loop sound `lp` (`+0x6c`, 0xff none) on its voice slot (`+0x6d`): without a slot it plays (flags
+    /// 4) on the moby's phase tick (`(moby >> 8 & 3) == (frame & 3)`: the index here); with one, the slot is dropped
+    /// when another owner took it and released when it plays another sound of this moby.
+    fn refresh_loop(&mut self, m: &Moby, lp: u8) {
+        let Some(s) = self.sound.as_mut() else { return };
+        let slot = s.loops.get(&m.index).copied().unwrap_or(0xff);
+        if slot == 0xff {
+            if lp == 0xff || (m.index as u64 & 3) != (s.tick & 3) || m.mode & 0x40 != 0 { return; }
+            let k = self.play_sound(m, lp as i8 as i32, 4);
+            if let Some(s) = self.sound.as_mut() { if 0 <= k { s.loops.insert(m.index, k as u8); } }
+            return;
+        }
+        let owned = s.system.slots.slots.get(slot as usize).map(|x| (x.owner.map(|o| o.id as usize), x.class_index));
+        match owned {
+            Some((Some(o), index)) if o == m.index => {
+                if index != lp as u16 || m.mode & 0x40 != 0 {
+                    s.system.slots.release(slot as i32);
+                    s.loops.remove(&m.index);
+                }
+            }
+            _ => { s.loops.remove(&m.index); }
+        }
+    }
+
     /// Joint list `list` of class `o_class` (a non-empty chain).
     fn chain(&self, o_class: i16, list: usize) -> Option<&[u8]> {
         self.chains?.get(&o_class)?.get(list).map(Vec::as_slice).filter(|c| !c.is_empty())
@@ -149,11 +177,33 @@ impl MobyHost for Host<'_> {
     fn camera_pos(&self) -> V3 { self.camera }
 
     /// `0x313420` for a created moby (the placed ones advance in crate::moby_anim).
+    /// `0x313420` (`MobyAnimAdvance`): the keys step; a tick that did not land a blend then plays the first trigger
+    /// word whose time it passed (`0x3605f0(sound, 0, moby)`), else refreshes the sequence's loop sound (`0x3117a0`).
     fn advance(&mut self, m: &Moby) {
         let lv = self.lv;
-        if let Some(c) = self.created.get_mut(&m.index) {
-            if let Some(ac) = lv.anim.get(c.class) { moby_anim::advance(&mut c.state, ac); }
+        let (class, before, after) = if let Some(c) = self.created.get_mut(&m.index) {
+            let Some(ac) = lv.anim.get(c.class) else { return };
+            let before = c.state;
+            moby_anim::advance(&mut c.state, ac);
+            (c.class, before, c.state)
+        } else {
+            let Some(k) = self.placed_index(m) else { return };
+            let Some(a) = self.anim.as_deref_mut() else { return };
+            let Some(i) = a.instances.get_mut(k) else { return };
+            // The moby loop steps it from now on, not the draw's tick (crate::moby_anim).
+            if let Some(d) = a.game_advanced.get_mut(k) { *d = true; }
+            let Some(ac) = lv.anim.get(i.class) else { return };
+            let before = i.state;
+            if !i.state.skip_advance { moby_anim::advance(&mut i.state, ac); }
+            (i.class, before, i.state)
+        };
+        let Some(ac) = lv.anim.get(class) else { return };
+        if moby_anim::advance_landed(&before, &after) { return; }
+        if let Some(sound) = moby_anim::advance_trigger(&before, &after, ac) {
+            self.play_sound(m, sound as i16 as i32, 0);
+            return;
         }
+        self.refresh_loop(m, moby_anim::loop_sound_of(ac, after.seq_b));
     }
 
     fn anim(&self, m: &Moby) -> Option<AnimState> { self.state_of(m).map(|s| s.1) }
@@ -418,7 +468,7 @@ impl Rac2Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }

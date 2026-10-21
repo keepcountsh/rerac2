@@ -97,6 +97,9 @@ pub struct MobyAnim {
     pub pending: Vec<Option<PendingChange>>,
     /// Per instance: hidden (mode bit 1) since the load pass; never evaluated.
     pub hidden: Vec<bool>,
+    /// Per instance: the game's moby loop advances it (Going Commando's `0x313420`, crate::rac2_mobys), so [`tick`]
+    /// does not. R&C1 never sets it.
+    pub game_advanced: Vec<bool>,
     /// Per instance: the runtime joint-modifier list of a driven moby (`Moby::joint_mods`, its class manipulators:
     /// `rc_game::moby_update::manip`); applied by the evaluation (`evaluate_posed`), which makes the pose private.
     pub mods: Vec<Vec<rc_formats::moby_anim::JointModifier>>,
@@ -122,7 +125,7 @@ impl MobyAnim {
         let n = instances.len();
         MobyAnim {
             enabled, instances, palette, palette_len, pose_dirty: false,
-            snapshots: vec![None; n], pending: (0..n).map(|_| None).collect(), hidden: vec![false; n], mods: vec![Vec::new(); n],
+            snapshots: vec![None; n], pending: (0..n).map(|_| None).collect(), hidden: vec![false; n], game_advanced: vec![false; n], mods: vec![Vec::new(); n],
             ticks: 0, evaluated: None, eval_time: Duration::ZERO, evals: 0, poses: 0, last_report: 0.0,
             bytes: Vec::new(), identity: matrix_bytes(&IDENTITY), written: vec![false; n],
         }
@@ -201,7 +204,7 @@ fn tick(anim: Option<ResMut<MobyAnim>>, level: Res<crate::Level>, cams: Query<&T
     let camera = cams.iter().next().map(crate::game_camera::game_eye);
     let a = &mut *anim;
     for (k, i) in a.instances.iter_mut().enumerate() {
-        if !i.state.skip_advance { moby_anim::advance(&mut i.state, &classes[i.class]); }
+        if !i.state.skip_advance && !a.game_advanced[k] { moby_anim::advance(&mut i.state, &classes[i.class]); }
         // +0x31 (drawn last frame) is 0 before the first frame: InitMobyInstance zeroes it.
         if a.pending[k].as_ref().is_some_and(|p| p.active(a.ticks > 0 && i.visible, camera)) {
             let p = a.pending[k].take().unwrap();
