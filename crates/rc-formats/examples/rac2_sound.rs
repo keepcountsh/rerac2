@@ -34,6 +34,21 @@ fn main() -> anyhow::Result<()> {
             Err(e) => println!("  {e}"),
         }
     }
+    if let Ok(name) = std::env::var("SECTION") {
+        if let Some(sec) = rc_formats::rac2::gameplay::section(&g, &name)? {
+            println!("section {name}: {:#x} bytes", sec.len());
+            for (i, c) in sec.chunks(16).enumerate() {
+                let w: Vec<String> = c.chunks(4).map(|x| format!("{:08x}", u32::from_le_bytes(x.try_into().unwrap_or([0; 4])))).collect();
+                println!("  +{:04x}: {}", i * 16, w.join(" "));
+            }
+        }
+    }
+    if let Ok(list) = std::env::var("PATHS") {
+        let ps = rc_formats::rac2::gameplay::paths(&g)?;
+        for i in list.split(',').filter_map(|x| x.parse::<usize>().ok()) { println!("path {i}: {:?}", ps.get(i)); }
+        let a = rc_formats::rac2::gameplay::areas(&g)?;
+        for (i, x) in a.iter().enumerate().take(4) { println!("area {i}: {:?}", x); }
+    }
     if std::env::var("CAMS").is_ok() {
         let pv = rc_formats::rac2::gameplay::pvar_blocks(&g)?;
         for c in rc_formats::rac2::gameplay::cameras(&g)? {

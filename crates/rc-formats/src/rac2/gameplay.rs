@@ -358,23 +358,25 @@ pub struct Area {
     pub lists: [Vec<i32>; 5],
 }
 
-/// The areas: `s32 count`, the five lists' offsets (`+0x04..+0x14`, from the section's start), then the records
-/// (`+0x10` five s16 counts, `+0x1c` five offsets into their lists).
+/// The areas: `s32` the data's size, then the data (the game's copy, `$gp + 0x2a90`; its offsets from there): `+0x00`
+/// the count, `+0x04..+0x14` the five lists' offsets, then from `+0x20` the 0x30-byte records (the sphere, `+0x10`
+/// five s16 counts: the polygons over paths, the cuboids, spheres, cylinders and a fifth; `+0x1c` five offsets into
+/// their lists; `0x32a848`).
 pub fn areas(gameplay: &[u8]) -> Result<Vec<Area>> {
     let Some(s) = section(gameplay, "areas")? else { return Ok(Vec::new()) };
     let b = Buf(s);
-    let n = b.i32(0)?;
+    let n = b.i32(4)?;
     if !(0..=0x1000).contains(&n) { return invalid(format!("areas: count {n}")); }
-    let bases: Vec<usize> = (0..5).map(|k| b.i32(4 + 4 * k).map(|v| v as usize)).collect::<Result<_>>()?;
+    let bases: Vec<usize> = (0..5).map(|k| b.i32(8 + 4 * k).map(|v| v as usize)).collect::<Result<_>>()?;
     (0..n as usize)
         .map(|i| {
-            let r = 0x20 + 0x30 * i;
+            let r = 0x24 + 0x30 * i;
             let sphere = [b.f32(r)?, b.f32(r + 4)?, b.f32(r + 8)?, b.f32(r + 12)?];
             let mut lists: [Vec<i32>; 5] = Default::default();
             for k in 0..5 {
                 let c = b.u16(r + 0x10 + 2 * k)? as i16;
                 if c <= 0 || bases[k] == 0 { continue; }
-                let o = bases[k] + b.i32(r + 0x1c + 4 * k)? as usize;
+                let o = 4 + bases[k] + b.i32(r + 0x1c + 4 * k)? as usize;
                 lists[k] = (0..c as usize).map(|j| b.i32(o + 4 * j)).collect::<Result<_>>()?;
             }
             Ok(Area { sphere, lists })

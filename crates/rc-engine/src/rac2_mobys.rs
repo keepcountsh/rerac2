@@ -46,6 +46,9 @@ pub struct Rac2Mobys {
     /// (`rc_formats::moby_anim::list_target`; 0xff none).
     pub hero_chains: Vec<Vec<u8>>,
     pub hero_targets: Vec<u8>,
+    /// Every class's joint lists (class header `+0x1c`, [`rc_formats::gadget::joint_list`]'s chains): what the
+    /// joint queries take as their joint (`0x3175f8(m, 1, [list], out)`: the last joint of list `list`).
+    pub chains: Chains,
     /// The level's grind paths (the gameplay's section 31).
     pub rails: Vec<rc_game2::paths::GrindPath>,
     /// The level's volumes and paths.
@@ -54,6 +57,9 @@ pub struct Rac2Mobys {
     /// blocks (`[0x17 + 8·n]`, n = `[0x1a]`; `[0x1f]` without blocks).
     pub footstep_base: usize,
 }
+
+/// Joint lists per class: each list the root-to-joint chain whose last joint the query returns.
+pub type Chains = HashMap<i16, Vec<Vec<u8>>>;
 
 /// Ratchet's animation as the hero update left it, for his attachment points.
 #[derive(Clone, Copy)]
@@ -74,6 +80,8 @@ pub struct Host<'a> {
     pub created: &'a mut HashMap<usize, Created>,
     pub hero: Option<HeroPose<'a>>,
     pub hero_chains: &'a [Vec<u8>],
+    /// The classes' joint lists ([`Rac2Mobys::chains`]; None: the queries find no joints).
+    pub chains: Option<&'a Chains>,
     /// The camera's position (`0x1b8d40`).
     pub camera: V3,
     /// The sound system the class sounds play into (crate::audio_out); None: no sound.
@@ -110,6 +118,11 @@ impl Host<'_> {
     }
 
     fn class_of(&self, o_class: i16) -> Option<usize> { self.lv.classes.iter().position(|c| c.o_class == o_class as i32) }
+
+    /// Joint list `list` of class `o_class` (a non-empty chain).
+    fn chain(&self, o_class: i16, list: usize) -> Option<&[u8]> {
+        self.chains?.get(&o_class)?.get(list).map(Vec::as_slice).filter(|c| !c.is_empty())
+    }
 }
 
 fn rows_f(r: [[f32; 4]; 4]) -> ([V3; 3], V3) {
@@ -174,15 +187,15 @@ impl MobyHost for Host<'_> {
     }
 
     /// `0x3127c8`: joint `j`'s posed translation · scale / 1024 through the rows, plus the position.
+    /// `0x3127c8(m, list, out)`: the last joint of the class's joint list `list` (`0x3175f8`) in the world.
     fn joint(&self, m: &Moby, j: usize) -> Option<V3> {
         let (class, state, snap) = match (self.hero, m.o_class) {
             (Some(h), 0) => (h.class, *h.state, h.snapshot.cloned()),
             _ => self.state_of(m)?,
         };
         let ac = self.lv.anim.get(class)?;
-        if ac.joint_count <= j { return None; }
-        let chain: Vec<u8> = (0..=j as u8).collect();
-        let t = moby_anim::joint_translations(ac, &state, snap.as_ref(), &[chain.as_slice()]);
+        let chain = self.chain(m.o_class, j)?;
+        let t = moby_anim::joint_translations(ac, &state, snap.as_ref(), &[chain]);
         let t = t.first()?;
         let p = [f32::from_bits(t[0]), f32::from_bits(t[1]), f32::from_bits(t[2])];
         let s = m.scale / 1024.0;
@@ -194,9 +207,8 @@ impl MobyHost for Host<'_> {
     fn joint_matrix(&self, m: &Moby, j: usize) -> Option<([V3; 3], V3)> {
         let (class, state, snap) = self.state_of(m)?;
         let ac: &MobyAnimClass = self.lv.anim.get(class)?;
-        if ac.joint_count <= j { return None; }
-        let chain: Vec<u8> = (0..=j as u8).collect();
-        let p = moby_anim::evaluate_chains(ac, &state, snap.as_ref(), &[chain.as_slice()]);
+        let chain = self.chain(m.o_class, j)?;
+        let p = moby_anim::evaluate_chains(ac, &state, snap.as_ref(), &[chain]);
         let p = p.first()?;
         let rows = m.rows.map(|r| [r[0].to_bits(), r[1].to_bits(), r[2].to_bits(), 0]);
         Some(rows_f(moby_anim::attach_matrix(p, &rows, m.pos, m.scale)))
@@ -327,10 +339,21 @@ impl Rac2Mobys {
             .unwrap_or_default();
         let hero_targets = lists.iter().map(|(_, second)| rc_formats::moby_anim::list_target(second).unwrap_or(0xff)).collect();
         let hero_chains = lists.into_iter().map(|(chain, _)| chain).collect();
+        let chains: Chains = m
+            .classes
+            .iter()
+            .filter_map(|c| {
+                let b = blobs.blobs.get(&c.o_class)?;
+                let h = &c.class.header;
+                if h.joints <= 0 { return None; }
+                let n = i32::from_le_bytes(b.get(h.joints as usize..h.joints as usize + 4)?.try_into().ok()?).clamp(0, 0x100) as usize;
+                Some((c.o_class as i16, (0..n).map(|l| rc_formats::gadget::joint_list(b, h, l).map(|x| x.0).unwrap_or_default()).collect()))
+            })
+            .collect();
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, hero_targets, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }
