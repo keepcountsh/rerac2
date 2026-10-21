@@ -546,7 +546,7 @@ pub fn hero_update(hero: &mut Hero, env: &Env, anim: &mut dyn AnimCtl) -> HeroTi
     hero.rail_probe(env);
     hero.pole_probe(env);
     hero.transitions(env, anim);
-    hero.posture_tick(anim);
+    hero.posture_tick(env, anim);
     HeroTick::Ran
 }
 

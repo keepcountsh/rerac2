@@ -55,6 +55,9 @@ pub struct Target {
     pub crate_like: bool,
     /// Class header +0x46.
     pub kind: i16,
+    /// `0x31fa20`: an enemy's (mode 0x20) look data, its health block's `+0x28..+0x2a`: how near Ratchet looks at
+    /// it, its priority, the height he looks at (in eighths).
+    pub look: Option<[u8; 3]>,
 }
 
 /// The melee block (`0x18a9e0..0x18aa30`).

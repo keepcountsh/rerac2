@@ -11,8 +11,11 @@
 //! physics (`0x2b7c88`): strafing, the hips turn toward the move and the chest back (so the run plays sideways); the
 //! run leans into its turns, the walk sways, the fall twists with the yaw.
 //!
-//! Not ported: the arms at a wall (`0x2ab250`, with a held item), the head's look at targets (`0x2abc18`, the enemies'
-//! look data), the teeter at an edge (the ahead probe's edge test), the lean on gravity frames and magnetic walkways
+//! The head looks at the enemies (`0x2abc18`): every seventh frame the best of the targets in reach (their look data),
+//! held while nothing is in the way of the eyes.
+//!
+//! Not ported: the arms at a wall (`0x2ab250`: only for a held item whose hold kind, `0x26250c` of its row, is not 0;
+//! the wrench's is 0), the look's override (`0x18aa18`), the teeter at an edge (the ahead probe's edge test), the lean on gravity frames and magnetic walkways
 //! (`0x2b7820`), the dust at the feet, the records of Clank on the back and of Clank's body (kinds 1..5).
 
 use super::physics::*;
@@ -175,6 +178,8 @@ pub struct Posture {
     pub blink_next: i32,
     pub blink_every: i32,
     pub blink_linked: bool,
+    /// `0x18c2b0`: the moby the head looks at.
+    pub look_at: Option<usize>,
 }
 
 impl Default for Posture {
@@ -193,6 +198,7 @@ impl Default for Posture {
             blink_next: 0,
             blink_every: 0,
             blink_linked: false,
+            look_at: None,
         }
     }
 }
@@ -396,6 +402,66 @@ impl Hero {
         r[rec::CHEST].target[1] = r[rec::HEAD].target[1] * 0.55;
     }
 
+    /// `0x2abc18`: in the ground, walk, jump, fall and swim groups, every seventh frame the head picks the target to
+    /// look at: an enemy within its look range, within 110° of the facing and 60° of the level, by the distance
+    /// weighted by the angle (the current one 1.5 ahead), a higher priority first; dropped when a line from the eyes
+    /// (1.2 up) to it (0.5 up) meets something. The head turns to its look height (yaw within 59°, pitch −25°..35°;
+    /// while invincible past 27 ticks 17° and level) from 0.3 ahead and 0.85 up, the spine with it.
+    fn head_look(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
+        if !matches!(self.group, 0 | 1 | 2 | 4 | 7) {
+            self.posture.look_at = None;
+            return;
+        }
+        if anim.view().seq_b == 0x51 { return; }
+        let pos = self.pos;
+        let yaw = self.rot[2];
+        if self.frame % 7 == 0 {
+            let (mut best, mut best_score, mut best_prio) = (None, 1e8f32, 0.0f32);
+            for t in env.targets {
+                let Some(look) = t.look else { continue };
+                let d = dist2(pos, t.pos);
+                if (look[0] as f32) < d { continue; }
+                let ang = rot_dist(atan2(t.pos[0] - pos[0], t.pos[1] - pos[1]), yaw);
+                if 1.919_862_4 < ang { continue; }
+                if 1.047_197_7 < atan2(dist2(t.pos, pos), pos[2] - t.pos[2]).abs() { continue; }
+                let mut score = ang * d + d;
+                if Some(t.id) == self.posture.look_at { score = (score - 1.5).max(0.0); }
+                let prio = look[1] as f32;
+                if best_prio < prio || score < best_score {
+                    best_score = score;
+                    best = Some(t.id);
+                    if best_prio < prio { best_prio = prio; }
+                }
+            }
+            self.posture.look_at = best;
+        }
+        let Some(id) = self.posture.look_at else { return };
+        let Some(t) = env.targets.iter().find(|t| t.id == id) else {
+            self.posture.look_at = None;
+            return;
+        };
+        let eye = self.local_point(0.0, 0.0, 1.2);
+        if env.line(eye, [t.pos[0], t.pos[1], t.pos[2] + 0.5], 2).is_some() {
+            self.posture.look_at = None;
+            return;
+        }
+        let mut p = t.pos;
+        if let Some(look) = t.look { p[2] += look[2] as f32 * 0.125; }
+        let from = self.local_point(0.3, 0.0, 0.85);
+        let mut y = sub_rot(atan2(p[0] - from[0], p[1] - from[1]), yaw).clamp(-1.029_744_4, 1.029_744_4);
+        let mut pitch = atan2(dist2(p, from), from[2] - p[2]).min(0.610_865_3).max(-0.436_332_35);
+        if 0x1b < self.damage.invincible {
+            y = y.clamp(-0.296_706, 0.296_706);
+            pitch = 0.0;
+        }
+        let r = &mut self.posture.recs;
+        r[rec::HEAD].set_spring(0.021, 0.27);
+        r[rec::HEAD].target[2] = y * 0.7;
+        r[rec::HEAD].target[1] = pitch;
+        r[rec::SPINE].set_spring(0.014, 0.3);
+        r[rec::SPINE].target[2] = r[rec::HEAD].target[2] * 0.55;
+    }
+
     /// `0x2ab9c0`: idle in sequence 0, the ears and the tail (records 13..16) twitch to a new pose each time their
     /// timer runs out.
     fn twitch(&mut self, anim: &mut dyn AnimCtl) {
@@ -469,10 +535,11 @@ impl Hero {
     }
 
     /// The posture's tick (module docs), after the transitions.
-    pub(super) fn posture_tick(&mut self, anim: &mut dyn AnimCtl) {
+    pub(super) fn posture_tick(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
         if self.mode != 0 { return; }
         self.feet_tilt();
         self.head_idle(anim);
+        self.head_look(env, anim);
         self.twitch(anim);
         self.neck_and_blink(anim);
         for r in self.posture.recs.iter_mut() { r.update(); }

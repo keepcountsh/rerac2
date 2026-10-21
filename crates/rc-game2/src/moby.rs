@@ -500,7 +500,8 @@ impl MobyWorld {
             .map(|i| {
                 let m = &self.mobys[i];
                 let kind = self.class(m.o_class).map_or(0, |c| c.kind);
-                crate::hero::melee::Target { id: i, pos: m.pos, up: m.rows[2], crate_like: (500..=540).contains(&m.o_class), kind }
+                let look = (m.mode & ai::AI != 0).then(|| { let h = ai::health(m); [m.pv_b(h + 0x28), m.pv_b(h + 0x29), m.pv_b(h + 0x2a)] });
+                crate::hero::melee::Target { id: i, pos: m.pos, up: m.rows[2], crate_like: (500..=540).contains(&m.o_class), kind, look }
             })
             .collect()
     }
