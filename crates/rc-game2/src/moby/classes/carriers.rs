@@ -124,6 +124,7 @@ pub fn update_09c7(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let o = &mut w.mobys[t];
             o.pos = [tm[3][0], tm[3][1], tm[3][2]];
             o.rot[2] = crate::hero::physics::atan2(tm[0][0], tm[0][1]);
+            w.rebuild(t, &*ctx.host);
             let hit = w.hit_message(t).is_some_and(|h| h.tmpl.flags & 0x10000 != 0);
             if hit {
                 let base = w.class(0x0e9b).map_or(1.0, |c| c.scale);

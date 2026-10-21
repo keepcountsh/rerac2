@@ -335,8 +335,8 @@ pub fn update_0ac0(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
 }
 
 /// `0x327898(m, o_class, update_dist)`: a moby of `o_class` in `m`'s place — its position and angles, its scale by
-/// `m`'s share of its class's, drawn (`+0x31` = 1, draw distance 0xff), the mode cleared.
-pub fn spawn_in_place(w: &mut MobyWorld, src: usize, o_class: i16, update_dist: u8) -> usize {
+/// `m`'s share of its class's, drawn (`+0x31` = 1, draw distance 0xff), the mode cleared, rebuilt (`0x313dc0`).
+pub fn spawn_in_place(w: &mut MobyWorld, src: usize, o_class: i16, update_dist: u8, host: &dyn crate::moby::MobyHost) -> usize {
     let base = w.class(w.mobys[src].o_class).map_or(1.0, |c| c.scale);
     let (pos, rot, s) = (w.mobys[src].pos, w.mobys[src].rot, w.mobys[src].scale);
     let id = w.create(o_class);
@@ -348,6 +348,7 @@ pub fn spawn_in_place(w: &mut MobyWorld, src: usize, o_class: i16, update_dist: 
     m.rot = rot;
     m.update_dist = update_dist;
     m.mode = 0;
+    w.rebuild(id, host);
     w.changed = true;
     id
 }
@@ -377,7 +378,7 @@ pub fn update_wreck(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             // The sound 0xc0a (`0x360698`, by its id, not the class's: the sound pass).
             let _ = &ctx;
             let wreck = match class { 0x0c0a => Some(0x0c10), 0x0c0b => Some(0x0c11), 0x0c0c => Some(0x0c12), 0x0c0d => Some(0x0c13), _ => None };
-            if let Some(c) = wreck { spawn_in_place(w, id, c, 0); }
+            if let Some(c) = wreck { spawn_in_place(w, id, c, 0, &*ctx.host); }
             w.mobys[id].set_state(3, -1);
         }
         3 => {
@@ -729,6 +730,8 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
     if let Some(p) = pad(w) {
         crate::moby::carry_hero(ctx, p, w.mobys[p].pos, yaw, at, yaw);
         w.mobys[p].pos = at;
+        // The pad has no update of its own: its sphere and grid place follow here (`0x313dc0`), so it can be stood on.
+        w.rebuild(p, &*ctx.host);
     }
     w.changed = true;
 }
@@ -885,6 +888,7 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let at = add3(pos, [0.0, 0.0, 0.25]);
         crate::moby::carry_hero(ctx, p, w.mobys[p].pos, yaw, at, yaw);
         w.mobys[p].pos = at;
+        w.rebuild(p, &*ctx.host);
     }
     w.changed = true;
 }
