@@ -267,7 +267,8 @@ fn tick(
     // the camera `0x2d9f38`.
     {
         let mods = p.hero.posture.modifiers(&mobys.hero_targets);
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
+        let hl = mobys.hero_layers(&p.hero.layers);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
         // The class sounds play during the loop (`0x3605f0`), heard from the camera as the last tick left it.
         let sound = audio.as_deref_mut().map(|o| crate::rac2_mobys::HostSound { system: o.system(), listener: listener(&p.camera), tick: p.ticks, loops: &mut mobys.loop_slots });
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound };
@@ -371,7 +372,8 @@ fn tick(
     {
         let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let mods = p.hero.posture.modifiers(&mobys.hero_targets);
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
+        let hl = mobys.hero_layers(&p.hero.layers);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
         // The items' sounds (the wrench's hits and whirr) play like the loop's.
         let sound = audio.as_deref_mut().map(|o| crate::rac2_mobys::HostSound { system: o.system(), listener: listener(&p.camera), tick: p.ticks, loops: &mut mobys.loop_slots });
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound };
@@ -386,6 +388,8 @@ fn tick(
         let mut ctl = p.anim.ctl(class);
         p.hero.set_anim(&mut ctl, blend, seq, 0);
     }
+    // `0x2afc38`: his pose layers (the holding layers, the face), after the item pass.
+    rc_game2::hero::layers::upkeep(&mut p.hero, &p.anim.ctl(class));
     // `UpdateParts` (`0x331150`), after the hero.
     if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game2::fx).
@@ -399,7 +403,8 @@ fn tick(
     // The head item's pose (slot 2, placed by the item pass): from his head.
     {
         let mods = p.hero.posture.modifiers(&mobys.hero_targets);
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
+        let hl = mobys.hero_layers(&p.hero.layers);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
         mobys.skin_head(lv, p.hero.items.head, Some(&pose));
     }
     if mobys.world.changed {
@@ -481,6 +486,8 @@ fn tick(
             if let Some(slot) = a.snapshots.get_mut(k) { *slot = p.anim.snapshot.clone(); }
             // His posture's joint modifiers (rc_game2::hero::posture).
             if let (Some(mods), Some(m)) = (a.mods.get_mut(k), p.mobys.as_ref()) { *mods = p.hero.posture.modifiers(&m.hero_targets); }
+            // His pose layers (rc_game2::hero::layers).
+            if let (Some(l), Some(m)) = (a.layers.get_mut(k), p.mobys.as_ref()) { *l = m.hero_layers(&p.hero.layers); }
         }
     }
     let view = match cam.view {
@@ -637,7 +644,7 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
         if o_class != 0 {
             // Its first pose (the scene's first tick poses it again).
             let state = rc_formats::moby_anim::AnimState { seq_a: slot, frame_a: 0, seq_b: slot, frame_b: 1, t: 0.0, speed: 0.0, rate: 0.0, flags: 0, trigger_count: 0, skip_advance: true };
-            mobys.created.insert(m, crate::rac2_mobys::Created { class: ci, state, snapshot: None });
+            mobys.created.insert(m, crate::rac2_mobys::Created { class: ci, state, snapshot: None, serial: mobys.world.mobys[m].serial });
             if let Some(q) = a.positions.first() { mobys.world.mobys[m].pos = [q[0], q[1], q[2]]; }
         }
         actors.push((m, slot));
@@ -687,7 +694,8 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let class = &lv.mobys.anim[p.class];
         let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let mods = p.hero.posture.modifiers(&mobys.hero_targets);
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
+        let hl = mobys.hero_layers(&p.hero.layers);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
@@ -720,7 +728,8 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let Some(m) = mobys.world.mobys.get_mut(pose.moby) else { continue };
         (m.pos, m.rows) = (pose.pos, identity);
         let Some(ci) = ci_of(pose.o_class) else { continue };
-        mobys.created.insert(pose.moby, crate::rac2_mobys::Created { class: ci, state, snapshot: None });
+        let serial = m.serial;
+        mobys.created.insert(pose.moby, crate::rac2_mobys::Created { class: ci, state, snapshot: None, serial });
     }
     // `0x2d51f8` → `0x2d4fc8`: the head item on the scene's Ratchet (at his track with the scene's sequence and
     // his head's scale), else on Ratchet as he stands.
@@ -730,7 +739,8 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             Some((pos, state)) => (pos, identity, state, None, head.map(|t| vec![rc_formats::moby_anim::JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..rc_formats::moby_anim::JointModifier::compose(t) }]).unwrap_or_default()),
             None => (p.hero.pos, p.hero.rows, p.anim.state, p.anim.snapshot.clone(), p.hero.posture.modifiers(&mobys.hero_targets)),
         };
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods };
+        let hl = mobys.hero_layers(&p.hero.layers);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
         {
             let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(&lv.mobys.anim[p.class]));
             let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
@@ -741,7 +751,8 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
             if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game2::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
         }
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods };
+        let hl = mobys.hero_layers(&p.hero.layers);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
         mobys.skin_head(lv, p.hero.items.head, Some(&pose));
     }
     if let Some(o) = occl.as_mut() {

@@ -29,6 +29,9 @@ pub struct Created {
     pub class: usize,
     pub state: AnimState,
     pub snapshot: Option<MobyFrame>,
+    /// The moby's `serial` it belongs to: a record of a deleted moby is not the next one's in that slot (`CreateMoby`
+    /// starts its animation afresh, `0x311418`).
+    pub serial: u32,
 }
 
 /// The moby world of the level and what its collision and draw need.
@@ -53,6 +56,10 @@ pub struct Rac2Mobys {
     /// (`rc_formats::moby_anim::list_target`; 0xff none).
     pub hero_chains: Vec<Vec<u8>>,
     pub hero_targets: Vec<u8>,
+    /// The second byte lists of his joint lists (a pose layer's joints, `0x311e10(moby, list)`).
+    pub hero_seconds: Vec<Vec<u8>>,
+    /// The holding classes 1 / 2 (rc_game2::hero::layers: his first 0x17 sequences with the arm holding the item).
+    pub hold: [Option<Arc<rc_game::hero::anim::HoldClass>>; 2],
     /// Every class's joint lists (class header `+0x1c`, [`rc_formats::gadget::joint_list`]'s chains): what the
     /// joint queries take as their joint (`0x3175f8(m, 1, [list], out)`: the last joint of list `list`).
     pub chains: Chains,
@@ -79,6 +86,8 @@ pub struct HeroPose<'a> {
     pub scale: f32,
     /// His posture's joint modifiers (rc_game2::hero::posture), as his drawn pose has them.
     pub mods: &'a [rc_formats::moby_anim::JointModifier],
+    /// His pose layers (rc_game2::hero::layers, [`Rac2Mobys::hero_layers`]), as his drawn pose has them.
+    pub layers: &'a [crate::moby_anim::InstanceLayer],
 }
 
 /// MobyProc's light block for a moby with rows `rows`, light word `light` (`+0x38`) and ambient (`+0x3c`), on the
@@ -117,9 +126,14 @@ pub struct HostSound<'a> {
 impl Host<'_> {
     fn placed_index(&self, m: &Moby) -> Option<usize> { self.occl?.anim_index(m.instance?) }
 
+    /// A record left by a deleted moby in `m`'s slot goes: `m` starts from the spawn pose.
+    fn drop_stale(&mut self, m: &Moby) {
+        if self.created.get(&m.index).is_some_and(|c| c.serial != m.serial) { self.created.remove(&m.index); }
+    }
+
     /// The class index (into `LevelMobys`) and the animation state of moby `m`.
     fn state_of(&self, m: &Moby) -> Option<(usize, AnimState, Option<MobyFrame>)> {
-        if let Some(c) = self.created.get(&m.index) { return Some((c.class, c.state, c.snapshot.clone())); }
+        if let Some(c) = self.created.get(&m.index).filter(|c| c.serial == m.serial) { return Some((c.class, c.state, c.snapshot.clone())); }
         match self.placed_index(m) {
             Some(k) => {
                 let a = self.anim.as_deref()?;
@@ -181,6 +195,7 @@ impl MobyHost for Host<'_> {
     /// word whose time it passed (`0x3605f0(sound, 0, moby)`), else refreshes the sequence's loop sound (`0x3117a0`).
     fn advance(&mut self, m: &Moby) {
         let lv = self.lv;
+        self.drop_stale(m);
         let (class, before, after) = if let Some(c) = self.created.get_mut(&m.index) {
             let Some(ac) = lv.anim.get(c.class) else { return };
             let before = c.state;
@@ -210,10 +225,11 @@ impl MobyHost for Host<'_> {
 
     fn set_anim(&mut self, m: &Moby, seq: u8, frame: u8, blend: u8) {
         let lv = self.lv;
+        self.drop_stale(m);
         if !self.created.contains_key(&m.index) && self.placed_index(m).is_none() {
             if let Some(ci) = self.class_of(m.o_class) {
                 if let Some(st) = lv.anim.get(ci).map(AnimState::spawn) {
-                    self.created.insert(m.index, Created { class: ci, state: st, snapshot: None });
+                    self.created.insert(m.index, Created { class: ci, state: st, snapshot: None, serial: m.serial });
                 }
             }
         }
@@ -231,6 +247,7 @@ impl MobyHost for Host<'_> {
     }
 
     fn set_anim_speed(&mut self, m: &Moby, speed: f32) {
+        self.drop_stale(m);
         if let Some(c) = self.created.get_mut(&m.index) {
             c.state.speed = speed;
             return;
@@ -263,7 +280,8 @@ impl MobyHost for Host<'_> {
         let p = match (self.hero, m.o_class) {
             // Ratchet with his posture's modifiers, as he is drawn.
             (Some(h), 0) => {
-                let r = moby_anim::evaluate_chains_posed(ac, &state, snap.as_ref(), &[chain], &[], h.mods);
+                let pl: Vec<moby_anim::PoseLayer> = h.layers.iter().map(crate::moby_anim::InstanceLayer::pose).collect();
+                let r = moby_anim::evaluate_chains_posed(ac, &state, snap.as_ref(), &[chain], &pl, h.mods);
                 let r = r.first()?;
                 [r[3][0], r[3][1], r[3][2]]
             }
@@ -294,7 +312,8 @@ impl MobyHost for Host<'_> {
         let h = self.hero?;
         let chain = self.hero_chains.get(*HERO_LISTS.get(k)?)?;
         let ac: &MobyAnimClass = self.lv.anim.get(h.class)?;
-        let p = moby_anim::evaluate_chains_posed(ac, h.state, h.snapshot, &[chain.as_slice()], &[], h.mods);
+        let pl: Vec<moby_anim::PoseLayer> = h.layers.iter().map(crate::moby_anim::InstanceLayer::pose).collect();
+        let p = moby_anim::evaluate_chains_posed(ac, h.state, h.snapshot, &[chain.as_slice()], &pl, h.mods);
         let p = p.first()?;
         let rows = h.rows.map(|r| [r[0].to_bits(), r[1].to_bits(), r[2].to_bits(), 0]);
         Some(rows_f(moby_anim::attach_matrix(p, &rows, h.pos, h.scale)))
@@ -343,6 +362,31 @@ fn footstep_base(gameplay: &[u8]) -> usize {
 }
 
 impl Rac2Mobys {
+    /// Ratchet's pose layers for the evaluator (rc_game2::hero::layers), in his `+0x60` list's order (the newest node
+    /// first): each over its joint list's second byte list; a holding layer's keys below 0x17 from its class.
+    pub fn hero_layers(&self, l: &rc_game2::hero::layers::Layers) -> Vec<crate::moby_anim::InstanceLayer> {
+        let mut v: Vec<(u32, crate::moby_anim::InstanceLayer)> = l
+            .hold
+            .iter()
+            .chain(std::iter::once(&l.face))
+            .filter_map(|n| {
+                let n = n.as_ref()?;
+                let joints = self.hero_seconds.get(n.list as usize).filter(|j| !j.is_empty())?.clone();
+                let alt = match n.alt {
+                    0 => None,
+                    k => {
+                        let c = self.hold.get(k as usize - 1)?.clone()?;
+                        let s = rc_game2::hero::layers::HOLD_SEQS;
+                        Some((c, n.seq_a < s, n.seq_b < s))
+                    }
+                };
+                Some((n.born, crate::moby_anim::InstanceLayer { joints, seq_a: n.seq_a, frame_a: n.frame_a, seq_b: n.seq_b, frame_b: n.frame_b, t: n.t, weight: n.weight, alt }))
+            })
+            .collect();
+        v.sort_by_key(|x| std::cmp::Reverse(x.0));
+        v.into_iter().map(|x| x.1).collect()
+    }
+
     /// `0x2aa278` for the head item (`rc_game2::hero::items::head_pass`): a keyframe of its own built from Ratchet's
     /// current pose (`0x3181c0`: his blended key as a frame, [`moby_anim::snapshot`]) — joint 0 at rest, joints 1 and
     /// 2 his [`rc_game2::hero::items::HEAD_JOINTS`]' quaternions, their scale where it is not 1 (inherited; with his
@@ -454,7 +498,15 @@ impl Rac2Mobys {
             .map(|(c, b)| (0..31).map(|l| rc_formats::gadget::joint_list(b, &c.class.header, l).unwrap_or_default()).collect())
             .unwrap_or_default();
         let hero_targets = lists.iter().map(|(_, second)| rc_formats::moby_anim::list_target(second).unwrap_or(0xff)).collect();
+        let hero_seconds = lists.iter().map(|(_, second)| second.clone()).collect();
         let hero_chains = lists.into_iter().map(|(chain, _)| chain).collect();
+        let hold = [1i32, 2].map(|o| {
+            let b = blobs.blobs.get(&o)?;
+            let c = rc_formats::moby::parse_moby_class_for(rc_formats::Game::Rac2, b).ok()?;
+            let map = moby_anim::retarget_map(b, &c.header)?;
+            let seqs = moby_anim::parse_sequences(b, &c).ok()?;
+            Some(Arc::new(rc_game::hero::anim::HoldClass { anim: MobyAnimClass::new(&c, seqs), map }))
+        });
         let chains: Chains = m
             .classes
             .iter()
@@ -469,7 +521,7 @@ impl Rac2Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }
@@ -561,12 +613,12 @@ impl CreatedDraw {
         for m in mobys.world.mobys.iter().filter(|m| live(m)) {
             let id = m.index;
             let fallback;
-            let c = match mobys.created.get(&id) {
+            let c = match mobys.created.get(&id).filter(|c| c.serial == m.serial) {
                 Some(c) => c,
                 None => {
                     let Some(ci) = lv.classes.iter().position(|c| c.o_class == m.o_class as i32) else { continue };
                     let Some(ac) = lv.anim.get(ci) else { continue };
-                    fallback = Created { class: ci, state: AnimState::spawn(ac), snapshot: None };
+                    fallback = Created { class: ci, state: AnimState::spawn(ac), snapshot: None, serial: m.serial };
                     &fallback
                 }
             };

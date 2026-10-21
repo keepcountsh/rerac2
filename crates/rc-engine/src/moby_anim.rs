@@ -103,6 +103,9 @@ pub struct MobyAnim {
     /// Per instance: the runtime joint-modifier list of a driven moby (`Moby::joint_mods`, its class manipulators:
     /// `rc_game::moby_update::manip`); applied by the evaluation (`evaluate_posed`), which makes the pose private.
     pub mods: Vec<Vec<rc_formats::moby_anim::JointModifier>>,
+    /// Per instance: pose layers blended over its key ([`InstanceLayer`]; Going Commando's Ratchet, crate::rac2_play).
+    /// R&C1 never sets them.
+    pub layers: Vec<Vec<InstanceLayer>>,
     ticks: u64,
     evaluated: Option<u64>,
     eval_time: Duration,
@@ -120,12 +123,41 @@ pub struct MobyAnim {
 /// Bytes of one palette matrix.
 const MATRIX_BYTES: usize = 64;
 
+/// A pose layer an instance is drawn with, owned (`rc_formats::moby_anim::PoseLayer` borrows its joints and class):
+/// its joints, keys, blend and weight, and the animation-only class its keys may come from (with the key flags).
+#[derive(Clone)]
+pub struct InstanceLayer {
+    pub joints: Vec<u8>,
+    pub seq_a: u8,
+    pub frame_a: u8,
+    pub seq_b: u8,
+    pub frame_b: u8,
+    pub t: f32,
+    pub weight: f32,
+    pub alt: Option<(std::sync::Arc<rc_game::hero::anim::HoldClass>, bool, bool)>,
+}
+
+impl InstanceLayer {
+    pub fn pose(&self) -> moby_anim::PoseLayer<'_> {
+        moby_anim::PoseLayer {
+            joints: &self.joints,
+            seq_a: self.seq_a,
+            frame_a: self.frame_a,
+            seq_b: self.seq_b,
+            frame_b: self.frame_b,
+            t: self.t,
+            weight: self.weight,
+            alt: self.alt.as_ref().map(|(c, a, b)| moby_anim::AltKeys { class: &c.anim, map: &c.map, a: *a, b: *b }),
+        }
+    }
+}
+
 impl MobyAnim {
     pub fn new(enabled: bool, instances: Vec<AnimInstance>, palette: Handle<ShaderBuffer>, palette_len: u32) -> Self {
         let n = instances.len();
         MobyAnim {
             enabled, instances, palette, palette_len, pose_dirty: false,
-            snapshots: vec![None; n], pending: (0..n).map(|_| None).collect(), hidden: vec![false; n], game_advanced: vec![false; n], mods: vec![Vec::new(); n],
+            snapshots: vec![None; n], pending: (0..n).map(|_| None).collect(), hidden: vec![false; n], game_advanced: vec![false; n], mods: vec![Vec::new(); n], layers: vec![Vec::new(); n],
             ticks: 0, evaluated: None, eval_time: Duration::ZERO, evals: 0, poses: 0, last_report: 0.0,
             bytes: Vec::new(), identity: matrix_bytes(&IDENTITY), written: vec![false; n],
         }
@@ -262,7 +294,7 @@ type PoseKey = (usize, u8, u8, u8, u8, u32, Option<usize>);
 /// Returns whether any byte changed and the number of distinct poses evaluated.
 fn evaluate_all(anim: &mut MobyAnim, level: &LoadedLevel) -> (bool, usize) {
     let classes = &level.mobys.anim;
-    let MobyAnim { instances, hidden, snapshots, mods, bytes, identity, written, .. } = anim;
+    let MobyAnim { instances, hidden, snapshots, mods, layers, bytes, identity, written, .. } = anim;
     let mut changed = false;
     let mut put = |bytes: &mut Vec<u8>, at: usize, src: &[u8]| {
         let Some(dst) = bytes.get_mut(at..at + src.len()) else { return };
@@ -284,10 +316,11 @@ fn evaluate_all(anim: &mut MobyAnim, level: &LoadedLevel) -> (bool, usize) {
         if !draws(k, i) { continue; }
         let s = &i.state;
         // A snapshot or a modifier list makes the pose the instance's own.
-        let snap = (s.seq_a == moby_anim::SNAPSHOT_SEQ || !mods[k].is_empty()).then_some(k);
+        let snap = (s.seq_a == moby_anim::SNAPSHOT_SEQ || !mods[k].is_empty() || !layers[k].is_empty()).then_some(k);
         let key = (i.class, s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.t.to_bits(), snap);
         let pose = memo.entry(key).or_insert_with(|| {
-            let f = moby_anim::evaluate_posed(&classes[i.class], s, snapshots[k].as_ref(), &[], &mods[k]);
+            let pl: Vec<moby_anim::PoseLayer> = layers[k].iter().map(InstanceLayer::pose).collect();
+            let f = moby_anim::evaluate_posed(&classes[i.class], s, snapshots[k].as_ref(), &pl, &mods[k]);
             f.iter().flat_map(matrix_bytes).collect()
         });
         let at = i.base as usize * MATRIX_BYTES;

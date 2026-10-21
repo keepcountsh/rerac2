@@ -108,8 +108,10 @@ pub struct ItemBlock {
     pub next_create: i32,
     /// `0x18b058`: 0xff when the item has ammo and none is left.
     pub empty: u8,
-    /// `0x18c0db`: the held item's stance type (its row's `+0x0c`).
+    /// `0x18c0db`: the held item's stance type (its row's `+0x0c`: 1 one hand, 2 both; crate::hero::layers).
     pub stance: u8,
+    /// `0x18c0df`: the hand item tucked away (some states' entries; every change clears it).
+    pub tucked: bool,
     /// The use stance: `0x18c0d8` in use, `0x18c0da` it keeps Ratchet's stance, `0x18c2d0` his sequence, `0x18c2d4` the
     /// item, `0x189ff8` the ticks in use.
     pub using: bool,
@@ -220,6 +222,7 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     }
     let away = in_water || h.group == 3 || matches!(h.state, 0x31 | 0x12 | 0x82);
     head_pass(world, ctx);
+    look_kind(world, ctx);
     create_hand(world, ctx);
     let Some(id) = ctx.hero.items.hand else {
         switch(world, ctx);
@@ -287,6 +290,12 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     if world.mobys[id].state < 0xfe {
         if let Some(f) = world.mobys[id].update { f(world, id, ctx); }
     }
+}
+
+/// `0x2aeb90`'s read of the enemy the head looks at (`0x18c2b0`): its health block's look kind (`+0x2c`).
+fn look_kind(world: &MobyWorld, ctx: &mut Ctx) {
+    let h = &mut *ctx.hero;
+    h.layers.look = h.posture.look_at.and_then(|t| world.mobys.get(t)).filter(|m| m.mode & crate::moby::ai::AI != 0).map(|m| m.pv_b(crate::moby::ai::health(m) + 0x2c));
 }
 
 /// `0x2afc68`'s slot 0: with no hand item, once the frame passed `0x18b054` — the item to hold (`0x18c104`; else the

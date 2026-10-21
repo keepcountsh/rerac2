@@ -75,7 +75,7 @@ impl PoseRec {
         self.scale = 1.0;
     }
 
-    fn set_spring(&mut self, k: f32, d: f32) {
+    pub fn set_spring(&mut self, k: f32, d: f32) {
         self.k = k;
         self.d = d;
     }

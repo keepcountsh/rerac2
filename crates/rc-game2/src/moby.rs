@@ -173,6 +173,9 @@ pub struct Moby {
     pub ambient: [u8; 3],
     /// `+0x7c` as a piece mask (0x8000 | 1 << k): drawn as break piece k only (crate::moby::shards).
     pub piece: Option<u8>,
+    /// The port's: which creation this slot holds (MobyWorld's count at `CreateMoby`; 0 for the placed ones), so the
+    /// engine's state of a deleted moby is not carried over to the next one created in its slot.
+    pub serial: u32,
 }
 
 /// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
@@ -274,7 +277,7 @@ impl Moby {
             index, bsphere: [0.0; 4], pos: [0.0; 3], state: 0, group: -1, slot: 0, alpha: 0x80, scale: 0.0, update_dist: 0,
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false,
+            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0,
             // `0x311418`: `+0x38` = 0x40404000000000.
             light: 0, ambient: [0x40; 3], piece: None,
         };
@@ -383,6 +386,8 @@ pub struct MobyWorld {
     /// A rebuild moved a moby's sphere since the flag was last cleared (the engine's collision snapshot and poses
     /// follow then).
     pub changed: bool,
+    /// The mobys created so far ([`Moby::serial`]).
+    pub created: u32,
     /// The hit log (`0x1c3400`).
     pub hits: hits::HitLog,
     /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
@@ -503,6 +508,8 @@ impl MobyWorld {
         let id = self.mobys.iter().position(|m| m.state >= 0xfe).unwrap_or(self.mobys.len());
         let mut m = Moby::init(id, o_class, class.as_ref());
         m.pvars = vec![0; PVAR_BYTES];
+        self.created += 1;
+        m.serial = self.created;
         if id == self.mobys.len() { self.mobys.push(m) } else { self.mobys[id] = m }
         id
     }

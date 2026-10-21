@@ -55,7 +55,10 @@ impl Hero {
         if self.mode == 0 {
             self.no_menu = 0;
             self.no_update = false;
+            self.items.tucked = false;
         }
+        // `0x18c0df`: the entries of 0x16..0x1a and 0x93 tuck the hand item away (crate::hero::layers).
+        if matches!(id, 0x16..=0x1a | 0x93) { self.items.tucked = true; }
         if NO_MENU.contains(&id) { self.no_menu = 1; }
         if NO_ITEMS.contains(&id) { self.items.no_use = 1; }
         let entry = match module_of(id) {
