@@ -15,6 +15,13 @@ pub const WRENCH_CLASS: i16 = 0x47;
 /// The wrench's item id.
 pub const WRENCH: i32 = 10;
 
+/// The head item's moby class (slot 2, `0x18b0e0`: item 0x2f, the pilot's helmet; `0x2d5138` names it).
+pub const HEAD_CLASS: i16 = 0x50a;
+/// `0x1a7d08` + 4: the joints of Ratchet whose pose the head item's joints 1 and 2 take (`0x2aa278`).
+pub const HEAD_JOINTS: [u8; 2] = [8, 10];
+/// The head item's attachment (its row's word 0; `HERO_LISTS[4]`: joints 0..7, the head).
+pub const HEAD_ATTACH: usize = 4;
+
 /// A throw request (`0x2ba610`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Throw {
@@ -30,6 +37,8 @@ pub struct ItemBlock {
     pub hand_class: i16,
     /// `0x18b068`: the item (10 = the wrench).
     pub item: i32,
+    /// `0x18b0e0`: the head item's moby ([`head_pass`]).
+    pub head: Option<usize>,
     /// `0x18b064`: 2 = in the hand, ready.
     pub ready: i32,
     /// `0x18b050`: the buttons that use it (the wrench: □ 0x80, the others ○ 0x20).
@@ -76,6 +85,7 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
         h.no_menu = 1;
     }
     let away = in_water || h.group == 3 || matches!(h.state, 0x31 | 0x12 | 0x82);
+    head_pass(world, ctx);
     let it = &mut ctx.hero.items;
     if it.hand.is_none() && world.class(WRENCH_CLASS).is_some() {
         let id = world.create(WRENCH_CLASS);
@@ -124,4 +134,33 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     if world.mobys[id].state < 0xfe {
         if let Some(f) = world.mobys[id].update { f(world, id, ctx); }
     }
+}
+
+/// The head item (slot 2): `0x2afc68` creates it when there is none (item `0x1a73a0`, else 0x2f: class
+/// [`HEAD_CLASS`]; draw distance 0x20, drawn, ready), in play and, through `0x2d4fc8`, in a scene (on the scene's
+/// Ratchet: the host's hero pose). Not on armour 4 or with the cheats' bodies (`0x1a7a51` / `0x4a` / `0x53` / `0x52`):
+/// the port wears armour 0. `0x2b09e0` then puts it at Ratchet's attachment [`HEAD_ATTACH`] (his head), out of the
+/// moby loop; its pose is built from his (`0x2aa278`: joint 0 at rest, joints 1 and 2 his [`HEAD_JOINTS`]; the
+/// engine draws it so). Shown (`0x2d4fc8` clears bit 0 in a scene).
+pub fn head_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
+    let it = &mut ctx.hero.items;
+    if it.head.is_some_and(|id| world.mobys.get(id).is_none_or(|m| m.state >= 0xfe || m.o_class != HEAD_CLASS)) { it.head = None; }
+    if it.head.is_none() && world.class(HEAD_CLASS).is_some() {
+        let id = world.create(HEAD_CLASS);
+        let m = &mut world.mobys[id];
+        m.draw_dist = 0x20;
+        m.drawn = 1;
+        it.head = Some(id);
+    }
+    let Some(id) = it.head else { return };
+    let Some((rows, pos)) = ctx.host.hero_attach(HEAD_ATTACH) else { return };
+    {
+        let m = &mut world.mobys[id];
+        m.parent = ctx.hero_moby;
+        (m.pos, m.rows) = (pos, rows);
+        m.mode = (m.mode | mode::NO_UPDATE | mode::NO_MATRIX | mode::KEEP_ROWS) & !1;
+        let f = rows[0];
+        m.rot = [0.0, -f[2].atan2((f[0] * f[0] + f[1] * f[1]).sqrt()), f[1].atan2(f[0])];
+    }
+    world.rebuild(id, &*ctx.host);
 }

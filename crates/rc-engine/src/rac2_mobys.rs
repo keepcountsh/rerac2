@@ -42,6 +42,8 @@ pub struct Rac2Mobys {
     pub snap: Option<(Snapshot, Arc<MobyGrid>)>,
     /// Created mobys by moby index.
     pub created: HashMap<usize, Created>,
+    /// Created mobys posed from another's joints (Ratchet's head item: [`Rac2Mobys::skin_head`]): their palettes.
+    pub skinned: HashMap<usize, Vec<moby_anim::Rows>>,
     /// Ratchet's joint lists (chains) for his attachment points, and the joint each list's modifiers act on
     /// (`rc_formats::moby_anim::list_target`; 0xff none).
     pub hero_chains: Vec<Vec<u8>>,
@@ -280,6 +282,42 @@ fn footstep_base(gameplay: &[u8]) -> usize {
 }
 
 impl Rac2Mobys {
+    /// `0x2aa278` for the head item (`rc_game2::hero::items::head_pass`): a keyframe of its own built from Ratchet's
+    /// current pose (`0x3181c0`: his blended key as a frame, [`moby_anim::snapshot`]) — joint 0 at rest, joints 1 and
+    /// 2 his [`rc_game2::hero::items::HEAD_JOINTS`]' quaternions, their scale where it is not 1 (inherited) and their
+    /// translation where it differs from the head item's rest — evaluated with the head item's class as key A. It is
+    /// drawn in his frame, so it follows his head.
+    pub fn skin_head(&mut self, lv: &crate::level_load::LoadedLevel, head: Option<usize>, pose: Option<&HeroPose>) {
+        self.skinned.clear();
+        let (Some(id), Some(h)) = (head, pose) else { return };
+        let Some(m) = self.world.mobys.get(id) else { return };
+        let (Some(ac), Some(hc)) = (lv.mobys.anim.get(h.class), lv.mobys.classes.iter().position(|c| c.o_class == m.o_class as i32).and_then(|ci| lv.mobys.anim.get(ci))) else { return };
+        let Some(f) = moby_anim::snapshot(ac, h.state, h.snapshot) else { return };
+        let joints = rc_game2::hero::items::HEAD_JOINTS;
+        let mut quats = vec![[0, 0, 0, 0x7fff]];
+        let (mut scales, mut trans) = (Vec::new(), Vec::new());
+        for (k, &j) in joints.iter().enumerate() {
+            let (j, i) = (j as usize, k + 1);
+            quats.push(f.quat_at(j));
+            if let Some(r) = f.scales.iter().find(|r| r.joint as usize == j).filter(|r| r.scale != [0x1000; 3]) {
+                scales.push(moby_anim::ScaleRec { scale: r.scale, joint: i as u8, flags: 0x80 });
+            }
+            let t = f.trans.iter().find(|r| r.joint as usize == j).map(|r| r.trans).or_else(|| ac.rest.get(j).map(|v| v.map(|c| c as i16)));
+            let rest = hc.rest.get(i).map(|v| v.map(|c| c as i16));
+            if let Some(t) = t.filter(|&t| Some(t) != rest) { trans.push(moby_anim::TransRec { trans: t, joint: i as u8, pad: 0 }); }
+        }
+        let quat_bytes = 8 * quats.len();
+        let trans_offset = quat_bytes + 8 * scales.len();
+        let mut payload: Vec<u8> = quats.iter().flatten().flat_map(|c| c.to_le_bytes()).collect();
+        payload.extend(scales.iter().flat_map(|r| r.scale.iter().flat_map(|c| c.to_le_bytes()).chain([r.joint, r.flags])));
+        payload.extend(trans.iter().flat_map(|r| r.trans.iter().flat_map(|c| c.to_le_bytes()).chain([r.joint, r.pad])));
+        payload.resize(payload.len().next_multiple_of(16), 0);
+        let header = moby_anim::MobyFrameHeader { rate: 0.0, time: 0, qwc: (payload.len() / 16) as u16, quat_bytes: quat_bytes as u16, scale_count: scales.len() as u16, trans_offset: trans_offset as u16, trans_count: trans.len() as u16 };
+        let frame = moby_anim::MobyFrame { header, quats, scales, trans, payload };
+        let state = AnimState { seq_a: moby_anim::SNAPSHOT_SEQ, frame_a: 0, seq_b: moby_anim::SNAPSHOT_SEQ, frame_b: 0, t: 0.0, speed: 0.0, rate: 0.0, flags: 0, trigger_count: 0, skip_advance: true };
+        self.skinned.insert(id, moby_anim::evaluate_with_snapshot(hc, &state, Some(&frame)));
+    }
+
     /// The class table (core order) and the static spawn of the level's moby instances.
     pub fn load(lv: &crate::level_load::LoadedLevel, blobs: crate::rac2_level::ClassBlobs, host: &Host, game: &mut rc_game2::game::GameState, fresh: bool) -> Rac2Mobys {
         let m = &lv.mobys;
@@ -365,7 +403,7 @@ impl Rac2Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }
@@ -473,8 +511,7 @@ impl CreatedDraw {
             let look = moby_render::SlotLook { model, alpha: 0x80, fading: false, mode: m.mode, glow: 0, shine: 0, e: [[0.0; 3]; 3], late: false };
             self.extra.show_slot(commands, level, slot, Some((class, look)), meshes, images, materials, buffers);
             shown.push(slot);
-            if let Some(ac) = lv.anim.get(c.class) {
-                let f = moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref());
+            if let Some(f) = mobys.skinned.get(&id).cloned().or_else(|| lv.anim.get(c.class).map(|ac| moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref()))) {
                 let at = (slot * SLOT_JOINTS) as usize * 64;
                 for (k, b) in f.iter().take(SLOT_JOINTS as usize).flat_map(|r| r.iter().flatten().flat_map(|v| v.to_le_bytes())).enumerate() {
                     if let Some(p) = palette.get_mut(at + k) { *p = b; }

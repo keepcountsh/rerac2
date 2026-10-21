@@ -154,10 +154,20 @@ pub fn parse_textures(core: &LevelCore, core_data: &[u8], gs_ram: &[u8]) -> Resu
         (TextureTable::Tie, &core.tie_textures),
         (TextureTable::Shrub, &core.shrub_textures),
     ];
+    // Going Commando's stashed moby textures: their pixels are in gs_ram from the stash address (LevelCore::moby_stash).
+    let stashed: std::collections::HashSet<usize> = core
+        .moby_classes
+        .iter()
+        .filter(|c| core.moby_stash.contains(&c.o_class))
+        .flat_map(|c| c.textures.iter().filter(|&&t| t != 0xff).map(|&t| t as usize))
+        .collect();
     for (table, entries) in tables {
         for (index, e) in entries.iter().enumerate() {
             if e.width <= 0 || e.height <= 0 || e.data_offset < 0 || e.palette < 0 { continue; }
-            let texture = entry_image_in(tex, gs, e)?.decode()?;
+            let texture = match core.moby_stash_addr.filter(|_| table == TextureTable::Moby && stashed.contains(&index)) {
+                Some(base) => entry_image_in(gs.sub(base, gs.len().saturating_sub(base), "gs stash")?, gs, e)?.decode()?,
+                None => entry_image_in(tex, gs, e)?.decode()?,
+            };
             out.push(LevelTexture { table, index, source: TextureSource::Entry(*e), texture });
         }
     }

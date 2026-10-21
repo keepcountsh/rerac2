@@ -95,6 +95,12 @@ pub struct LevelCore {
     pub gold_map: [i32; 2],
     /// Every block of the decompressed core data with its size from the boundary rule.
     pub blocks: Vec<CoreBlock>,
+    /// Going Commando's GS stash: the moby classes whose textures stay resident in GS memory (the s16 list at
+    /// `moby_gs_stash_list`, ended by a negative entry: Clank, the packs, the helmet), and where they are — the address
+    /// of the first gs_ram table entry past `gs_ram.count` (the table has word 0x84's count more). A stashed
+    /// class's moby texture entries hold offsets from that address into the gs_ram lump. Empty / None on R&C1.
+    pub moby_stash: Vec<i32>,
+    pub moby_stash_addr: Option<usize>,
 }
 
 impl LevelCore {
@@ -137,7 +143,25 @@ pub fn parse_level_core_for(game: crate::Game, index: &[u8], data_size: usize) -
         ratchet_seqs,
         gold_map: idx.pod(0xc0, "gold map words").unwrap_or([-1, -1]),
         blocks: Vec::new(),
+        moby_stash: Vec::new(),
+        moby_stash_addr: None,
     };
+    if game == crate::Game::Rac2 {
+        // Word 0x84 is the stash's gs_ram entry count here (R&C1's gadget offset).
+        let stash_count = h.gadget_offset;
+        if h.moby_gs_stash_list > 0 {
+            let mut at = h.moby_gs_stash_list as usize;
+            while let Ok(c) = idx.i16(at) {
+                if c < 0 { break; }
+                core.moby_stash.push(c as i32);
+                at += 2;
+            }
+        }
+        if stash_count > 0 && h.gs_ram.offset > 0 {
+            let e: GsRamEntry = idx.pod(h.gs_ram.offset as usize + h.gs_ram.count as usize * std::mem::size_of::<GsRamEntry>(), "gs stash entry")?;
+            core.moby_stash_addr = Some(e.address as usize);
+        }
+    }
 
     // Boundary rule (spec 2.5): a block runs to the next known start offset.
     // moby_sound_remap_offset is 0x9c00 in every RAC1 level and is not a data offset here.
