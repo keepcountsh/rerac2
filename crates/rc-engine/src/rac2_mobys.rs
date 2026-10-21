@@ -81,10 +81,20 @@ impl Host<'_> {
     /// The class index (into `LevelMobys`) and the animation state of moby `m`.
     fn state_of(&self, m: &Moby) -> Option<(usize, AnimState, Option<MobyFrame>)> {
         if let Some(c) = self.created.get(&m.index) { return Some((c.class, c.state, c.snapshot.clone())); }
-        let k = self.placed_index(m)?;
-        let a = self.anim.as_deref()?;
-        let i = a.instances.get(k)?;
-        Some((i.class, i.state, a.snapshots.get(k).cloned().flatten()))
+        match self.placed_index(m) {
+            Some(k) => {
+                let a = self.anim.as_deref()?;
+                let i = a.instances.get(k)?;
+                Some((i.class, i.state, a.snapshots.get(k).cloned().flatten()))
+            }
+            // A created moby nothing has animated yet plays its class's first sequence (`InitMobyInstance`): its
+            // sphere and joints are that sequence's.
+            None if m.instance.is_none() => {
+                let ci = self.class_of(m.o_class)?;
+                Some((ci, AnimState::spawn(self.lv.anim.get(ci)?), None))
+            }
+            None => None,
+        }
     }
 
     fn class_of(&self, o_class: i16) -> Option<usize> { self.lv.classes.iter().position(|c| c.o_class == o_class as i32) }
@@ -238,9 +248,17 @@ impl Rac2Mobys {
                     .unwrap_or_default(),
             })
             .collect();
-        let mut world = MobyWorld::new(classes);
         use rc_formats::rac2::gameplay as g2;
         let records = g2::moby_instances(&lv.gameplay).unwrap_or_default();
+        // The classes without a model (the level's logic objects: the arrival, the scene triggers, …) are in the
+        // game's class table too, with their updates (`0x32e1f8` fills the slots by o_class, model or not).
+        let mut classes: Vec<ClassInfo> = classes;
+        for r in &records {
+            let o = r.base.o_class as i16;
+            if classes.iter().any(|c| c.o_class == o) { continue; }
+            classes.push(ClassInfo { o_class: o, update: rc_game2::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
+        }
+        let mut world = MobyWorld::new(classes);
         let data = rc_game2::moby::SpawnData {
             pvars: g2::pvar_blocks(&lv.gameplay).map_err(|e| eprintln!("rac2: pvars: {e}")).unwrap_or_default(),
             links: g2::pvar_fixups(&lv.gameplay, "pvar_moby_links").unwrap_or_default(),
@@ -319,26 +337,25 @@ impl MobySource for Snapshot {
 // ---------------------------------------------------------------------------------------------------
 // The created mobys' draw
 
-/// The extra-instance set the created mobys draw with: slot per moby, entities per (slot, class).
+/// The extra-instance set the created mobys draw with (crate::moby_render's dynamic slots, as R&C1's created mobys:
+/// `ExtraMobys::show_slot`): a slot per moby.
 #[derive(Resource)]
 pub struct CreatedDraw {
     extra: ExtraMobys,
     /// Moby index → draw slot.
     slots: HashMap<usize, u32>,
-    /// Entities per (slot, o_class).
-    ents: HashMap<(u32, i32), Vec<Entity>>,
-    shown: HashMap<u32, i32>,
 }
 
 impl CreatedDraw {
     pub fn new(level: &crate::level_load::LoadedLevel, buffers: &mut Assets<ShaderBuffer>) -> CreatedDraw {
         let records = vec![0u8; DRAW_SLOTS * moby_render::EXTRA_RECORD_SIZE];
         let extra = ExtraMobys::new(level, records, crate::moby_anim::identity_palette(DRAW_SLOTS as u32 * SLOT_JOINTS), buffers);
-        CreatedDraw { extra, slots: HashMap::new(), ents: HashMap::new(), shown: HashMap::new() }
+        CreatedDraw { extra, slots: HashMap::new() }
     }
 
-    /// Draws every live created moby with a class of the level (state < 0x80, not hidden): its pose from its own
-    /// animation, its record from its rows, scale and position (unlit for now: the moby lighting is milestone D).
+    /// Draws every live created moby with a class of the level (state < 0x80, not hidden): its slot shown with its
+    /// class (`show_slot`: the entities, the slot's look), its record from its rows, scale and position, its pose from
+    /// its own animation (unlit for now: the moby lighting is milestone D). Slots whose moby went away are hidden.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -349,13 +366,15 @@ impl CreatedDraw {
         images: &mut Assets<Image>,
         materials: &mut Assets<MobyMaterial>,
         buffers: &mut Assets<ShaderBuffer>,
-        transforms: &mut Query<&mut Transform>,
+        _transforms: &mut Query<&mut Transform>,
     ) {
         let lv = &level.mobys;
         let mut palette = crate::moby_anim::identity_palette(DRAW_SLOTS as u32 * SLOT_JOINTS);
         let mut records = vec![0u8; DRAW_SLOTS * moby_render::EXTRA_RECORD_SIZE];
-        let mut live: Vec<u32> = Vec::new();
-        for m in mobys.world.mobys.iter().filter(|m| m.instance.is_none() && m.state < 0x80 && m.mode & 1 == 0 && m.o_class != 0) {
+        let live = |m: &Moby| m.instance.is_none() && m.state < 0x80 && m.mode & 0x81 == 0 && m.o_class != 0;
+        self.slots.retain(|id, _| mobys.world.mobys.get(*id).is_some_and(live));
+        let mut shown: Vec<u32> = Vec::new();
+        for m in mobys.world.mobys.iter().filter(|m| live(m)) {
             let id = m.index;
             let fallback;
             let c = match mobys.created.get(&id) {
@@ -367,25 +386,14 @@ impl CreatedDraw {
                     &fallback
                 }
             };
-            let used: Vec<u32> = self.slots.values().copied().collect();
-            let next = (0..DRAW_SLOTS as u32).find(|s| !used.contains(s)).unwrap_or(DRAW_SLOTS as u32);
-            let slot = *self.slots.entry(id).or_insert(next);
-            if slot as usize >= DRAW_SLOTS { continue; }
             let Some(class) = lv.classes.get(c.class) else { continue };
-            let key = (slot, class.o_class);
-            if !self.ents.contains_key(&key) {
-                let e = self.extra.spawn(commands, level, class, slot, Transform::IDENTITY, "rac2 created moby", meshes, images, materials);
-                self.ents.insert(key, e);
-            }
-            if self.shown.get(&slot) != Some(&class.o_class) {
-                for (k, ents) in &self.ents {
-                    if k.0 != slot { continue; }
-                    let v = if k.1 == class.o_class { Visibility::Inherited } else { Visibility::Hidden };
-                    for &e in ents { commands.entity(e).insert(v); }
-                }
-                self.shown.insert(slot, class.o_class);
-            }
-            live.push(slot);
+            let used: Vec<u32> = self.slots.values().copied().collect();
+            let Some(next) = (0..DRAW_SLOTS as u32).find(|s| !used.contains(s)) else { continue };
+            let slot = *self.slots.entry(id).or_insert(next);
+            let model = moby_render::extra_model(m.rows, m.scale, m.pos);
+            let look = moby_render::SlotLook { model, alpha: 0x80, fading: false, mode: m.mode, glow: 0, shine: 0, e: [[0.0; 3]; 3], late: false };
+            self.extra.show_slot(commands, level, slot, Some((class, look)), meshes, images, materials, buffers);
+            shown.push(slot);
             if let Some(ac) = lv.anim.get(c.class) {
                 let f = moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref());
                 let at = (slot * SLOT_JOINTS) as usize * 64;
@@ -393,26 +401,13 @@ impl CreatedDraw {
                     if let Some(p) = palette.get_mut(at + k) { *p = b; }
                 }
             }
-            let model = moby_render::extra_model(m.rows, m.scale, m.pos);
             let rec = moby_render::extra_record(&model, None, slot * SLOT_JOINTS);
             let at = slot as usize * moby_render::EXTRA_RECORD_SIZE;
             records[at..at + rec.len()].copy_from_slice(&rec);
-            let t = Transform::from_matrix(model);
-            if let Some(ents) = self.ents.get(&key) {
-                for &e in ents {
-                    if let Ok(mut tr) = transforms.get_mut(e) { *tr = t; }
-                }
-            }
         }
-        // Slots whose moby went away hide.
-        let gone: Vec<u32> = self.shown.keys().copied().filter(|s| !live.contains(s)).collect();
-        for s in gone {
-            for (k, ents) in &self.ents {
-                if k.0 == s { for &e in ents { commands.entity(e).insert(Visibility::Hidden); } }
-            }
-            self.shown.remove(&s);
+        for slot in 0..DRAW_SLOTS as u32 {
+            if !shown.contains(&slot) { self.extra.show_slot(commands, level, slot, None, meshes, images, materials, buffers); }
         }
-        self.slots.retain(|id, _| mobys.world.mobys.get(*id).is_some_and(|m| m.instance.is_none() && m.state < 0x80 && m.mode & 1 == 0));
         crate::asset_write::set_buffer(buffers, &self.extra.palette, &palette);
         crate::asset_write::set_buffer(buffers, &self.extra.instances, &records);
     }

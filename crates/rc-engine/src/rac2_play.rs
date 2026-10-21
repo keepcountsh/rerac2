@@ -12,7 +12,8 @@
 //!   state (`MobyAnim`); the camera goes to `PlayView`.
 //!
 //! Environment: `RC_PLAY=0` (no tick), `RC_PLAY_FLY=1` (start on the fly camera; Tab switches), `RC_PLAY_TRACE=1`
-//! (one line per tick: state, position, velocity, air ticks, sequence).
+//! (one line per tick: state, position, velocity, air ticks, sequence), `RC_SCENES=0` (the scenes count as seen),
+//! `RC_HERO_AT=x,y,z,yaw` (Ratchet's start).
 
 use crate::game_camera::CameraSource;
 use crate::input_map::{self, PadFrame, Script};
@@ -75,8 +76,8 @@ struct Play {
     loaded: bool,
     /// The level's scene file (`G/SCENEn.WAD`) and its table, read at the first scene.
     scene_wad: Option<(Vec<u8>, rc_formats::rac2::scene::SceneWad)>,
-    /// The class animations a scene's actors added sequence slots to, with their sequence counts before.
-    scene_slots: Vec<(usize, usize)>,
+    /// The class sequence slots a scene's actors took (class, slot) and what the slots held before.
+    scene_slots: Vec<(usize, usize, Option<rc_formats::moby_anim::MobySequence>)>,
     /// The movie playing (mode 1) and its picture for the next draw.
     movie: Option<crate::rac2::Playing>,
     movie_picture: Option<Vec<u8>>,
@@ -125,6 +126,14 @@ fn tick(
         let fresh = !p.loaded;
         let m = crate::rac2_mobys::Rac2Mobys::load(lv, blobs, &host, &mut p.game, fresh);
         p.loaded = true;
+        // `RC_SCENES=0`: every scene counts as seen (no opening, no scene triggers' scenes).
+        if fresh && std::env::var("RC_SCENES").is_ok_and(|v| v.trim() == "0") { p.game.scenes_seen.iter_mut().for_each(|s| *s = true); }
+        // `RC_HERO_AT=x,y,z,yaw`: Ratchet starts there (as the checkpoint, so the arrival leaves him).
+        if let Some(v) = std::env::var("RC_HERO_AT").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|v| v.len() == 4) {
+            let (at, rot) = ([v[0], v[1], v[2]], [0.0, 0.0, v[3]]);
+            p.hero.teleport(at, rot);
+            p.game.checkpoint = Some((at, rot));
+        }
         println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
         // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).
@@ -383,10 +392,15 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
             a.mode |= mode::NO_UPDATE | mode::NO_MATRIX | mode::KEEP_ROWS;
             m
         };
+        // `0x305428`: the slot is the class's sequence count (`class+0xc`), which goes up by one per actor.
+        let count = lv.mobys.classes[ci].class.header.sequence_count as usize;
+        let taken = p.scene_slots.iter().filter(|s| s.0 == ci).count();
+        let slot = count + taken;
         let anim = &mut lv.mobys.anim[ci];
-        if !p.scene_slots.iter().any(|&(c, _)| c == ci) { p.scene_slots.push((ci, anim.sequences.len())); }
-        let slot = anim.sequences.len() as u8;
-        anim.sequences.push(Some(a.sequence.clone()));
+        if anim.sequences.len() <= slot { anim.sequences.resize(slot + 1, None); }
+        let before = anim.sequences[slot].replace(a.sequence.clone());
+        p.scene_slots.push((ci, slot, before));
+        let slot = slot as u8;
         if o_class != 0 {
             // Its first pose (the scene's first tick poses it again).
             let state = rc_formats::moby_anim::AnimState { seq_a: slot, frame_a: 0, seq_b: slot, frame_b: 1, t: 0.0, speed: 0.0, rate: 0.0, flags: 0, trigger_count: 0, skip_advance: true };
@@ -415,8 +429,8 @@ fn end_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
         for m in mobys.world.mobys.iter_mut().filter(|m| m.o_class == 0xcb && m.state < 0x80) { m.mode &= !0x80; }
         if let Some(h) = p.hero.items.hand.and_then(|h| mobys.world.mobys.get_mut(h)) { h.mode &= !1; }
     }
-    for (ci, n) in p.scene_slots.drain(..) {
-        if let Some(a) = lv.mobys.anim.get_mut(ci) { a.sequences.truncate(n); }
+    for (ci, slot, before) in p.scene_slots.drain(..).rev() {
+        if let Some(q) = lv.mobys.anim.get_mut(ci).and_then(|a| a.sequences.get_mut(slot)) { *q = before; }
     }
     let at = p.hero.pos;
     let ground = lv.collision.as_ref().and_then(|c| rc_game::collision_query::coll_line(c, [at[0], at[1], at[2] + 0.5], [at[0], at[1], 0.01], rc_game::collision_query::QueryFlags(2))).map(|o| o.point[2]);
@@ -585,7 +599,8 @@ fn draw_hud(
         d.screen_prim(tex, q.pos, q.uv, u32::from_le_bytes(q.rgba), false);
         if nearest { if let Some(p) = d.prims.last_mut() { p.nearest = true; } }
     }
-    if let Some(mut m) = meshes.get_mut(&hud.layer.mesh) { *m = hud.layer.build(&d); }
+    // The mesh lives only in the render world: replaced, not edited (as crate::hud_render does).
+    let _ = meshes.insert(&hud.layer.mesh, hud.layer.build(&d));
 }
 
 /// The created mobys' draw (crate::rac2_mobys::CreatedDraw), made on the first frame with mobys.

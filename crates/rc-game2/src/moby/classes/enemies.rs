@@ -835,9 +835,11 @@ fn let_next_up(w: &mut MobyWorld, id: usize) {
     }
 }
 
-/// `0x3253f0(m, part, joint, 0)`: the part at the joint's frame (its rows made unit), shown as `m` is.
-fn place_part(w: &mut MobyWorld, id: usize, p: usize, joint: usize, ctx: &Ctx) {
+/// `0x3253f0(m, part, joint, 0)`: the part at the joint's frame (its rows made unit), its animation advanced
+/// (`0x313420`: it is out of the moby loop), shown as `m` is.
+fn place_part(w: &mut MobyWorld, id: usize, p: usize, joint: usize, ctx: &mut Ctx) {
     let Some((r, t)) = ctx.host.joint_matrix(&w.mobys[id], joint) else { return };
+    ctx.host.advance(&w.mobys[p]);
     let hidden = w.mobys[id].mode & 1 != 0;
     let pm = &mut w.mobys[p];
     pm.pos = t;
@@ -848,7 +850,7 @@ fn place_part(w: &mut MobyWorld, id: usize, p: usize, joint: usize, ctx: &Ctx) {
 
 /// `0x3dbed0(on, owner + at, 0, 2)`: the two parts made (`0x32a748`: at `on`, its draw distance; scaled 0.75) at its
 /// joints, kept in `owner`'s pvars at `at` / `at + 4`.
-pub(super) fn make_parts(w: &mut MobyWorld, on: usize, owner: usize, at: usize, ctx: &Ctx) {
+pub(super) fn make_parts(w: &mut MobyWorld, on: usize, owner: usize, at: usize, ctx: &mut Ctx) {
     for (k, j) in PART_JOINTS.into_iter().enumerate() {
         let id = on;
         let (pos, rot, dd) = (w.mobys[id].pos, w.mobys[id].rot, w.mobys[id].draw_dist);
@@ -885,7 +887,7 @@ pub(super) fn delete_parts(w: &mut MobyWorld, owner: usize, at: usize) {
 }
 
 /// `0x3dbfb0(angle, on, owner + at, _)`: each part at its joint of `on`, turned `angle` about its own z.
-pub(super) fn spin_parts(w: &mut MobyWorld, on: usize, owner: usize, at: usize, ctx: &Ctx, angle: f32) {
+pub(super) fn spin_parts(w: &mut MobyWorld, on: usize, owner: usize, at: usize, ctx: &mut Ctx, angle: f32) {
     let rz = crate::moby::attach::rows_of([0.0, 0.0, angle]);
     let id = on;
     for (p, j) in parts(w, owner, at).into_iter().zip(PART_JOINTS) {

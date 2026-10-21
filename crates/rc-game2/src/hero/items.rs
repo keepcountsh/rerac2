@@ -88,6 +88,8 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
         crate::moby::classes::wrench::start_throw(m, t);
         ctx.host.set_anim(&world.mobys[id], 6, 0, 5);
     }
+    // `0x313420`: the hand item is out of the moby loop; its placement `0x2b09e0` advances its animation.
+    ctx.host.advance(&world.mobys[id]);
     if it.thrown == 0 {
         if let Some((rows, pos)) = ctx.host.hero_attach(0) {
             {

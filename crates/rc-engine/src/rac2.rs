@@ -337,7 +337,8 @@ fn draw(mut rac2: ResMut<Rac2>, mut images: ResMut<Assets<Image>>, mut meshes: R
         d.screen_prim(tex, q.pos, q.uv, u32::from_le_bytes(q.rgba), false);
         if nearest { if let Some(p) = d.prims.last_mut() { p.nearest = true; } }
     }
-    if let Some(mut m) = meshes.get_mut(&layer.mesh) { *m = layer.build(&d); }
+    // The mesh lives only in the render world: replaced, not edited (as crate::hud_render does).
+    let _ = meshes.insert(&layer.mesh, layer.build(&d));
 }
 
 /// After New Game: the layer and its camera go, the movie stops; the level's cameras show.
