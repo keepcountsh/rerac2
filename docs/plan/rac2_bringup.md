@@ -346,4 +346,7 @@ Not yet: the speech and music (milestone E), the subtitles (they show only with 
 `0x2e7f80` draws them in a rounded box, `*` lines as captions), the placed view 0x17 (`0x42b950` / `0x42b428`: it
 frames Ratchet from its record's place through the follow camera's setters `0x425e50..0x426110` while he is still
 in its cuboid), first person (class 4), the blends `0x2d8ab0` / `0x2d9488`, the level's end after the movie 0x16
-(to Oozla).
+(to Oozla). What is known of the end: the main loop changes level when `0x1b1940` (the level to go to) differs from
+the current one (`0x367400`); its writers in the overlay are a menu page (`0x3477b8`, levels 1 / 2 / 4 / 6) and the
+space travel (mode 6, `0x362010`); `0x30d658` (called by 0x0f6e and the arrival, read before as a HUD flash) is the
+autosave. What sends Aranos to Oozla after the movie is still to find.
