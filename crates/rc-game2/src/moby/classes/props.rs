@@ -574,6 +574,8 @@ pub fn update_1330(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                     let to = [p[0] + yaw.cos() * 2.0, p[1] + yaw.sin() * 2.0, p[2]];
                     ctx.hero.script_walk_to(yaw, to, true);
                 }
+                // The occlusion's grid on again (`0x1b19d0` = 2; off since the level's load).
+                ctx.game.occlusion = 2;
                 w.mobys[id].set_state(4, -1);
             }
             // The ship along the path.

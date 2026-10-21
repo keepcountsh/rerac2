@@ -45,6 +45,7 @@ impl Plugin for Rac2PlayPlugin {
             .add_systems(FixedUpdate, tick)
             .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created)))
             .add_systems(PostUpdate, draw_canopy.before(bevy::asset::AssetEventSystems))
+            .add_systems(PostUpdate, occlusion_mode.before(crate::occlusion::OcclusionSet))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
             .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>, crate::level_switch::reset::<CanopyDraw>));
     }
@@ -995,6 +996,20 @@ fn draw_canopy(
     let tex = level.0.particles.textures.as_ref().map(|t| t.fx_textures.as_slice());
     let mut a = crate::fx_draw::FxAssets { meshes: &mut meshes, images: &mut images, materials: &mut materials, fx: tex, fog };
     draw.slots.show(&mut commands, &mut vis, &mut a, groups, crate::fx_draw::LIST1_BIAS, "ship canopy");
+}
+
+/// `0x2e54a0`'s mode (`GameState::occlusion`, `0x1b19d0`) onto the occlusion frame: 0 everything visible, 2 the
+/// loader's mode (the grid), else the mask kept. Left alone under `RC_OCCL`.
+fn occlusion_mode(play: Option<Res<Play>>, level: Res<crate::Level>, frame: Option<ResMut<crate::occlusion::OcclusionFrame>>) {
+    use rc_formats::occlusion::OcclusionMode;
+    let (Some(p), Some(mut f)) = (play, frame) else { return };
+    if std::env::var_os("RC_OCCL").is_some() { return; }
+    let mode = match p.game.occlusion {
+        0 => OcclusionMode::Off,
+        2 => level.0.occlusion.loader_mode,
+        _ => OcclusionMode::Freeze,
+    };
+    if f.mode != mode { f.mode = mode; }
 }
 
 /// The hero at Ratchet's instance (class 0).
