@@ -160,6 +160,8 @@ fn tick(
         let mut ctl = p.anim.ctl(class);
         hero_update(&mut p.hero, &env, &mut ctl);
     }
+    // `0x2ae140` (in the hero's update): the trigger areas asked about list Ratchet when he is in them.
+    p.game.area_tick(&mobys.level, p.hero.pos);
     if let Some(i) = mobys.hero_moby {
         if p.hero.damage.took || hit.is_some() { mobys.world.clear_hit(i); }
     }

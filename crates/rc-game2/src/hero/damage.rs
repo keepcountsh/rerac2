@@ -50,6 +50,8 @@ pub struct DamageBlock {
     pub death_z: f32,
     /// `0x18a85c`: the burns' fall speed.
     pub fall_v: f32,
+    /// `0x18c2bc`: the moby whose hit he took this tick (the enemies read it).
+    pub hit_by: Option<usize>,
 }
 
 impl Hero {
@@ -71,9 +73,11 @@ impl Hero {
     /// from the source (0.055 out, 0.028 up). Returns whether a state was set.
     pub fn hit_intake(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> bool {
         if matches!(self.group, 0x14 | 7) || self.state == 0x31 || self.damage.invincible != 0 { return false; }
+        self.damage.hit_by = None;
         let Some(h) = env.hit else { return false };
         if h.rec.tmpl.flags & 9 == 0 { return false; }
         self.damage.took = true;
+        self.damage.hit_by = h.rec.tmpl.source;
         let rec = h.rec;
         // The knock-back direction: the template's (flag 1 of its count word) or away from the source.
         let mut dir = match (rec.tmpl.count & 1 != 0, h.source_pos) {
