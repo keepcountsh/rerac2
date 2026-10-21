@@ -312,3 +312,28 @@ spheres `0x31d180` / `0x31d2c8`, the ground height `0x31ce20`, Ratchet's hitter 
 Not yet (the effects and sound passes): their deaths' bursts and debris (`0x3f8348`, `0x3210a8`, `0x327498`), the
 sparks and trails, the shadows `0x31da58`, the colour flash `0x3201e8`, the lighting `0x31a8e4`, the head and tail
 aims (`0x324208`, `0x327308`, `0x32db38`), most of their sounds; the gravity frames (`$gp − 0x6000`).
+
+
+### 6.7 Scenes and movies (milestone H, 2026-10-21)
+
+R&C2 numbers its scenes and movies together (`0x369fe8`): ids 0x20..=0xb0 are in-engine scenes, numbered from each
+level's base (`$gp − 0x1c00`: Aranos 0x21..0x25 are its records 0..4); the others are movies (row = the id, or the
+id less 0x91, in `RC2.HDR`'s movie table). `G/SCENEn.WAD` (`rc_formats::rac2::scene`) holds 15 records of 0x14c bytes
+(`{speech sectors[12], chunk sectors[71]}`), the chunks in R&C1's format (`rc_formats::scene` parses them as they
+are). The game side is `rc_game2::scene`: the queue `0x1bef40` (5 entries, a chain plays back to back, a skip drops
+the rest), the modes `0x1a8f00` with their stack (`0x32c5f0` / `0x32c780`, the switch `0x32c858` at the top of each
+frame with the blackout into a scene), the scene start `0x370e08`, tick `0x3716f8` (the world still runs: the moby
+loop; Ratchet's update does nothing in mode 2) and end `0x3711e8`. The engine (`crate::rac2_play`) loads the scene,
+makes the actors (each in the next sequence slot of its class, as the game appends the streamed sequence to the
+class's table; class 0 is Ratchet's own moby), poses them, drives the scene camera (`rc_game::scene_player::
+scene_camera`: the same SDK rotations), the fade, and plays movies (mode 1) with the front end's decoder in the HUD
+layer's 512×416 slot.
+
+Users: the scene trigger 0x0f6e (queues its list: Aranos's triggers play 0x22, 0x23 and the movie 0x16), 0x0f13
+(scene props: spinning parts 0x0aa2 on the actors 2 and 3 of scenes 1 and 2), the arrival 0x1330 (scene 0x21 on a
+first visit, then the ship's fly-in under a level camera of type 0x13: **not yet**, see below).
+
+Not yet: the speech and music (milestone E), the subtitles (they show only with the subtitle option, off by default;
+`0x2e7f80` draws them in a rounded box, `*` lines as captions), the arrival's first visit (it needs the camera
+manager `0x2d8618` / `0x2d8ab0` with the level cameras `0x1b17c4` and the fly-by type 4 / class 0x13 `0x42a3c0` /
+`0x42a660` / `0x42b0d8`), the level's end after the movie 0x16 (to Oozla).
