@@ -15,6 +15,7 @@
 pub mod armor;
 pub mod boot;
 pub mod front_end;
+pub mod gadget;
 pub mod gameplay;
 pub mod gui_sprite;
 pub mod level;

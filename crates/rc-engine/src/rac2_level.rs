@@ -43,6 +43,39 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
     Ok(())
 }
 
+/// The hand gadgets the port loads with every level (`G/GADGET.WAD`, rc_formats::rac2::gadget): the game streams the
+/// one in Ratchet's hand (`0x306018`) when he takes it; the port has them from the start.
+pub const GADGETS: [i32; 1] = [rc_game2::hero::items::LANCER_CLASS as i32];
+
+/// Gadget `o_class` (part A of its `GADGET.WAD` entry): its class and sequences added to the level's moby classes, its
+/// textures appended to the moby texture table (slot `k` = entry `moby_textures.len() + k`, as the armour's).
+fn attach_gadget(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, o_class: i32) -> Result<()> {
+    let blob = gadget_blob(root, o_class)?;
+    let (blob, tex) = blob;
+    let class = rc_formats::moby::parse_moby_class_for(Game::Rac2, &blob).with_context(|| format!("gadget {o_class:#x}: class"))?;
+    let seqs = rc_formats::moby_anim::parse_sequences(&blob, &class).with_context(|| format!("gadget {o_class:#x}: sequences"))?;
+    let base = core.moby_textures.len().max(textures.iter().filter(|t| t.table == texture::TextureTable::Moby).map(|t| t.index + 1).max().unwrap_or(0));
+    let mut slots = [0xffu8; 16];
+    for (k, t) in tex.into_iter().enumerate() {
+        let index = base + k;
+        slots[k] = u8::try_from(index).context("moby texture index past 255")?;
+        textures.push(texture::LevelTexture { table: texture::TextureTable::Moby, index, source: texture::TextureSource::Entry(bytemuck_zeroed()), texture: t });
+    }
+    mobys.anim.push(rc_formats::moby_anim::MobyAnimClass::new(&class, seqs));
+    mobys.classes.push(rc_formats::moby::LevelMobyClass { o_class, entry: level::ClassEntry { offset_in_asset_wad: 0, o_class, unknown_8: 0, unknown_c: 0, textures: slots }, class });
+    Ok(())
+}
+
+/// Gadget `o_class`'s class blob and textures from `GADGET.WAD`.
+fn gadget_blob(root: &Path, o_class: i32) -> Result<(Vec<u8>, Vec<rc_formats::texture::Texture>)> {
+    use rc_formats::rac2::{gadget, toc::Toc};
+    let hdr = crate::disc_source::read(root, "RC2.HDR")?;
+    let toc = Toc::parse(&hdr)?;
+    let e = *gadget::gadgets(&toc)?.iter().find(|e| e.o_class == o_class).with_context(|| format!("no gadget {o_class:#x}"))?;
+    let g = gadget::read(&crate::disc_source::read(root, "G/GADGET.WAD")?, &e)?;
+    Ok((g.class, g.textures))
+}
+
 /// The ship's paint (rc_formats::rac2::space; `0x1a7af8 >> 16 & 0x1f`, 0 on a new game) appended to the level's moby
 /// texture table and given to every slot of the classes whose core entry has `+8 ≠ 0` (`0x304660`: the ship and its
 /// parts).
@@ -84,11 +117,14 @@ pub fn class_blobs(root: &Path, index: u32) -> Result<ClassBlobs> {
     let core_data = rc_formats::wad::decompress(wad.lump(Lump::CoreData)?.context("no core data")?)?;
     let core = level::parse_level_core_for(Game::Rac2, core_index, core_data.len())?;
     let collision = rc_formats::moby_collision::parse_level(&core, &core_data)?;
-    let blobs = core
+    let mut blobs: std::collections::HashMap<i32, Vec<u8>> = core
         .moby_classes
         .iter()
         .filter_map(|e| core.block(&core_data, &format!("moby_class/{:04}", e.o_class)).map(|b| (e.o_class, b.to_vec())))
         .collect();
+    for g in GADGETS {
+        if let Ok((b, _)) = gadget_blob(root, g) { blobs.insert(g, b); }
+    }
     Ok(ClassBlobs { collision, blobs })
 }
 
@@ -149,6 +185,9 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
     if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("rac2: Ratchet's armour not attached ({e:#}); he has no mesh"); }
     if let Err(e) = attach_armour_row(root, &core, &mut mobys, &mut textures, 0x47, rc_formats::rac2::armor::WRENCH_ROW) { eprintln!("rac2: the wrench's mesh not attached ({e:#})"); }
+    for g in GADGETS {
+        if let Err(e) = attach_gadget(root, &core, &mut mobys, &mut textures, g) { eprintln!("rac2: gadget {g:#x} not loaded ({e:#})"); }
+    }
     if let Err(e) = attach_ship_paint(root, &core, &mut mobys, &mut textures, 0) { eprintln!("rac2: the ship's paint not attached ({e:#})"); }
     let occlusion = crate::occlusion::load(&core, &core_data, &gameplay, &tfrags, &ties.instances, &mobys.instances).context("loading occlusion")?;
     let particles = crate::particle_render::LevelParticles {

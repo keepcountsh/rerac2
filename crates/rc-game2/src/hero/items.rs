@@ -14,6 +14,9 @@ use crate::moby::{mode, Ctx, MobyWorld};
 pub const WRENCH_CLASS: i16 = 0x47;
 /// The wrench's item id.
 pub const WRENCH: i32 = 10;
+/// The Lancer: item 0x1e, class 0x5d2 (`0x262504` of its row; a gadget, `G/GADGET.WAD`).
+pub const LANCER: i32 = 0x1e;
+pub const LANCER_CLASS: i16 = 0x5d2;
 
 /// The head item's moby class (slot 2, `0x18b0e0`: item 0x2f, the pilot's helmet; `0x2d5138` names it).
 pub const HEAD_CLASS: i16 = 0x50a;

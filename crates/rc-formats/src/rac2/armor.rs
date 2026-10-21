@@ -46,11 +46,14 @@ pub const WRENCH_ROW: usize = 9;
 
 pub fn read(wad: &[u8], p: ArmorParts) -> Result<Armor> {
     let part = |(at, len): (usize, usize), what: &'static str| Buf(wad).sub(at, len.min(wad.len().saturating_sub(at)), what);
-    let tex = part(p.textures, "armour textures")?;
-    let count = tex.i32(0)?;
-    if !(0..=16).contains(&count) { return invalid(format!("armour: {count} textures")); }
-    let textures = (0..count as usize)
-        .map(|i| crate::pif::Pif::parse_at(tex.bytes(), tex.u32(4 + 4 * i)? as usize)?.decode())
-        .collect::<Result<Vec<_>>>()?;
+    let textures = read_textures(part(p.textures, "armour textures")?.bytes())?;
     Ok(Armor { mesh: part(p.mesh, "armour mesh")?.bytes().to_vec(), textures })
+}
+
+/// A texture list as the armours and the gadgets keep theirs: `s32 count`, then `count` offsets of PIF2 images.
+pub fn read_textures(bytes: &[u8]) -> Result<Vec<Texture>> {
+    let tex = Buf(bytes);
+    let count = tex.i32(0)?;
+    if !(0..=16).contains(&count) { return invalid(format!("texture list: {count} textures")); }
+    (0..count as usize).map(|i| crate::pif::Pif::parse_at(tex.bytes(), tex.u32(4 + 4 * i)? as usize)?.decode()).collect()
 }
