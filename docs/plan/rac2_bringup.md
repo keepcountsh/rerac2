@@ -366,3 +366,34 @@ hull mesh (`0x2fef68`, `SPACE.WAD` row `+0xab8`, a further 0x0d54 the load appen
 **Old-format classes** (`0x2ffe70`): a class with header byte 0xb set has R&C1's vertex table headers in its high
 and low packets; the load converts them (u32s to u16s, the multiplier offset zeroed) and clears the byte. Oozla's
 class 2700 is one; `rc_formats::moby` reads them as R&C1 packets without multipliers.
+
+### 6.8 Sound (milestone E, 2026-10-21)
+
+Going Commando's sound is R&C1's design, so it runs on R&C1's audio system (`rc_game::audio`: 989snd, the software
+SPU2, the slots, the emitters, the music player) fed with R&C2's data (`crate::rac2_level::audio`):
+
+- **The bank**: the level file's part 1 is the 989snd `SBlk` bank R&C1's reader parses as it is (Aranos: 190
+  sounds, 424 grains, 212 samples).
+- **The defs** (`0x304660`, core header `+0x70`): the level defs and the remap as R&C1's; the per-class lists open
+  with one more word (the loader writes it + 1 into the defs' bank handle), so def j takes entry j + 1
+  (`sound_bank::parse_level_sounds_for`). The level defs: the moby-attached ones, then from the **footstep base**
+  (`$gp − 0x60e4` = `0x1a8f0c`, the level settings' word after their variant blocks: `[0x17 + 8·n]`, n = `[0x1a]`,
+  `[0x1f]` without blocks; 20 on Aranos) the footsteps, then the sound instances' and the objects' level sounds
+  (`0x3607e8(i)` plays def i + the base; `0x360920` the footstep def `class·4 + foot·2 + variant` + the base).
+- **The class sounds**: `0x3605f0(index, mode, moby)` is R&C1's `PlayClassSound` (the class's defs `+0x28`, count
+  `+0x0d`); the moby host plays them into the audio system (`rac2_mobys::HostSound`), the tick's sound step runs
+  with the mobys' positions as the slot owners. Ratchet's animation triggers (`0x313420`: R&C1's rule) play on his
+  moby; his footsteps are `0x2a6420` (walk 3: 49.5 / 17.0, run 4: 12.5 / 1.0, back-pedal 0x14: 8.0 / 21.0; the
+  walk's tick 22) with the ground's footstep class `0x18b2bd` (the probe `0x2b4a08`: the hit's sound bits, 0 on a
+  moby).
+- **The sound instances**: the gameplay's `sound_instances` section, R&C1's records and pvars.
+- **The music** (`G/AUDIOn.WAD`): mono VAG streams in left / right pairs (`rc2_l00_main_al` / `_ar`, `_bl` /
+  `_br`), pair k = stereo track k; the stream player gives a stereo track a second voice. R&C1's level start (track
+  0 once, track 1 looping).
+- **Scenes and movies**: a scene pauses the music and streams its record's English speech (`SCENEn.WAD`
+  `speech[0]`), its end resumes the music 30 ticks later; an in-level movie stops the sounds, mixes its own audio
+  and restarts the music at its end.
+
+Not yet: the env sample points, the boots' footstep variant (`0x18b0b8`), the landing footsteps (`0x2a6180`), the
+hero's other sounds (the states' own `0x3605f0` calls: hurt, the packs, the swing, the grind), the front end's
+sounds and its movies' audio, the help voice.
