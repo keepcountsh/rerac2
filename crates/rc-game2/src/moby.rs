@@ -340,6 +340,8 @@ pub trait MobyHost {
     /// `0x311880`: the moby's place in its sequence in the frames' time units (`+0x44` the blend between two keys of one
     /// sequence; else key A's time plus `t`).
     fn frame_time(&self, _m: &Moby) -> f32 { 0.0 }
+    /// `0x312728(m, j)`: joint `j`'s frame in the world (rows, translation).
+    fn joint_matrix(&self, _m: &Moby, _j: usize) -> Option<([V3; 3], V3)> { None }
     /// The position of joint `j` of moby `m` in the world (`0x3127c8`: the posed joint's translation · scale / 1024,
     /// turned by the rows, plus the position).
     fn joint(&self, _m: &Moby, _j: usize) -> Option<V3> { None }

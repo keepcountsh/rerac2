@@ -168,6 +168,18 @@ impl MobyHost for Host<'_> {
         Some(std::array::from_fn(|k| m.pos[k] + (r[0][k] * p[0] + r[1][k] * p[1] + r[2][k] * p[2]) * s))
     }
 
+    /// `0x312728`: joint `j`'s pose (the chain 0..=j) turned into the world by the moby's rows, scale and place.
+    fn joint_matrix(&self, m: &Moby, j: usize) -> Option<([V3; 3], V3)> {
+        let (class, state, snap) = self.state_of(m)?;
+        let ac: &MobyAnimClass = self.lv.anim.get(class)?;
+        if ac.joint_count <= j { return None; }
+        let chain: Vec<u8> = (0..=j as u8).collect();
+        let p = moby_anim::evaluate_chains(ac, &state, snap.as_ref(), &[chain.as_slice()]);
+        let p = p.first()?;
+        let rows = m.rows.map(|r| [r[0].to_bits(), r[1].to_bits(), r[2].to_bits(), 0]);
+        Some(rows_f(moby_anim::attach_matrix(p, &rows, m.pos, m.scale)))
+    }
+
     /// `0x2aa1f0` / `0x3128f0`: the pose of Ratchet's joint list `HERO_LISTS[k]` turned into the world.
     fn hero_attach(&self, k: usize) -> Option<([V3; 3], V3)> {
         let h = self.hero?;

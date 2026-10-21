@@ -23,6 +23,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0c8b => Some(props::update_0c8b),
         0x0ac0 => Some(props::update_0ac0),
         0x099c => Some(enemies::update_099c),
+        0x0b0a => Some(enemies::update_0b0a),
         0x0b41 | 0x0b42 | 0x0b45 | 0x0b4d | 0x0b51 | 0x0b52 | 0x0b53 | 0x0c02 | 0x0c3f => Some(props::update_stub),
         0x0f6e => Some(props::update_0f6e),
         0x0ddf => Some(props::update_0ddf),

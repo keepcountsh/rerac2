@@ -905,3 +905,31 @@ fn fly(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> u32 {
     w.changed = true;
     res
 }
+
+/// `0x31c078(yaw, k, d, max, m, &v)`: the facing springs toward `yaw` (the push the difference over 9°, at most 1;
+/// the speed at most `max` and the difference).
+pub fn turn_to(m: &mut Moby, yaw: f32, k: f32, d: f32, max: f32, v_off: usize) {
+    let e = sub_rot(yaw, m.rot[2]);
+    let f = (e * 6.366_197).clamp(-1.0, 1.0);
+    let mut v = m.pv_f(v_off);
+    v += k * f - d * v;
+    if max != 0.0 { v = v.clamp(-max, max); }
+    v = v.clamp(-e.abs(), e.abs());
+    m.set_pv_f(v_off, v);
+    m.rot[2] = add_rot(m.rot[2], v);
+}
+
+/// `0x31ec88(k, d, max, &p, target, &v)`: `p` springs toward `target` along the line between them ([`spring_vel`]
+/// on the distance), landing on it within `0.01·max`. Returns the distance left.
+pub fn spring_to(p: &mut V3, target: V3, k: f32, d: f32, max: f32, v: &mut f32) -> f32 {
+    let diff = sub(target, *p);
+    let l = len(diff);
+    spring_vel(l, k, d, max, v);
+    *p = add(*p, set_len(diff, *v));
+    let left = l - *v;
+    if left.abs() < max * 0.01 {
+        *p = target;
+        *v = 0.0;
+    }
+    left
+}
