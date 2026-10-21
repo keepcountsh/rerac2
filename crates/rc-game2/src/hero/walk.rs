@@ -234,6 +234,8 @@ impl Hero {
                     self.walk_anim(anim);
                     return None;
                 }
+                // `0x2cb1c8`: a weapon in use that keeps the stance stops him in it.
+                if self.gun_stance(anim, env) { return None; }
                 if self.set_state(anim, env, 0, false) {
                     if 0.1 < len(self.momentum) { self.momentum = set_len(self.momentum, 0.1); }
                     self.speed = self.speed.min(0.025);

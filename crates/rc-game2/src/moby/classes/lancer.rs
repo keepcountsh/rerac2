@@ -32,7 +32,7 @@ const CONE: aim::Cone = aim::Cone { yaw: 0.104_719_76, pitch: 0.104_719_76, rang
 /// `t[3]` of a shot's template.
 pub const NO_KNOCK_LIMIT: f32 = 5627.987;
 
-/// `0x3a8f20`: the lock cleared.
+/// `0x3a8f20`: the lock cleared, the cooldown 0.1 s (the equip before the first shot).
 fn start(w: &mut MobyWorld, id: usize) {
     let m = &mut w.mobys[id];
     m.pvars.resize(crate::moby::PVAR_BYTES, 0);
@@ -41,6 +41,13 @@ fn start(w: &mut MobyWorld, id: usize) {
     m.set_pv_s(6, 0);
     m.set_pv_s(0x10, 0);
     m.set_pv_i(0x34, LOCK_DELAY);
+    // The first shot waits 0.1 s (the equip: its sequence 0 plays meanwhile); no flash light or rumble yet.
+    m.set_pv_f(0xc, 0.1);
+    m.set_pv_i(0x24, -1);
+    m.set_pv_i(0x3c, -1);
+    m.set_pv_i(0x28, 0);
+    m.set_pv_i(0x2c, 0);
+    m.set_pv_i(0x30, 0);
 }
 
 /// `0x3a8060`.

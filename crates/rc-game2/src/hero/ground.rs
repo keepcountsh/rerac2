@@ -28,6 +28,8 @@ impl Hero {
             3 => {
                 self.group = 1;
                 self.momentum = self.eff;
+                // `0x2cb1c8`: a weapon in use that keeps the stance stands him in its sequence instead.
+                if self.gun_stance(anim, _env) { return Entry::Return(false); }
                 // The stop's sequence 6, or 5 right after the landing sequence 4 (frames 3..16).
                 let v = anim.view();
                 let seq = if v.seq_a == 4 && 3.0 < v.frame && v.frame < 16.0 { 5 } else { 6 };
@@ -56,11 +58,34 @@ impl Hero {
         }
     }
 
+    /// `0x2cb1c8` (R&C1's `0x242858`): with the held item in use and keeping the stance (`0x18c0d8` / `0x18c0da`,
+    /// the item still the one used), he stands (SetState 0 without its sequence), his momentum cut to 0.025 and his
+    /// speed to at most 0.025, in the item's standing sequence (its row's `+0x18`) blended over 11 ticks. Another item
+    /// ends the use. True when he stood.
+    pub(super) fn gun_stance(&mut self, anim: &mut dyn AnimCtl, env: &Env) -> bool {
+        let it = self.items;
+        if !(it.using && it.keep) { return false; }
+        if it.ready != 2 || it.item != it.use_item {
+            let idle = self.idle_seq();
+            self.items.use_end(self.state, anim.view().seq_b, idle);
+            return false;
+        }
+        let Some(r) = super::items::row(it.item) else { return false };
+        if !self.set_state(anim, env, 0, false) { return false; }
+        if 0.025 < len(self.momentum) { self.momentum = set_len(self.momentum, 0.025); }
+        self.speed = self.speed.min(0.025);
+        self.set_anim(anim, 11.0, r.use_seq as u8, 0);
+        self.items.use_seq = r.use_seq;
+        true
+    }
+
     /// The ground case of `0x2ba8e0`.
     pub(super) fn phys_ground(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
         if self.surf.ice { self.drag(0.7, 0.0) } else { self.drag(0.5, 1.0 / 30.0) }
         self.edge_brake(env, 3.7, 0.0);
         self.stick_target(env, 1.0, 0);
+        // `0x2ba8e0`: the stop (3) with a weapon in use that keeps the stance becomes the stance (`0x2cb1c8`).
+        if self.state == 3 && self.gun_stance(anim, env) { return; }
         if self.state == 4 {
             let seq = anim.view().seq_b;
             if 0.2 < self.stick_mag || seq == 0xe || seq == 0xf {
