@@ -82,6 +82,8 @@ pub struct GameState {
     pub quick_select: Vec<i32>,
     /// `0x139768`: the scenes seen (one bit each).
     pub scenes_seen: Vec<bool>,
+    /// The scene queue, the modes and the scene playing (crate::scene).
+    pub scenes: crate::scene::Scenes,
     /// The trigger areas' occupants (`0x1b1a7c`, filled by `0x2ae140` for the areas asked about in the last 10
     /// frames, the area record's `+0x3a`): only Ratchet is kept (the helpers 0xcb / 0xeb0 and the decoys are not on
     /// Aranos).
@@ -102,7 +104,7 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100], area_ask: Vec::new(), area_hero: Vec::new(),
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100], scenes: Default::default(), area_ask: Vec::new(), area_hero: Vec::new(),
         }
     }
 }

@@ -951,8 +951,9 @@ const SCENES_L0: [&[i32]; 4] = [&[0x21], &[0x23], &[0x22], &[0x16]];
 
 /// 0x0f6e (`0x40ffa0`, a scene trigger with a reward): gone at the start when its item `+0x68`[9] is had or its
 /// mission (`+0xb0`) done. Set off ([0xa], once-flag 2 `0x32a838`, or the timer byte `+0xbc`) with Ratchet in its
-/// cuboid [0] (and not in the ship, alive, the game not paused), it plays its scenes ([8] into `0x29fc20`; one not
-/// seen yet, or any with [0xd]) — the port's scenes end at once: Ratchet is put at the cuboid [4] (`0x2b9e68`) —
+/// cuboid [0] (and not in the ship, alive, the game not paused), it queues its scenes ([8] into `0x29fc20`; one not
+/// seen yet, or any with [0xd]; the first refused, it tries again) and starts them (crate::scene); after the scenes
+/// Ratchet is put at the cuboid [4] (`0x2b9e68`) —
 /// then gives the item (`0x322730`; equipping it, `0x325270`, is not ported), marks the mission done (`0x3132a8`),
 /// saves the checkpoint with [0xb] ≥ 1 and the word [0xc]'s top half (at [4], else where Ratchet is) and is
 /// deleted. Its message [0xc] (`0x2f50f8`) and the HUD's flash `0x30d658` are not ported.
@@ -984,20 +985,25 @@ pub fn update_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             if ctx.hero.hp < 1 { return; }
             let vol = m.pv_i(0);
             if vol != -1 && !ctx.level.in_cuboid(vol, ctx.hero.pos) { return; }
+            if ctx.hero.state == 0x1c || g.scenes.mode != crate::scene::PLAY { return; }
             let force = m.pv_b(0xd) != 0;
             let list = if g.level == 0 { SCENES_L0.get(m.pv_b(8) as usize).copied().unwrap_or(&[]) } else { &[] };
             let mut played = false;
-            for &sc in list {
+            for (i, &sc) in list.iter().enumerate() {
                 if force || !g.scenes_seen.get(sc as usize).copied().unwrap_or(true) {
-                    if let Some(s) = g.scenes_seen.get_mut(sc as usize) { *s = true; }
+                    // `0x2f4ee8`: the first refused, it tries again next tick.
+                    if !g.scenes.queue.push(sc) && i == 0 { return; }
                     played = true;
                 }
             }
+            if played { g.scenes.start_queue(ctx.hero.hp); }
             let m = &mut w.mobys[id];
             m.set_pv_b(0xf, played as u8);
             m.set_state(if played { 3 } else { 4 }, -1);
         }
         3 => {
+            // `0x371ba8`: until the scenes are over.
+            if g.scenes.in_scene() { return; }
             if let Some((p, r)) = ctx.level.cuboid_place(m.pv_i(4)) {
                 ctx.hero.teleport(p, r);
                 ctx.hero.request_state(0, true);

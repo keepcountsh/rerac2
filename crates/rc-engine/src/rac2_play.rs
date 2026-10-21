@@ -73,6 +73,10 @@ struct Play {
     trace: bool,
     /// The level's objects spawned once (later spawns are respawns).
     loaded: bool,
+    /// The level's scene file (`G/SCENEn.WAD`) and its table, read at the first scene.
+    scene_wad: Option<(Vec<u8>, rc_formats::rac2::scene::SceneWad)>,
+    /// The class animations a scene's actors added sequence slots to, with their sequence counts before.
+    scene_slots: Vec<(usize, usize)>,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -85,7 +89,7 @@ fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSourc
 #[allow(clippy::too_many_arguments)]
 fn tick(
     mut commands: Commands,
-    level: Res<crate::Level>,
+    mut level: ResMut<crate::Level>,
     play: Option<ResMut<Play>>,
     front: Option<Res<crate::rac2::Rac2>>,
     frame: Res<PadFrame>,
@@ -96,17 +100,20 @@ fn tick(
 ) {
     // The front end's layer is up: the game waits (as R&C1's tick does under its front end).
     if front.is_some_and(|f| !f.done()) { return; }
-    let lv = &level.0;
+    // The scenes add sequence slots to the level's class animations (as the game's actors do), unseen by the
+    // systems that watch the level for a new one.
+    let level = level.bypass_change_detection();
     let Some(mut p) = play else {
-        if let Some(p) = start(lv) {
+        if let Some(p) = start(&level.0) {
             commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR });
             commands.insert_resource(p);
         }
         return;
     };
     let p = &mut *p;
-    let Some(coll) = lv.collision.as_ref() else { return };
+    if level.0.collision.is_none() { return; }
     if p.mobys.is_none() {
+        let lv = &level.0;
         let blobs = crate::rac2_level::class_blobs(&crate::level_load::extracted_root(), crate::level_load::level_index())
             .map_err(|e| eprintln!("rac2: no class blobs ({e:#}): no moby collision"))
             .unwrap_or(crate::rac2_level::ClassBlobs { collision: Vec::new(), blobs: Default::default() });
@@ -118,6 +125,8 @@ fn tick(
         println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
     }
+    // `0x32c858`: a scene or a movie starting or ending.
+    mode_changes(p, &mut level.0);
     let input = match &script.0 {
         Some(s) => s.at(p.ticks),
         None if *source == CameraSource::Play => frame.0,
@@ -125,6 +134,20 @@ fn tick(
     };
     p.pad.update(Some(&input.bytes()), false);
     p.game.frame += 1;
+    match p.game.scenes.mode {
+        rc_game2::scene::SCENE => {
+            scene_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut());
+            p.ticks += 1;
+            return;
+        }
+        rc_game2::scene::MOVIE => {
+            p.ticks += 1;
+            return;
+        }
+        _ => {}
+    }
+    let lv = &level.0;
+    let Some(coll) = lv.collision.as_ref() else { return };
     // `0x2d6258`: the health limit from the XP and the nanotech.
     p.game.health_tick(&mut p.hero.hp);
     let class = &lv.mobys.anim[p.class];
@@ -248,6 +271,191 @@ fn tick(
     }
 }
 
+/// `0x32c858`'s changes (rc_game2::scene): a scene's end and start; a movie is not played yet (it ends at once).
+fn mode_changes(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
+    for c in p.game.scenes.switch(p.hero.hp) {
+        match c {
+            rc_game2::scene::Change::EndedScene => end_scene(p, lv),
+            rc_game2::scene::Change::StartScene(id) => start_scene(p, lv, id),
+            rc_game2::scene::Change::StartMovie(id) => {
+                eprintln!("rac2: movie {id:#x} is not played yet: it ends at once");
+                let hp = p.hero.hp;
+                let g = &mut p.game;
+                g.scenes.movie_done(false, hp, &mut g.scenes_seen);
+            }
+        }
+    }
+}
+
+/// Scene `id` of the level (its record in `G/SCENEn.WAD`).
+fn load_scene(p: &mut Play, id: i32) -> anyhow::Result<Option<rc_formats::scene::Scene>> {
+    use anyhow::Context;
+    if p.scene_wad.is_none() {
+        let path = crate::level_load::extracted_root().join(format!("G/SCENE{}.WAD", crate::level_load::level_index()));
+        let wad = std::fs::read(&path).with_context(|| format!("{}", path.display()))?;
+        let table = rc_formats::rac2::scene::SceneWad::parse(&wad)?;
+        p.scene_wad = Some((wad, table));
+    }
+    let (wad, table) = p.scene_wad.as_ref().expect("scene file");
+    Ok(table.scene(wad, rc_formats::rac2::scene::record_of(id) as usize)?)
+}
+
+/// `0x370e08` / `0x305428`: the scene's actors made (class 0: Ratchet's moby; each in the next sequence slot of its
+/// class, which plays the chunk's streamed sequence), the 0xcb mobys and the hand item hidden, the scene started.
+fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
+    let scene = match load_scene(p, id) {
+        Ok(Some(s)) => s,
+        r => {
+            match r {
+                Err(e) => eprintln!("rac2: scene {id:#x}: {e:#}: skipped"),
+                _ => eprintln!("rac2: scene {id:#x}: no such scene: skipped"),
+            }
+            let hp = p.hero.hp;
+            p.game.scenes.player = None;
+            if !p.game.scenes.start_queue(hp) { p.game.scenes.pop(hp); }
+            return;
+        }
+    };
+    let Some(mobys) = p.mobys.as_mut() else { return };
+    use rc_game2::moby::mode;
+    let mut actors = Vec::new();
+    for a in &scene.chunks[0].actors {
+        let o_class = match a.class { 0x215 | 0x10d1 => 0x0d54, c => c as i16 };
+        let Some(ci) = lv.mobys.classes.iter().position(|c| c.o_class == o_class as i32) else {
+            eprintln!("rac2: scene {id:#x}: actor class {o_class:#x} is not in the level");
+            actors.push((usize::MAX, 0xff));
+            continue;
+        };
+        let m = if o_class == 0 {
+            match mobys.hero_moby {
+                Some(h) => h,
+                None => {
+                    actors.push((usize::MAX, 0xff));
+                    continue;
+                }
+            }
+        } else {
+            let m = mobys.world.create(o_class);
+            let a = &mut mobys.world.mobys[m];
+            (a.draw_dist, a.drawn, a.update_dist, a.has_collision) = (0x1ff, 1, 0xff, false);
+            a.mode |= mode::NO_UPDATE | mode::NO_MATRIX | mode::KEEP_ROWS;
+            m
+        };
+        let anim = &mut lv.mobys.anim[ci];
+        if !p.scene_slots.iter().any(|&(c, _)| c == ci) { p.scene_slots.push((ci, anim.sequences.len())); }
+        let slot = anim.sequences.len() as u8;
+        anim.sequences.push(Some(a.sequence.clone()));
+        actors.push((m, slot));
+    }
+    for m in mobys.world.mobys.iter_mut().filter(|m| m.o_class == 0xcb && m.state < 0x80) { m.mode |= 0x80; }
+    if let Some(h) = p.hero.items.hand.and_then(|h| mobys.world.mobys.get_mut(h)) { h.mode |= 1; }
+    println!("rac2: scene {id:#x}: {} ticks, actors {:?}", scene.end_tick(), scene.actor_classes());
+    let g = &mut p.game;
+    g.scenes.start_scene(id, std::sync::Arc::new(scene), actors, &mut g.scenes_seen);
+}
+
+/// `0x3711e8`: the actors deleted and their class slots given back, the hidden mobys shown, Ratchet idle on the
+/// ground under him, the follow camera behind him.
+fn end_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
+    let actors = p.game.scenes.player.as_ref().map(|pl| pl.actors.clone()).unwrap_or_default();
+    if let Some(mobys) = p.mobys.as_mut() {
+        for (m, _) in actors {
+            if m == usize::MAX || Some(m) == mobys.hero_moby { continue; }
+            mobys.world.delete(m);
+            mobys.created.remove(&m);
+        }
+        for m in mobys.world.mobys.iter_mut().filter(|m| m.o_class == 0xcb && m.state < 0x80) { m.mode &= !0x80; }
+        if let Some(h) = p.hero.items.hand.and_then(|h| mobys.world.mobys.get_mut(h)) { h.mode &= !1; }
+    }
+    for (ci, n) in p.scene_slots.drain(..) {
+        if let Some(a) = lv.mobys.anim.get_mut(ci) { a.sequences.truncate(n); }
+    }
+    let at = p.hero.pos;
+    let ground = lv.collision.as_ref().and_then(|c| rc_game::collision_query::coll_line(c, [at[0], at[1], at[2] + 0.5], [at[0], at[1], 0.01], rc_game::collision_query::QueryFlags(2))).map(|o| o.point[2]);
+    p.game.scenes.end_scene(&mut p.hero, ground);
+    p.camera = FollowCamera::new(&cam_input(&p.hero, lv.collision.as_ref(), [0.0; 2]));
+}
+
+/// A scene's tick (`0x3716f8`): the moby loop (Ratchet's update does nothing in a scene), then the scene's: the
+/// actors posed in their class slots at their tracks, Ratchet's instance at his, the scene camera.
+fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &mut Commands, mut occl: Option<&mut MobyOcclusion>, mut anim: Option<&mut MobyAnim>) {
+    let Some(coll) = lv.collision.as_ref() else { return };
+    let Some(mobys) = p.mobys.as_mut() else { return };
+    {
+        let class = &lv.mobys.anim[p.class];
+        let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
+        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, camera: p.camera.pos };
+        let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
+        mobys.world.tick(p.camera.pos, &mut ctx);
+    }
+    let hp = p.hero.hp;
+    let level = p.game.level;
+    let g = &mut p.game;
+    let Some(frame) = g.scenes.tick(&p.pad, level, false, hp, &mut g.scenes_seen) else { return };
+    let player = g.scenes.player.as_ref().expect("a scene");
+    let classes = &lv.mobys.classes;
+    let ci_of = |o: i16| classes.iter().position(|c| c.o_class == o as i32);
+    if frame.new_chunk {
+        let chunk = &player.scene.chunks[player.chunk];
+        for (k, &(m, slot)) in player.actors.iter().enumerate() {
+            if m == usize::MAX { continue; }
+            let Some(ci) = mobys.world.mobys.get(m).and_then(|x| ci_of(x.o_class)) else { continue };
+            if let (Some(q), Some(a)) = (lv.mobys.anim[ci].sequences.get_mut(slot as usize), chunk.actors.get(k)) { *q = Some(a.sequence.clone()); }
+        }
+    }
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let mut hero_pose = None;
+    for pose in &frame.poses {
+        let state = rc_formats::moby_anim::AnimState { seq_a: pose.slot, frame_a: pose.frame_a, seq_b: pose.slot, frame_b: pose.frame_b, t: pose.t, speed: 0.0, rate: 0.0, flags: 0, trigger_count: 0, skip_advance: true };
+        if Some(pose.moby) == mobys.hero_moby {
+            hero_pose = Some((pose.pos, state));
+            continue;
+        }
+        let Some(m) = mobys.world.mobys.get_mut(pose.moby) else { continue };
+        (m.pos, m.rows) = (pose.pos, identity);
+        let Some(ci) = ci_of(pose.o_class) else { continue };
+        mobys.created.insert(pose.moby, crate::rac2_mobys::Created { class: ci, state, snapshot: None });
+    }
+    if let Some(o) = occl.as_mut() {
+        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
+            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, None, m.state >= 0x80 || m.mode & 1 != 0); }
+        }
+        // Ratchet: at his track with the scene's sequence and his head's scale (`0x2d51f8`), else as he stands.
+        let (pos, rows, state) = match hero_pose {
+            Some((pos, state)) => (pos, identity, state),
+            None => (p.hero.pos, p.hero.rows, p.anim.state),
+        };
+        o.drive(p.instance, pos, rows, p.scale, None, false);
+        if let (Some(a), Some(k)) = (anim.as_mut(), o.anim_index(p.instance)) {
+            let mut s = state;
+            s.skip_advance = true;
+            if let Some(i) = a.instances.get_mut(k) { i.state = s; }
+            if hero_pose.is_some() {
+                if let Some(slot) = a.snapshots.get_mut(k) { *slot = None; }
+                let head = mobys.hero_targets.get(24).copied().filter(|&t| t != 0xff);
+                if let Some(mods) = a.mods.get_mut(k) {
+                    *mods = head.map(|t| vec![rc_formats::moby_anim::JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..rc_formats::moby_anim::JointModifier::compose(t) }]).unwrap_or_default();
+                }
+            }
+        }
+    }
+    if mobys.world.changed {
+        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], camera: p.camera.pos };
+        mobys.snap = Some(crate::rac2_mobys::take_snapshot(&mobys.world, &mobys.coll, &host));
+        mobys.world.changed = false;
+    }
+    commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: crate::game_camera::FAR });
+}
+
+fn scene_view(c: &rc_game::scene_player::SceneCamera) -> CameraView {
+    let v = |a: [f32; 3]| [Pf::f(a[0]), Pf::f(a[1]), Pf::f(a[2]), Pf::ZERO];
+    let f = c.rows[0];
+    let euler = [Pf::ZERO, Pf::f(-f[2].clamp(-1.0, 1.0).asin()), Pf::f(f[1].atan2(f[0])), Pf::ZERO];
+    CameraView { pos: v(c.eye), euler, rows: c.rows.map(v), class: 0, flyby_phase: 0 }
+}
+
 /// The in-game HUD's layer: the front end's texture set (its fonts, slot 1) and the level's HUD icons after it.
 #[derive(Resource)]
 struct GameHud {
@@ -295,11 +503,18 @@ fn draw_hud(
         commands.insert_resource(GameHud { layer, data, icons });
         return;
     };
-    let draws = p.hud.draw(p.game.bolts);
-    let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
-    let mut quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
     let p: &mut Play = p;
-    quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs, &hud.data.assets().sprites));
+    let mut quads = Vec::new();
+    // In a scene the HUD and the help are not drawn (`0x2e6d88`).
+    if p.game.scenes.mode != rc_game2::scene::SCENE {
+        let draws = p.hud.draw(p.game.bolts);
+        let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
+        quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
+        quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs, &hud.data.assets().sprites));
+    }
+    // The fade into and out of a scene (`0x1b1860`, 1 black).
+    let fade = p.game.scenes.fade.clamp(0.0, 1.0);
+    if 0.0 < fade { rc_game2::gui::fill(&mut quads, [0, 0, 0, (fade * 128.0) as u8]); }
     let mut d = crate::hud_render::Hud2d::default();
     for q in quads {
         let tex = match q.tex {
@@ -349,6 +564,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
+        scene_wad: None, scene_slots: Vec::new(),
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })

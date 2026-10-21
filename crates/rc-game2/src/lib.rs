@@ -15,3 +15,4 @@ pub mod level;
 pub mod moby;
 pub mod paths;
 pub mod rng;
+pub mod scene;
