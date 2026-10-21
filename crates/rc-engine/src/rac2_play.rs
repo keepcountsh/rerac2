@@ -77,6 +77,9 @@ struct Play {
     scene_wad: Option<(Vec<u8>, rc_formats::rac2::scene::SceneWad)>,
     /// The class animations a scene's actors added sequence slots to, with their sequence counts before.
     scene_slots: Vec<(usize, usize)>,
+    /// The movie playing (mode 1) and its picture for the next draw.
+    movie: Option<crate::rac2::Playing>,
+    movie_picture: Option<Vec<u8>>,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -141,6 +144,7 @@ fn tick(
             return;
         }
         rc_game2::scene::MOVIE => {
+            movie_tick(p);
             p.ticks += 1;
             return;
         }
@@ -271,19 +275,37 @@ fn tick(
     }
 }
 
-/// `0x32c858`'s changes (rc_game2::scene): a scene's end and start; a movie is not played yet (it ends at once).
+/// `0x32c858`'s changes (rc_game2::scene): a scene's end and start, a movie's start.
 fn mode_changes(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
     for c in p.game.scenes.switch(p.hero.hp) {
         match c {
             rc_game2::scene::Change::EndedScene => end_scene(p, lv),
             rc_game2::scene::Change::StartScene(id) => start_scene(p, lv, id),
             rc_game2::scene::Change::StartMovie(id) => {
-                eprintln!("rac2: movie {id:#x} is not played yet: it ends at once");
-                let hp = p.hero.hp;
-                let g = &mut p.game;
-                g.scenes.movie_done(false, hp, &mut g.scenes_seen);
+                println!("rac2: movie {id:#x}");
+                p.movie = Some(crate::rac2::Playing::level(id as u32, rc_formats::rac2::scene::record_of(id) as usize));
             }
         }
+    }
+}
+
+/// A movie's frame (mode 1, `0x371e50`): its picture at the movie's rate; at its end, or skipped (Start alone on
+/// Aranos, else Start with L1 L2 R1 R2 held), the chain's next or back. No sound yet.
+fn movie_tick(p: &mut Play) {
+    let start = p.pad.pressed & rc_game::pad::button::START != 0;
+    let skip = start && (p.game.level <= 0 || p.pad.held & 0xf == 0xf);
+    let over = match p.movie.as_mut() {
+        Some(m) => {
+            if let Some(pic) = m.advance() { p.movie_picture = Some(pic); }
+            m.ended
+        }
+        None => true,
+    };
+    if over || skip {
+        p.movie = None;
+        let hp = p.hero.hp;
+        let g = &mut p.game;
+        g.scenes.movie_done(skip, hp, &mut g.scenes_seen);
     }
 }
 
@@ -505,8 +527,11 @@ fn draw_hud(
     };
     let p: &mut Play = p;
     let mut quads = Vec::new();
-    // In a scene the HUD and the help are not drawn (`0x2e6d88`).
-    if p.game.scenes.mode != rc_game2::scene::SCENE {
+    if let Some(pic) = p.movie_picture.take() { hud.layer.write(&mut images, crate::rac2::MOVIE, &pic); }
+    if p.game.scenes.mode == rc_game2::scene::MOVIE {
+        rc_game2::gui::picture(&mut quads, rc_game2::gui::Picture::Movie);
+    } else if p.game.scenes.mode != rc_game2::scene::SCENE {
+        // In a scene the HUD and the help are not drawn (`0x2e6d88`).
         let draws = p.hud.draw(p.game.bolts);
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
         quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
@@ -517,11 +542,13 @@ fn draw_hud(
     if 0.0 < fade { rc_game2::gui::fill(&mut quads, [0, 0, 0, (fade * 128.0) as u8]); }
     let mut d = crate::hud_render::Hud2d::default();
     for q in quads {
-        let tex = match q.tex {
-            rc_game2::gui::Tex::Slot(i) => crate::hud_render::Tex::Frame(i),
-            _ => crate::hud_render::Tex::None,
+        let (tex, nearest) = match q.tex {
+            rc_game2::gui::Tex::Slot(i) => (crate::hud_render::Tex::Frame(i), false),
+            rc_game2::gui::Tex::Picture(rc_game2::gui::Picture::Movie) => (crate::hud_render::Tex::Frame(crate::rac2::MOVIE), true),
+            _ => (crate::hud_render::Tex::None, false),
         };
         d.screen_prim(tex, q.pos, q.uv, u32::from_le_bytes(q.rgba), false);
+        if nearest { if let Some(p) = d.prims.last_mut() { p.nearest = true; } }
     }
     if let Some(mut m) = meshes.get_mut(&hud.layer.mesh) { *m = hud.layer.build(&d); }
 }
@@ -564,7 +591,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
-        scene_wad: None, scene_slots: Vec::new(),
+        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None,
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })

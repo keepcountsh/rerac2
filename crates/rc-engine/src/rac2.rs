@@ -39,7 +39,7 @@ use std::sync::Mutex;
 /// The layer's textures: the front end's texture set, then these.
 const SPLASH0: usize = 3;
 const BACKDROP: usize = SPLASH0 + 3;
-const MOVIE: usize = BACKDROP + 1;
+pub(crate) const MOVIE: usize = BACKDROP + 1;
 
 /// Everything the front end reads, loaded once.
 pub struct Data {
@@ -111,14 +111,14 @@ fn movie_bytes(root: &Path, sizes: &[u64], m: toc::Movie) -> Result<Vec<u8>> {
 enum Msg { Opened(f64), Picture(Vec<u8>), End, Failed(String) }
 
 /// A movie being played.
-struct Playing {
+pub(crate) struct Playing {
     id: u32,
     rx: Mutex<Receiver<Msg>>,
     fps: Option<f64>,
     /// Frames shown and pictures received.
     frame: u64,
     received: u64,
-    ended: bool,
+    pub(crate) ended: bool,
 }
 
 fn decode(bytes: Vec<u8>, tx: SyncSender<Msg>) {
@@ -154,8 +154,27 @@ impl Playing {
         Playing { id, rx: Mutex::new(rx), fps: None, frame: 0, received: 0, ended: false }
     }
 
+    /// An in-level movie (`0x371bd8`): `RC2.HDR`'s movie row `row` (crate::rac2_play; the front end's rows by id
+    /// are [`Playing::start`]'s).
+    pub(crate) fn level(id: u32, row: usize) -> Playing {
+        let (tx, rx) = sync_channel(4);
+        let root = crate::level_load::extracted_root();
+        let bytes = (|| -> Result<Vec<u8>> {
+            let hdr = crate::disc_source::read(&root, "RC2.HDR")?;
+            let t = Toc::parse(&hdr).context("RC2.HDR")?;
+            let m = t.movie(row)?.with_context(|| format!("no movie row {row}"))?;
+            let sizes = MOVIE_FILES.iter().map(|f| std::fs::metadata(root.join(f)).map(|m| m.len()).with_context(|| format!("{f} in {}", root.display()))).collect::<Result<Vec<_>>>()?;
+            movie_bytes(&root, &sizes, m)
+        })();
+        match bytes {
+            Ok(b) => { std::thread::spawn(move || decode(b, tx)); }
+            Err(e) => { let _ = tx.send(Msg::Failed(format!("{e:#}"))); }
+        }
+        Playing { id, rx: Mutex::new(rx), fps: None, frame: 0, received: 0, ended: false }
+    }
+
     /// One frame: the picture for it (waiting for the worker if it is behind), or None when it has not changed.
-    fn advance(&mut self) -> Option<Vec<u8>> {
+    pub(crate) fn advance(&mut self) -> Option<Vec<u8>> {
         let rx = self.rx.get_mut().unwrap_or_else(|e| e.into_inner());
         let mut picture = None;
         loop {
