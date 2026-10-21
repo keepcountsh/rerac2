@@ -122,6 +122,9 @@ pub struct ItemBlock {
     pub held: u32,
     pub pressed: u32,
     pub square_recent: bool,
+    /// `0x18aa18`: the moby a weapon aims at (its lock) and its aim height, set by the weapon's update each tick it
+    /// holds one and read once by the posture (crate::hero::posture, `0x2abc18`).
+    pub aim_target: Option<(usize, f32)>,
     /// A sequence for Ratchet `(blend, seq)` the use stance asks for (`0x2d2508`; the engine plays it after the pass).
     pub hero_anim: Option<(f32, u8)>,
 }
@@ -160,6 +163,21 @@ impl ItemBlock {
         if group == 0 {
             self.use_seq = r.use_seq;
             self.hero_anim = Some((blend as f32, r.use_seq as u8));
+        }
+    }
+
+    /// `0x2cb650`'s standing case: while a use keeps the stance and the hand item is still the one used, Ratchet's
+    /// sequence is its use sequence (set again, blend −4, when it is not and no blend runs); another item ends it.
+    pub fn use_stance(&mut self, state: i32, seq_b: u8, blending: bool, idle: u8) {
+        if !self.using || blending || !self.keep { return; }
+        if self.ready == 2 && self.item == self.use_item {
+            let s = row(self.item).map_or(0, |r| r.use_seq);
+            if seq_b as i32 != s {
+                self.use_seq = s;
+                self.hero_anim = Some((-4.0, s as u8));
+            }
+        } else {
+            self.use_end(state, seq_b, idle);
         }
     }
 

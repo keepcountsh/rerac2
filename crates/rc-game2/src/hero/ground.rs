@@ -128,6 +128,12 @@ impl Hero {
                 if held & button::L1 != 0 { return Some(1); }
                 if self.gear.floating { return Some(0x82); }
                 self.idle_fidget(anim, env);
+                {
+                    let v = anim.view();
+                    let idle = self.idle_seq();
+                    self.items.use_stance(self.state, v.seq_b, v.blending(), idle);
+                    if let Some((b, s)) = self.items.hero_anim.take() { self.set_anim(anim, b, s, 0); }
+                }
                 self.stick_target(env, 1.0, 0);
                 if self.surf.mud && self.f16c == 0 { return Some(0x76); }
                 if 5 <= self.air_ticks && 0.4 < self.height {

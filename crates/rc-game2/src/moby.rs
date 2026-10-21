@@ -89,6 +89,8 @@ pub struct Ctx<'a> {
     pub hero_view: rc_game::hero::anim::AnimView,
     /// The level's volumes and paths.
     pub level: &'a crate::level::LevelData,
+    /// The particle pool the effects spawn into (crate::particles), when the engine has one.
+    pub parts: Option<&'a mut rc_game::particles::Particles>,
 }
 
 /// What the level's class table gives a moby at init.

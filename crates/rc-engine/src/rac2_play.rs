@@ -41,13 +41,15 @@ impl Plugin for Rac2PlayPlugin {
             .insert_resource(Rac2Script(script))
             .init_resource::<PadFrame>()
             .init_resource::<CanopyDraw>()
+            .init_resource::<ShotDraw>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
             .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created)))
             .add_systems(PostUpdate, draw_canopy.before(bevy::asset::AssetEventSystems))
+            .add_systems(PostUpdate, draw_shots.before(bevy::asset::AssetEventSystems))
             .add_systems(PostUpdate, occlusion_mode.before(crate::occlusion::OcclusionSet))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
-            .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>, crate::level_switch::reset::<CanopyDraw>));
+            .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>, crate::level_switch::reset::<CanopyDraw>, crate::level_switch::reset::<ShotDraw>));
     }
 }
 
@@ -128,7 +130,10 @@ fn tick(
     carry: Option<Res<Carry>>,
     mut change: ResMut<crate::level_switch::LevelChange>,
     mut audio: Option<ResMut<crate::audio_out::AudioOut>>,
+    mut parts: Option<ResMut<crate::particle_render::ParticleSim>>,
 ) {
+    // The game drives the particles (crate::particles of rc_game2 on the shared pool; R&C1's own tick stays off).
+    if let Some(s) = parts.as_deref_mut() { s.external = true; }
     // The front end's layer is up: the game waits (as R&C1's tick does under its front end).
     if front.is_some_and(|f| !f.done()) { return; }
     // The scenes add sequence slots to the level's class animations (as the game's actors do), unseen by the
@@ -215,7 +220,7 @@ fn tick(
     p.game.frame += 1;
     match p.game.scenes.mode {
         rc_game2::scene::SCENE => {
-            scene_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut());
+            scene_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut(), parts.as_deref_mut().map(|s| &mut s.sys));
             // The scene's audio frame (the world runs in a scene: `0x3716f8`), heard from the scene camera.
             if let Some(out) = audio.as_deref_mut() {
                 let l = p.scene_listener.unwrap_or_else(|| listener(&p.camera));
@@ -245,6 +250,17 @@ fn tick(
     let class = &lv.mobys.anim[p.class];
     let mobys = p.mobys.as_mut().expect("mobys");
     let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
+    // `+0x31` (MobyProc writes it each frame): a placed moby drawn last frame (shown, not hidden), as R&C1's
+    // `write_visible`; the moby loop's activity and the weapons' aim read it. Created mobys keep their own (their
+    // creators set it; the engine draws every live one), Ratchet is always drawn.
+    if let Some(o) = occl.as_deref() {
+        for m in mobys.world.mobys.iter_mut() {
+            let Some(ii) = m.instance else { continue };
+            let hidden = o.anim_index(ii).zip(anim.as_deref()).is_some_and(|(k, a)| a.hidden.get(k).copied().unwrap_or(false));
+            m.drawn = (o.anim_index(ii).is_some() && o.drawn(ii) && !hidden) as u8;
+        }
+        if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) { h.drawn = 1; }
+    }
     // The frame's order (`0x364260`): the moby loop `0x32e398`, then the hero `0x2a6dd0` (with its item pass), then
     // the camera `0x2d9f38`.
     {
@@ -254,7 +270,7 @@ fn tick(
         let sound = audio.as_deref_mut().map(|o| crate::rac2_mobys::HostSound { system: o.system(), listener: listener(&p.camera), tick: p.ticks, loops: &mut mobys.loop_slots });
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
+        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     // `RC_MOBY_TRACE=0b0b,099c`: those classes' mobys every 15 ticks (`RC_MOBY_TRACE_EVERY`; a dev trace).
@@ -360,7 +376,7 @@ fn tick(
         // The write-back's `0x313dc0`: his moby's sphere and grid cells follow him (the hits find him there).
         if let Some(i) = mobys.hero_moby { mobys.world.rebuild(i, &host); }
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
+        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
         rc_game2::hero::items::item_pass(&mut mobys.world, &mut ctx);
     }
     // The use stance's sequence for Ratchet (`0x2af5e0` / `0x2af848` call `0x2d2508` from the item pass).
@@ -368,6 +384,8 @@ fn tick(
         let mut ctl = p.anim.ctl(class);
         p.hero.set_anim(&mut ctl, blend, seq, 0);
     }
+    // `UpdateParts` (`0x331150`), after the hero.
+    if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys); }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
         for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {
@@ -655,7 +673,7 @@ fn end_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
 
 /// A scene's tick (`0x3716f8`): the moby loop (Ratchet's update does nothing in a scene), then the scene's: the
 /// actors posed in their class slots at their tracks, Ratchet's instance at his, the scene camera.
-fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &mut Commands, mut occl: Option<&mut MobyOcclusion>, mut anim: Option<&mut MobyAnim>) {
+fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &mut Commands, mut occl: Option<&mut MobyOcclusion>, mut anim: Option<&mut MobyAnim>, mut parts: Option<&mut rc_game::particles::Particles>) {
     let Some(coll) = lv.collision.as_ref() else { return };
     let Some(mobys) = p.mobys.as_mut() else { return };
     {
@@ -665,7 +683,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
+        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     let hp = p.hero.hp;
@@ -710,7 +728,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(&lv.mobys.anim[p.class]));
             let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
             let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-            let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
+            let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
             rc_game2::hero::items::head_pass(&mut mobys.world, &mut ctx);
             // The ship's parts on the scene's ship, the one drawn, at itself (as the original's frames show them).
             let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
@@ -750,6 +768,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
+    if let Some(sys) = parts.as_deref_mut() { rc_game2::particles::update_parts(sys); }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: crate::game_camera::FAR });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }
@@ -1016,6 +1035,50 @@ fn draw_canopy(
     let tex = level.0.particles.textures.as_ref().map(|t| t.fx_textures.as_slice());
     let mut a = crate::fx_draw::FxAssets { meshes: &mut meshes, images: &mut images, materials: &mut materials, fx: tex, fog };
     draw.slots.show(&mut commands, &mut vis, &mut a, groups, crate::fx_draw::LIST1_BIAS, "ship canopy");
+}
+
+/// The weapons' shot trails: the draw callback `0x3e4050` of every live Lancer shot (rc_game2's `shot::trail`), two
+/// additive ribbons through crate::fx_draw (FX 0x17 and 0xe; over the first 20 points, then again over all of them).
+#[derive(Resource, Default)]
+struct ShotDraw {
+    slots: crate::fx_draw::FxSlots,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_shots(
+    mut commands: Commands,
+    level: Res<crate::Level>,
+    play: Option<Res<Play>>,
+    mut draw: ResMut<ShotDraw>,
+    fog: Option<Res<crate::game_camera::GameFog>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<crate::fx_draw::FxPrimMaterial>>,
+    mut vis: Query<&mut Visibility>,
+) {
+    use rc_game2::moby::classes::shot;
+    let mut bufs = [crate::fx_draw::PrimBuf::default(), crate::fx_draw::PrimBuf::default()];
+    if let Some((p, m)) = play.as_ref().and_then(|p| p.mobys.as_ref().map(|m| (p, m))) {
+        let cam = p.camera.pos;
+        for mb in &m.world.mobys {
+            let Some((pts, inner, outer)) = shot::trail(mb) else { continue };
+            let mut passes = vec![pts.len().min(20)];
+            if 20 < pts.len() { passes.push(pts.len()); }
+            for n in passes {
+                for (k, quads) in shot::ribbon_quads(&pts, n, inner, outer, cam).into_iter().enumerate() {
+                    for (q, c) in quads { bufs[k].quad(q, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], c); }
+                }
+            }
+        }
+    }
+    let [inner, outer] = bufs;
+    let mut groups = Vec::new();
+    if !inner.is_empty() { groups.push(crate::fx_draw::FxGroup { fx: 0x17, additive: true, subtract: false, prims: inner }); }
+    if !outer.is_empty() { groups.push(crate::fx_draw::FxGroup { fx: 0xe, additive: true, subtract: false, prims: outer }); }
+    let fog = fog.map(|f| f.uniform).unwrap_or_else(|| crate::game_camera::TfragFog::new(&level.0.fog));
+    let tex = level.0.particles.textures.as_ref().map(|t| t.fx_textures.as_slice());
+    let mut a = crate::fx_draw::FxAssets { meshes: &mut meshes, images: &mut images, materials: &mut materials, fx: tex, fog };
+    draw.slots.show(&mut commands, &mut vis, &mut a, groups, crate::fx_draw::LIST1_BIAS, "shot trails");
 }
 
 /// `0x2e54a0`'s mode (`GameState::occlusion`, `0x1b19d0`) onto the occlusion frame: 0 everything visible, 2 the

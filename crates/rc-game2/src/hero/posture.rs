@@ -12,10 +12,11 @@
 //! run leans into its turns, the walk sways, the fall twists with the yaw.
 //!
 //! The head looks at the enemies (`0x2abc18`): every seventh frame the best of the targets in reach (their look data),
-//! held while nothing is in the way of the eyes.
+//! held while nothing is in the way of the eyes. A weapon's aim (`0x18aa18`, set by its update each tick it holds a
+//! lock) turns the spine and chest onto the target instead.
 //!
 //! Not ported: the arms at a wall (`0x2ab250`: only for a held item whose hold kind, `0x26250c` of its row, is not 0;
-//! the wrench's is 0), the look's override (`0x18aa18`), the teeter at an edge (the ahead probe's edge test), the lean on gravity frames and magnetic walkways
+//! the wrench's is 0), the teeter at an edge (the ahead probe's edge test), the lean on gravity frames and magnetic walkways
 //! (`0x2b7820`), the dust at the feet, the records of Clank on the back and of Clank's body (kinds 1..5).
 
 use super::physics::*;
@@ -378,6 +379,17 @@ impl Hero {
         p.recs[rec::SCALED].scale = p.head_scale;
         approach(0.875, 0.05, &mut p.head_scale);
         if p.not_strafing <= 0x13 { return; }
+        // A weapon in use or aiming (`0x18c0d8`, `0x18aa18`): the look and the twitches cleared (`0x2ab458`), the
+        // head and the chest on soft springs, the next look and fidget 90..120 ticks off.
+        if self.items.using || self.items.aim_target.is_some() {
+            p.look = [0.0; 2];
+            p.twitch = [[0.0; 2]; 4];
+            p.recs[rec::HEAD].set_spring(0.03, 0.2);
+            p.recs[rec::CHEST].set_spring(0.03, 0.2);
+            p.look_timer = self.rng.rand_range(0x5a, 0x78);
+            self.fidget_gap = self.rng.rand_range(0x5a, 0x78) as i16;
+            return;
+        }
         let seq = anim.view().seq_b;
         if self.state != 0 || !(seq < 3 || seq == 0x3a) { return; }
         if seq == 1 || seq == 2 { p.look_timer = self.rng.rand_range(0x28, 0x46); }
@@ -408,9 +420,31 @@ impl Hero {
     /// (1.2 up) to it (0.5 up) meets something. The head turns to its look height (yaw within 59°, pitch −25°..35°;
     /// while invincible past 27 ticks 17° and level) from 0.3 ahead and 0.85 up, the spine with it.
     fn head_look(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
+        // `0x18aa18`: a weapon's aim of last tick, read once (cleared at the end).
+        let aim = self.items.aim_target.take();
         if !matches!(self.group, 0 | 1 | 2 | 4 | 7) {
             self.posture.look_at = None;
             return;
+        }
+        // Aiming: the spine turns to the target's aim point (yaw within 59°) and the chest to its pitch (−25°..35°)
+        // from 0.5 ahead and 0.55 up; while invincible past 27 ticks 17° and level.
+        if let Some((id, up)) = aim {
+            if let Some(t) = env.targets.iter().find(|t| t.id == id) {
+                let p = [t.pos[0], t.pos[1], t.pos[2] + up];
+                let from = self.local_point(0.5, 0.0, 0.55);
+                let mut y = sub_rot(atan2(p[0] - from[0], p[1] - from[1]), self.rot[2]).clamp(-1.029_744_4, 1.029_744_4);
+                let mut pitch = atan2(dist2(p, from), from[2] - p[2]).min(0.610_865_3).max(-0.436_332_35);
+                if 0x1b < self.damage.invincible {
+                    y = y.clamp(-0.296_706, 0.296_706);
+                    pitch = 0.0;
+                }
+                let r = &mut self.posture.recs;
+                r[rec::SPINE].set_spring(0.037, 0.3);
+                r[rec::SPINE].target[2] = y;
+                r[rec::CHEST].set_spring(0.037, 0.3);
+                r[rec::CHEST].target[1] = pitch;
+                return;
+            }
         }
         if anim.view().seq_b == 0x51 { return; }
         let pos = self.pos;

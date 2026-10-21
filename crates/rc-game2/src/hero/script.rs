@@ -88,6 +88,9 @@ impl Hero {
                 self.play_fidget(anim, i);
             }
         } else if v.flags & 2 != 0 {
+            // A use that keeps the stance keeps its sequence; else the use ends (`0x18c0d8`) and the idle comes back.
+            if self.items.using && self.items.keep && v.seq_b as i32 == self.items.use_seq { return; }
+            self.items.using = false;
             let seq = self.idle_seq();
             self.set_anim(anim, if seq == 0x51 { 18.0 } else { -2.0 }, seq, 0);
         }

@@ -16,6 +16,7 @@ pub mod hud;
 pub mod level;
 pub mod light;
 pub mod moby;
+pub mod particles;
 pub mod paths;
 pub mod rng;
 pub mod scene;

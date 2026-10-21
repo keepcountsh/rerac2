@@ -13,9 +13,10 @@
 //! +0x0c the cooldown (seconds), +0x10 a use started (s16), +0x14 the muzzle, +0x28 the flash ticks, +0x30 the last
 //! search's pick, +0x34 the ticks it must stay picked.
 //!
-//! Not ported: the muzzle sprites (`0x3a8ce0`) and flash light (`0x2fda20`, `+0x24`), the aim marker (`0x2db498`),
-//! the pad rumble (`0x2d6d60`), the hit sparks (`0x3e46d8`), the trail buffer (`0x32b1b8`), the stats (`0x18c8dc..`),
-//! the first-person aim (`0x18b320`).
+//! The muzzle flash (`0x3a8ce0`, [`muzzle_flash`]) and a point-blank hit's smoke and sparks (`0x3e46d8`) are particles.
+//!
+//! Not ported: the flash light (`0x2fda20`, `+0x24`), the aim marker (`0x2db498`), the pad rumble (`0x2d6d60`), the
+//! stats (`0x18c8dc..`), the first-person aim (`0x18b320`).
 
 use crate::hero::items::{row, LANCER};
 use crate::hero::physics::{add, len, scale, sub, V3};
@@ -70,6 +71,8 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             m.set_pv_f(8, 0.0);
         }
     }
+    // `0x18aa18`: Ratchet aims at a live lock this tick.
+    if let Some(t) = w.mobys[id].pv_link(0) { ctx.hero.items.aim_target = Some((t, w.mobys[id].pv_f(8))); }
     // The search, ready and between holds.
     if w.mobys[id].state == 1 && w.mobys[id].pv_s(6) == 0 {
         let (sp, cp) = hero_rot[1].sin_cos();
@@ -153,8 +156,26 @@ fn cooldown(w: &mut MobyWorld, id: usize) -> bool {
     }
 }
 
-/// One shot: the use stance on the first, sequence 2, the flash, class sound 0, the shot and the point-blank hits.
+/// `0x3a8ce0`: the muzzle flash, nine steps down the Lancer's third row from 0.1 back along its second and 0.15 up its
+/// third: a white sprite (36750, 4 ticks) jittered 0.1 and an orange glow (262500 at alpha 0x10, `def[0x35]`).
+fn muzzle_flash(sys: &mut rc_game::particles::Particles, g: &mut crate::rng::Rng, muzzle: V3, rows: [V3; 3]) {
+    use crate::particles::sprite;
+    let mut base = add(add(muzzle, scale(rows[1], -0.1)), scale(rows[2], 0.15));
+    let step = scale(rows[2], -0.033_333_335);
+    let glow = sys.def_first(0x35);
+    for _ in 0..9 {
+        let p: V3 = std::array::from_fn(|k| base[k] + g.randf_signed(0.0, 0.1));
+        let spin = g.randi(0xff) as u8;
+        sprite(sys, g, 36_750.0, 36_750.0, 0.0, p, [0.0; 3], 4, 0x80_8080, spin, 0x7f, 0x7f, 1);
+        if let Some(i) = sprite(sys, g, 262_500.0, 262_500.0, 0.0, base, [0.0; 3], 4, 0x20_3080, spin, 0x10, 0x10, 1) { sys.pool.recs[i][2] = glow; }
+        base = add(base, step);
+    }
+}
+
+/// One shot: the muzzle flash, the use stance on the first, sequence 2, the flash, class sound 0, the shot and the
+/// point-blank hits (each with the impact's smoke and sparks).
 fn fire(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, muzzle: V3, damage: f32, speed: f32) {
+    if let Some(sys) = ctx.parts.as_deref_mut() { muzzle_flash(sys, &mut ctx.game.rng, muzzle, w.mobys[id].rows); }
     if w.mobys[id].pv_s(0x10) == 0 {
         ctx.hero.items.use_start(ctx.hero.group);
         w.mobys[id].set_pv_s(0x10, 1);
@@ -175,5 +196,8 @@ fn fire(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, muzzle: V3, damage: f32, sp
         t.kind = (w.mobys[id].o_class as u16 as u32) << 16 | 0x101;
         let p = w.mobys[m].pos;
         w.deliver_hit_any(m, &t, [p[0], p[1], p[2], 1.0]);
+        let at = aim::aim_point(w, m);
+        let cam = ctx.host.camera_pos();
+        if let Some(sys) = ctx.parts.as_deref_mut() { crate::moby::classes::shot::impact(sys, &mut ctx.game.rng, at, cam, true); }
     }
 }
