@@ -227,6 +227,38 @@ pub struct Bank {
 }
 
 impl Bank {
+    /// `other`'s sounds after this bank's (their grains after these, their tones' samples after these samples, on a
+    /// 16-byte ADPCM frame boundary), so one bank plays both: Going Commando's second bank (a gadget's, handle 4)
+    /// next to the level's. Returns the id of `other`'s sound 0. Child-sound and xref grains keep their ids (989snd
+    /// here plays neither).
+    pub fn append(&mut self, other: &Bank) -> u16 {
+        let base = self.sounds.len() as u16;
+        let first_grain = self.grains.len();
+        self.samples.resize(self.samples.len().next_multiple_of(16), 0);
+        let at = self.samples.len() as u32;
+        self.samples.extend_from_slice(&other.samples);
+        for g in &other.grains {
+            let mut g = *g;
+            if g.is_tone() {
+                let o = g.tone().sample_offset + at;
+                g.data[16..20].copy_from_slice(&o.to_le_bytes());
+            }
+            self.grains.push(g);
+        }
+        for snd in &other.sounds {
+            let mut snd = snd.clone();
+            snd.grains = snd.grains.start + first_grain..snd.grains.end + first_grain;
+            self.sounds.push(snd);
+        }
+        for v in &other.vags {
+            let mut v = *v;
+            v.offset += at as usize;
+            self.vags.push(v);
+        }
+        self.vags.sort_by_key(|v| v.offset);
+        base
+    }
+
     /// The index into [`Bank::vags`] of the sample at `offset`.
     pub fn vag_at(&self, offset: u32) -> Option<usize> { self.vags.binary_search_by_key(&(offset as usize), |v| v.offset).ok() }
     pub fn sound_grains(&self, sound: usize) -> &[Grain] { &self.grains[self.sounds[sound].grains.clone()] }

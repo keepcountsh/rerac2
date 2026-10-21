@@ -37,11 +37,11 @@ pub fn health(w: &MobyWorld, m: usize) -> Option<(f32, f32)> {
 /// `0x3204e8`: a crate (o_class 500..540).
 pub fn is_crate(w: &MobyWorld, m: usize) -> bool { w.mobys.get(m).is_some_and(|x| (500..=540).contains(&x.o_class)) }
 
-/// The aim point of moby `m`: its position raised by its aim height.
+/// The aim point of moby `m`: its position raised along its up row (`+0xe0`) by its aim height.
 pub fn aim_point(w: &MobyWorld, m: usize) -> V3 {
-    let p = w.mobys[m].pos;
+    let x = &w.mobys[m];
     let up = health(w, m).map_or(0.0, |(_, a)| a);
-    [p[0], p[1], p[2] + up]
+    std::array::from_fn(|k| x.pos[k] + x.rows[2][k] * up)
 }
 
 /// `0x3257a0(cone, from, dir, ..)`: the moby picked, if any.

@@ -805,6 +805,8 @@ struct GameHud {
     data: crate::rac2::Data,
     /// `(icon, frame)` → layer texture and texel size.
     icons: std::collections::HashMap<(u16, u16), (usize, [f32; 2])>,
+    /// FX texture → layer texture and texel size (the markers', rc_game2::hud::marker).
+    fx: std::collections::HashMap<u16, (usize, [f32; 2])>,
 }
 
 /// The HUD layer, made on the first frame with a game (composited on the main camera's UI, as crate::hud_render's
@@ -819,6 +821,7 @@ fn draw_hud(
     mut materials: ResMut<Assets<crate::hud_render::HudMaterial>>,
     mut composites: ResMut<Assets<crate::hud_render::HudComposite>>,
     flycams: Query<Entity, With<crate::fly_cam::FlyCam>>,
+    level: Res<crate::Level>,
 ) {
     let Some(p) = play.as_mut() else { return };
     let Some(hud) = hud else {
@@ -842,11 +845,17 @@ fn draw_hud(
             }
             Err(e) => eprintln!("rac2: no HUD icons ({e:#})"),
         }
+        // The markers' FX textures (the Lancer's reticle).
+        let mut fx = std::collections::HashMap::new();
+        if let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(0x26)).and_then(Option::as_ref) {
+            fx.insert(0x26u16, (textures.len(), [t.width as f32, t.height as f32]));
+            textures.push(t.clone());
+        }
         // On the main camera's UI, as crate::hud_render's HUD is.
         let Some(cam) = flycams.iter().next() else { return };
         let scaling = crate::hud_render::scaling(crate::graphics::Hud::Original);
         let layer = crate::hud_render::Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &textures, scaling, cam);
-        commands.insert_resource(GameHud { layer, data, icons });
+        commands.insert_resource(GameHud { layer, data, icons, fx });
         return;
     };
     let p: &mut Play = p;
@@ -856,6 +865,13 @@ fn draw_hud(
         rc_game2::gui::picture(&mut quads, rc_game2::gui::Picture::Movie);
     } else if p.game.scenes.mode != rc_game2::scene::SCENE {
         // In a scene the HUD and the help are not drawn (`0x2e6d88`).
+        // `0x2db598`: the tick's markers, then cleared (not while Ratchet is in state 0x6f).
+        let markers = std::mem::take(&mut p.game.markers);
+        if p.hero.state != 0x6f {
+            let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
+            let alive = |id: usize| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id)).is_some_and(|m| m.state != 0xfe && m.state != 0xfd);
+            quads.extend(rc_game2::hud::marker_quads(&markers, p.camera.pos, p.camera.rows, crate::play_camera::GAME_TAN_HALF_FOV, &tex, &alive));
+        }
         let draws = p.hud.draw(p.game.bolts);
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
         quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);

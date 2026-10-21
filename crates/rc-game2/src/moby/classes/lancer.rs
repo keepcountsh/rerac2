@@ -15,7 +15,9 @@
 //!
 //! The muzzle flash (`0x3a8ce0`, [`muzzle_flash`]) and a point-blank hit's smoke and sparks (`0x3e46d8`) are particles.
 //!
-//! Not ported: the flash light (`0x2fda20`, `+0x24`), the aim marker (`0x2db498`), the pad rumble (`0x2d6d60`), the
+//! The markers (`0x2db498`): the lock's green reticle and, in the look stance's twin, the crosshair.
+//!
+//! Not ported: the flash light (`0x2fda20`, `+0x24`), the pad rumble (`0x2d6d60`), the
 //! stats (`0x18c8dc..`), the first-person aim (`0x18b320`).
 
 use crate::hero::items::{row, LANCER};
@@ -29,6 +31,8 @@ const LOCK_DELAY: i32 = 5;
 const LOCK_HOLD: i16 = 5;
 /// `0x1b27e8` / `0x1b27f0`: the search's limits at the range (6°); 45° / 35° near Ratchet.
 const CONE: aim::Cone = aim::Cone { yaw: 0.104_719_76, pitch: 0.104_719_76, range: RANGE, near_pitch: 0.785_398_2, near_yaw: 0.610_865_2 };
+/// The reticle's FX texture.
+const RETICLE: u16 = 0x26;
 /// `t[3]` of a shot's template.
 pub const NO_KNOCK_LIMIT: f32 = 5627.987;
 
@@ -110,6 +114,17 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             }
         }
         w.mobys[id].set_pv_i(0x30, found.map_or(0, |f| f as i32));
+    }
+    // The markers (crate::hud::marker): in the look stance's twin the crosshair at the screen's centre (red while the
+    // cooldown runs with ammo left, else green); a lock's green reticle on its aim point, smaller with the distance.
+    if hero_state == 0x1d {
+        let red = 0.0 < w.mobys[id].pv_f(0xc) && ctx.hero.items.has_ammo(ctx.game);
+        crate::hud::marker(&mut ctx.game.markers, 1.0, id, if red { 0x6000_00ff } else { 0x600f_ff0f }, None, RETICLE);
+    }
+    if let Some(t) = w.mobys[id].pv_link(0) {
+        let at = aim::aim_point(w, t);
+        let d = len(sub(at, ctx.host.camera_pos()));
+        crate::hud::marker(&mut ctx.game.markers, (0.9 - d * 0.006_666_667 * 0.65).abs(), id, 0xff0f_ff0f, Some(at), RETICLE);
     }
     let it = ctx.hero.items;
     let fire_held = it.held & it.trigger != 0;

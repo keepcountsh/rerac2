@@ -38,6 +38,14 @@ pub struct Gadget {
     pub textures: Vec<Texture>,
 }
 
+/// Part B of `e` from `GADGET.WAD`'s bytes: the gadget's sound bank (`0x306018` loads it as bank 4), None without one.
+pub fn sound_bank(wad: &[u8], e: &GadgetEntry) -> Result<Option<crate::sound_bank::Bank>> {
+    if e.b.1 == 0 { return Ok(None); }
+    let f = Buf(wad);
+    let b = f.sub(e.b.0 * 2048, e.b.1 * 2048, "gadget sound bank")?;
+    crate::sound_bank::parse_bank(b.bytes()).map(Some)
+}
+
 /// Part A of `e` from `GADGET.WAD`'s bytes.
 pub fn read(wad: &[u8], e: &GadgetEntry) -> Result<Gadget> {
     let f = Buf(wad);

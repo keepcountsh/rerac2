@@ -25,6 +25,10 @@
 //! `0x443840(icon, 10)` keeps it up for 10 more ticks; its blends run forward from hidden and back once the timer runs
 //! out (the wrench: 10 ticks after it comes out).
 //!
+//! **Markers** (`0x2db498` queues, `0x2db598` draws and clears; [`marker`], [`marker_quads`]): up to six a tick, each a
+//! sprite of an FX texture (`0x2e8e68`), 40 × its size pixels, centred on its point's screen position (`0x2e46d8`) or
+//! the screen's centre, its alpha at most `$gp−0x6670` (0x40). The Lancer's: its lock's green reticle (FX 0x26).
+//!
 //! Not ported: the weapon's experience bar (sprite 5 at (10, 18.5), `0x139868`), the low-ammo red pulse (the faders
 //! `0x70202080` / `0x70242335` under a tenth of the most), the quick select ring, the XP bar (`+0xf4`), the vendor and
 //! the other screens of the GUI object, PAL's sizes.
@@ -33,6 +37,59 @@ use crate::gui::{self, Quad, Tex};
 use rc_formats::rac2::boot::Glyph;
 use rc_formats::rac2::gui_sprite::Sprite;
 use std::collections::HashMap;
+
+/// A screen marker (`0x1bb000 + 0x30·i`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Marker {
+    /// `+0x00`: the world point (`+0x24` set), else the screen's centre.
+    pub pos: Option<[f32; 3]>,
+    /// `+0x10`: the size (× 40 pixels).
+    pub size: f32,
+    /// `+0x14`: the colour (GS RGBA, R low).
+    pub colour: u32,
+    /// `+0x18`: the FX texture.
+    pub fx: u16,
+    /// `+0x20`: the moby it belongs to (not drawn once deleted).
+    pub moby: usize,
+}
+
+/// `$gp−0x6670`: the markers' most alpha.
+const MARKER_ALPHA: u32 = 0x40;
+
+/// `0x2db498(size, angle 0, step, moby, colour, pos, fx, −1)`: a marker queued for the HUD's draw, six at most. The FX
+/// textures 0x1f..0x27 draw as one sprite centred on the point (mode 2), the Lancer's 0x26 among them.
+pub fn marker(list: &mut Vec<Marker>, size: f32, moby: usize, colour: u32, pos: Option<[f32; 3]>, fx: u16) {
+    if 6 <= list.len() { return; }
+    let colour = if MARKER_ALPHA < colour >> 24 { colour & 0xff_ffff | MARKER_ALPHA << 24 } else { colour };
+    list.push(Marker { pos, size, colour, fx, moby });
+}
+
+/// `0x2db598` → `0x2dab20` (mode 2) → `0x2e8e68`: each marker whose moby is alive (`alive`) as a quad, in pixels: the
+/// point seen from the camera at `eye` (rows forward, left, up; half-angle tangent `tan`, y × 0.775) or the screen's
+/// centre, 40 × size square, its texels 1..63 (`tex`: the FX texture's layer texture and texel size, 64 × 64 on the
+/// GS). Behind the camera: not drawn.
+pub fn marker_quads(markers: &[Marker], eye: [f32; 3], rows: [[f32; 3]; 3], tan: f32, tex: &dyn Fn(u16) -> Option<(Tex, [f32; 2])>, alive: &dyn Fn(usize) -> bool) -> Vec<Quad> {
+    let mut out = Vec::new();
+    let (cx, cy) = (gui::SCREEN_W * 0.5, gui::SCREEN_H * 0.5);
+    for m in markers {
+        if !alive(m.moby) { continue; }
+        let Some((t, [tw, th])) = tex(m.fx) else { continue };
+        let [x, y] = match m.pos {
+            Some(p) => {
+                let d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
+                let dot = |r: [f32; 3]| r[0] * d[0] + r[1] * d[1] + r[2] * d[2];
+                let z = dot(rows[0]);
+                if z <= 0.0 { continue; }
+                [cx - dot(rows[1]) / z * (cx / tan), cy - dot(rows[2]) / z * (cy / (tan * 0.775))]
+            }
+            None => [cx, cy],
+        };
+        let h = m.size * 40.0 * 0.5;
+        let (u0, u1, v0, v1) = (tw / 64.0, tw * 63.0 / 64.0, th / 64.0, th * 63.0 / 64.0);
+        out.push(Quad { pos: [[x - h, y + h], [x + h, y + h], [x - h, y - h], [x + h, y - h]], uv: [[u0, v0], [u1, v0], [u0, v1], [u1, v1]], tex: t, rgba: m.colour.to_le_bytes() });
+    }
+    out
+}
 
 /// `0x445be8(t, p0, m0, m1, p1)`: the Hermite curve.
 pub fn hermite(t: f32, p0: f32, m0: f32, m1: f32, p1: f32) -> f32 {

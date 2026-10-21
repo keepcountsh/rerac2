@@ -24,6 +24,15 @@ fn main() -> anyhow::Result<()> {
         for e in core.moby_classes.iter().filter(|e| e.textures[0] == 0xff && (e.unknown_8 != 0 || e.o_class == 0xd54 || e.o_class >= 0x10d0 && e.o_class < 0x10f0)) { println!("no-tex class {:#x} off {:#x} u8 {:#x} uc {:#x}", e.o_class, e.offset_in_asset_wad, e.unknown_8, e.unknown_c); }
     }
     println!("gadget words: {:x?}", core.gadgets.iter().take(16).collect::<Vec<_>>());
+    if std::env::var("GLOWS").is_ok() {
+        // Class byte 0xa (R&C1: the first glow packet of the high LOD) against the glow word (+0x40).
+        for e in &core.moby_classes {
+            let Some(b) = core.block(&data, &format!("moby_class/{:04}", e.o_class)) else { continue };
+            if b.len() < 0x48 { continue; }
+            let glow = u32::from_le_bytes(b[0x40..0x44].try_into().unwrap());
+            println!("glow class {:#x}: high {} byte_a {} byte_b {} glow {glow:#x}", e.o_class, b[4], b[0xa], b[0xb]);
+        }
+    }
     for c in std::env::var("CLASSES").ok().map(|v| v.split(',').filter_map(|x| x.parse::<i32>().ok()).collect::<Vec<_>>()).unwrap_or(vec![0, 13, 14, 71, 500, 501, 511]) {
         let Some(b) = core.block(&data, &format!("moby_class/{c:04}")) else { continue };
         if let Ok(k) = moby::parse_moby_class_for(Game::Rac2, b) {

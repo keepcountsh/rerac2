@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
         let class = wad::decompress(&wad_file[co..co + cs])?;
         println!("  class {} bytes, header {:02x?}", class.len(), &class[..0x40]);
         match moby::parse_moby_class_for(Game::Rac2, &class) {
-            Ok(m) => println!("  parsed: high {} low {} metal {} joints {} seqs {} pieces {}", m.high_lod.len(), m.low_lod.len(), m.metal.len(), m.header.joint_count, m.sequence_pointers.len(), m.pieces.len()),
+            Ok(m) => println!("  glow rgba {:#x} first glow high {} low {}, mode {:#x}\n  parsed: high {} low {} metal {} joints {} seqs {} pieces {}", m.header.glow_rgba, m.header.rac1_byte_a, m.header.rac1_byte_b, m.header.mode_bits, m.high_lod.len(), m.low_lod.len(), m.metal.len(), m.header.joint_count, m.sequence_pointers.len(), m.pieces.len()),
             Err(e) => println!("  parse: {e}"),
         }
         if ts != 0 {
@@ -35,6 +35,22 @@ fn main() -> anyhow::Result<()> {
         }
         let b_part = &wad_file[bs * 2048..(bs + bn) * 2048];
         println!("  B header {:x?}", (0..8).map(|k| u32::from_le_bytes(b_part[4 * k..4 * k + 4].try_into().unwrap())).collect::<Vec<_>>());
+        // The class's sound defs (header +0x0d count, +0x28 pointer) and part B as a bank.
+        let n = class[0x0d] as usize;
+        let ptr = u32::from_le_bytes(class[0x28..0x2c].try_into().unwrap()) as usize;
+        for j in 0..n {
+            let d: sound_bank::SoundDef = bytemuck::pod_read_unaligned(&class[ptr + 0x20 * j..ptr + 0x20 * (j + 1)]);
+            println!("  def {j}: {d:?}");
+        }
+        if let Some(i) = b_part.windows(4).position(|x| x == b"SBlk") {
+            println!("  SBlk at {i:#x}");
+            for at in [i.saturating_sub(4), i, i.saturating_sub(8), 0] {
+                match sound_bank::parse_bank(&b_part[at..]) {
+                    Ok(bank) => { println!("  bank at {at:#x}: {} sounds, {} grains, {} vags", bank.sounds.len(), bank.grains.len(), bank.vags.len()); break; }
+                    Err(e) => println!("  bank at {at:#x}: {e}"),
+                }
+            }
+        }
     }
     Ok(())
 }

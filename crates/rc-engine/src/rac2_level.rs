@@ -240,6 +240,40 @@ fn music(root: &Path, index: u32) -> Result<[Option<std::sync::Arc<rc_game::audi
     Ok(tracks)
 }
 
+/// The hand gadgets' sounds (`0x306018` / `0x305d50`): a gadget's part B is a sound bank of its own (bank 4) and its
+/// class's defs (blob header +0x0d count, +0x28 pointer) play from it, their `index` the blob's own (the loader only
+/// writes the bank handle). The port's audio has one bank, so each gadget's is appended to the level's and its defs
+/// point past the level's sounds.
+fn gadget_sounds(root: &Path, bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds) {
+    use rc_formats::rac2::{gadget, toc::Toc};
+    let run = |bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds| -> Result<()> {
+        let hdr = crate::disc_source::read(root, "RC2.HDR")?;
+        let toc = Toc::parse(&hdr)?;
+        let wad = crate::disc_source::read(root, "G/GADGET.WAD")?;
+        for o in GADGETS {
+            let Some(e) = gadget::gadgets(&toc)?.into_iter().find(|e| e.o_class == o) else { continue };
+            let Some(own) = gadget::sound_bank(&wad, &e)? else { continue };
+            let blob = gadget::read(&wad, &e)?.class;
+            let b = rc_formats::buf::Buf(&blob);
+            let (n, ptr) = (b.u8(0x0d)? as usize, b.i32(0x28)?);
+            let mut defs: Vec<rc_formats::sound_bank::SoundDef> = if n > 0 && 0 < ptr { b.pod_slice(ptr as usize, n, "gadget sound defs")? } else { Vec::new() };
+            let base = bank.append(&own);
+            for d in &mut defs {
+                d.index = base + d.index;
+                d.bank_handle = 4;
+            }
+            let bank_ids = defs.iter().map(|d| d.index).collect();
+            let c = rc_formats::sound_bank::ClassSounds { o_class: o, bank_ids, defs, header_count: Some(n as u8) };
+            match sounds.classes.iter_mut().find(|c| c.o_class == o) {
+                Some(x) => *x = c,
+                None => sounds.classes.push(c),
+            }
+        }
+        Ok(())
+    };
+    if let Err(e) = run(bank, sounds) { eprintln!("audio: the gadgets' sounds not read ({e:#})"); }
+}
+
 /// The level's sound data for crate::audio_out (rc_game::audio, the 989snd bank R&C1's reader parses as it is): the
 /// level's core sound bank (the file's part 1), the sound definitions (level and class, `0x304660`'s remap) and the
 /// music ([`music`]) and the sound instances. Not yet: the env sample points. None with `RC_AUDIO=0` or when the
@@ -249,8 +283,10 @@ fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &leve
     let run = || -> Result<rc_game::audio::LevelAudio> {
         let part = wad.part_bytes(Part::CoreBank)?.context("no core sound bank part")?;
         let bank = if rc_formats::wad::is_wad(part) { rc_formats::wad::decompress(part)? } else { part.to_vec() };
-        let bank = std::sync::Arc::new(rc_formats::sound_bank::parse_bank(&bank)?);
-        let sounds = rc_formats::sound_bank::parse_level_sounds_for(Game::Rac2, core_index, core, core_data)?;
+        let mut bank = rc_formats::sound_bank::parse_bank(&bank)?;
+        let mut sounds = rc_formats::sound_bank::parse_level_sounds_for(Game::Rac2, core_index, core, core_data)?;
+        gadget_sounds(root, &mut bank, &mut sounds);
+        let bank = std::sync::Arc::new(bank);
         let music = music(root, index).unwrap_or_else(|e| {
             eprintln!("audio: the level's music not read ({e:#})");
             Default::default()
