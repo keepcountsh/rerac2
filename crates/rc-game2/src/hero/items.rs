@@ -313,8 +313,8 @@ fn hand_glow(world: &mut MobyWorld, ctx: &mut Ctx, id: usize) {
     let m = &mut world.mobys[id];
     m.glow = lerp(ease, m.glow, target);
     let colour = m.glow & if (ramp as i32) < cap as i32 { ramp } else { cap };
-    let pos = m.pos;
-    if let Some(sys) = ctx.parts.as_deref_mut() { crate::particles::glow(sys, &mut ctx.game.rng, 50_400.0, 0.15, [0.195, -0.317, 0.0], id, pos, colour, 2); }
+    let (pos, draw_dist) = (m.pos, m.draw_dist);
+    if let Some(sys) = ctx.parts.as_deref_mut() { crate::particles::glow(sys, &mut ctx.game.rng, 50_400.0, 0.15, [0.195, -0.317, 0.0], id, pos, draw_dist, colour, 2); }
 }
 
 /// `0x2aeb90`'s read of the enemy the head looks at (`0x18c2b0`): its health block's look kind (`+0x2c`).

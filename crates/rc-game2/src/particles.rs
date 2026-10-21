@@ -165,10 +165,10 @@ pub fn puff(sys: &mut Particles, rng: &mut Rng, jitter: f32, grow_lo: f32, grow_
 
 /// `0x33f550(size, pull, offset, moby, rgba, joint −1, def 1, life, 0, −1)`: a glow (type 0x59) on moby `moby` at
 /// `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` of the way toward the
-/// camera, for `life` ticks; additive, near 1 / far 128. Starts at the moby's position plus the offset (unturned): its
+/// camera, for `life` ticks; additive, near 1 / far the moby's draw distance (`+0x32 >> 5`, ×32). Starts at the moby's position plus the offset (unturned): its
 /// update places it the same tick.
 #[allow(clippy::too_many_arguments)]
-pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f32; 3], moby: usize, pos: [f32; 3], rgba: u32, life: i16) -> Option<usize> {
+pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f32; 3], moby: usize, pos: [f32; 3], draw_dist: i16, rgba: u32, life: i16) -> Option<usize> {
     let i = sys.create_part(0x59)?;
     let def = sys.def_frame(0x59, 1);
     let rot = rng.randi(0xff) as u8;
@@ -177,7 +177,8 @@ pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f
     rec::set_ff(r, 0xc, size);
     r[1] = 0;
     r[3] = 0x48;
-    r[9] = 0x40 + 4;
+    // Near 1; far the moby's draw distance >> 5 (in 32s; the hand item's 0x20: 1).
+    r[9] = ((draw_dist >> 5) << 4) as u8 + 4;
     r[8] = rot;
     rec::set_i16(r, 0xa, life);
     r[2] = def;

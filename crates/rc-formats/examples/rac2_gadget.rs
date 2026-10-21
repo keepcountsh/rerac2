@@ -1,6 +1,7 @@
 //! Going Commando's gadgets: `cargo run -p rc-formats --example rac2_gadget -- <extracted-rac2> <o_class hex>` reads the
 //! gadget's entry of `RC2.HDR`'s gadget table (o_class, part A sector / sectors, part B sector / sectors), decompresses
 //! part A's class and texture (part B: its sounds) and parses the class.
+use rc_formats::rac2::gadget;
 use rc_formats::rac2::toc::{Global, Toc};
 use rc_formats::*;
 
@@ -39,7 +40,9 @@ fn main() -> anyhow::Result<()> {
                 for (k, sm) in m.high_lod.iter().enumerate() {
                     let (mut lo, mut hi) = ([i16::MAX; 3], [i16::MIN; 3]);
                     for v in &sm.vertices { for (a, x) in [v.x, v.y, v.z].into_iter().enumerate() { lo[a] = lo[a].min(x); hi[a] = hi[a].max(x); } }
-                    println!("  high {k:2}: {} verts tex {:?} hdr {:?} range {:?}..{:?}", sm.vertices.len(), sm.texture_indices, sm.vertex_table, lo, hi);
+                    let (mut s0, mut s1) = ([f32::MAX; 2], [f32::MIN; 2]);
+                    for v in &sm.vertices { for a in 0..2 { let x = v.st[a] as f32 / 4096.0 * 128.0; s0[a] = s0[a].min(x); s1[a] = s1[a].max(x); } }
+                    println!("  high {k:2}: {} verts glow {} tex {:?} texels {:?}..{:?} range {:?}..{:?}", sm.vertices.len(), sm.glow_vertices, sm.texture_indices, s0, s1, lo, hi);
                 }
             }
         }
@@ -47,6 +50,15 @@ fn main() -> anyhow::Result<()> {
             let t = wad::decompress(&wad_file[to..to + ts])?;
             let v = |k: usize| u32::from_le_bytes(t[4 * k..4 * k + 4].try_into().unwrap());
             println!("  texture {} bytes, words {:x?}", t.len(), (0..12).map(v).collect::<Vec<_>>());
+        }
+        // `TEXDUMP=dir`: the gadget's textures as PPM (RGB) files.
+        if let Ok(dir) = std::env::var("TEXDUMP") {
+            let g = gadget::read(&wad_file, &gadget::GadgetEntry { o_class: c, a: (a, an), b: (bs, bn) })?;
+            for (k, t) in g.textures.iter().enumerate() {
+                let mut out = format!("P6\n{} {}\n255\n", t.width, t.height).into_bytes();
+                for px in t.rgba.chunks(4) { out.extend_from_slice(&px[..3]); }
+                std::fs::write(format!("{dir}/gadget_{c:x}_{k}.ppm"), out)?;
+            }
         }
         let b_part = &wad_file[bs * 2048..(bs + bn) * 2048];
         println!("  B header {:x?}", (0..8).map(|k| u32::from_le_bytes(b_part[4 * k..4 * k + 4].try_into().unwrap())).collect::<Vec<_>>());

@@ -24,6 +24,18 @@ fn main() -> anyhow::Result<()> {
         for e in core.moby_classes.iter().filter(|e| e.textures[0] == 0xff && (e.unknown_8 != 0 || e.o_class == 0xd54 || e.o_class >= 0x10d0 && e.o_class < 0x10f0)) { println!("no-tex class {:#x} off {:#x} u8 {:#x} uc {:#x}", e.o_class, e.offset_in_asset_wad, e.unknown_8, e.unknown_c); }
     }
     println!("gadget words: {:x?}", core.gadgets.iter().take(16).collect::<Vec<_>>());
+    if let Ok(dir) = std::env::var("PARTTEX") {
+        // The particle textures (`ParseParticleTexs`): their count, the defs' layer count, and each as PPM.
+        let pt = rc_formats::particle_tex::parse_particle_textures(&core, index, &data)?;
+        println!("particle textures {}, defs header {:?}, def[0x59] frames {:?}", pt.textures.len(), pt.defs.header, pt.defs.frames(0x59));
+        for (k, t) in pt.textures.iter().enumerate() {
+            let mut out = format!("P6\n{} {}\n255\n", t.width, t.height).into_bytes();
+            for px in t.rgba.chunks(4) { out.extend_from_slice(&[px[0], px[1], px[2]]); }
+            std::fs::write(format!("{dir}/part_{k:02x}.ppm"), out)?;
+            let a: u32 = t.rgba.chunks(4).map(|p| p[3] as u32).sum::<u32>() / (t.width * t.height).max(1);
+            println!("  tex {k:#x}: {}x{} mean alpha {a}", t.width, t.height);
+        }
+    }
     if std::env::var("GLOWS").is_ok() {
         // Class byte 0xa (R&C1: the first glow packet of the high LOD) against the glow word (+0x40).
         for e in &core.moby_classes {

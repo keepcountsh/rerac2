@@ -350,12 +350,15 @@ fn setup(
         external: false,
     });
 
-    // Textures: one 32×32 layer per part texture, alpha back in GS units (0x80 = 1.0) like shrub_render::mip_image.
+    // Textures: one layer per part texture, alpha back in GS units (0x80 = 1.0) like shrub_render::mip_image. The
+    // layers take the largest texture's size (R&C1's are all 32×32; Going Commando's glows 0x3e / 0x3f are 64×64);
+    // a smaller one is resampled into its layer, bilinearly at the layer's texel centres, as the GS samples it over
+    // the same 0..1 range.
     let Some(tex) = lp.textures.as_ref().filter(|t| !t.textures.is_empty()) else { return };
-    let (w, h) = (tex.textures[0].width, tex.textures[0].height);
+    let (w, h) = tex.textures.iter().fold((0, 0), |(w, h), t| (w.max(t.width), h.max(t.height)));
     let mut rgba = Vec::with_capacity(tex.textures.len() * (w * h * 4) as usize);
     for t in &tex.textures {
-        if (t.width, t.height) == (w, h) { rgba.extend_from_slice(&t.rgba) } else { rgba.extend(std::iter::repeat_n(0u8, (w * h * 4) as usize)) }
+        if (t.width, t.height) == (w, h) { rgba.extend_from_slice(&t.rgba) } else { rgba.extend(resample(t, w, h)) }
     }
     for a in rgba.iter_mut().skip(3).step_by(4) { *a = if *a == 0xff { 0x80 } else { *a / 2 }; }
     let mut img = Image::new_uninit(
@@ -476,6 +479,27 @@ pub(crate) fn update_parts(sim: &mut ParticleSim, rng: Option<&mut Rng>) {
 }
 
 /// Pass 1 + pass 2 for this frame's camera: rewrite the sprite buffers in back-to-front order.
+/// `t` resampled to `w × h`: each new texel bilinearly from `t` at its centre's position (clamped to the edges).
+fn resample(t: &rc_formats::texture::Texture, w: u32, h: u32) -> Vec<u8> {
+    let (sw, sh) = (t.width.max(1) as i32, t.height.max(1) as i32);
+    let at = |x: i32, y: i32, c: usize| t.rgba.get(((y.clamp(0, sh - 1) * sw + x.clamp(0, sw - 1)) * 4) as usize + c).copied().unwrap_or(0) as f32;
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let fy = (y as f32 + 0.5) * sh as f32 / h as f32 - 0.5;
+        let (y0, ty) = (fy.floor() as i32, fy - fy.floor());
+        for x in 0..w {
+            let fx = (x as f32 + 0.5) * sw as f32 / w as f32 - 0.5;
+            let (x0, tx) = (fx.floor() as i32, fx - fx.floor());
+            for c in 0..4 {
+                let top = at(x0, y0, c) * (1.0 - tx) + at(x0 + 1, y0, c) * tx;
+                let bottom = at(x0, y0 + 1, c) * (1.0 - tx) + at(x0 + 1, y0 + 1, c) * tx;
+                out.push((top * (1.0 - ty) + bottom * ty).round().clamp(0.0, 255.0) as u8);
+            }
+        }
+    }
+    out
+}
+
 fn build_sprites(
     sim: Option<ResMut<ParticleSim>>,
     mesh: Option<ResMut<ParticleMesh>>,
