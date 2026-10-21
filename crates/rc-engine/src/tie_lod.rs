@@ -189,7 +189,17 @@ pub struct TieLodState {
     /// What follows the per-instance words in the buffer: one `vec4<u32>` per instance whose x is its point-light
     /// nibble list, then the point-light bank (16 `vec4`; crate::world_lights; tie.wgsl reads both).
     tail: Vec<u8>,
+    /// Per instance: hidden by the level's objects (the runtime tie's `+0x1e` bit 2; Going Commando's
+    /// `MobyWorld::hidden_ties`): drawn as culled. R&C1 never hides one.
+    hidden: Vec<bool>,
+    /// The static instance records (crate::tie_render's storage buffer, [`RECORD_BYTES`] each) and their bytes, for
+    /// the instances the game moves (Going Commando's carriers: `MobyWorld::moved_ties`); rewritten when dirty.
+    records: Option<(Handle<ShaderBuffer>, Vec<u8>)>,
+    records_dirty: bool,
 }
+
+/// One static instance record of crate::tie_render (`TieInst`: model, centre + distance, misc, 64 colours, 64 normals).
+pub const RECORD_BYTES: usize = 864;
 
 impl TieLodState {
     pub fn new(inputs: Vec<TieLodInput>, occl: Vec<OcclBits>, fog: LevelFog, buffers: &mut Assets<ShaderBuffer>) -> Self {
@@ -205,7 +215,10 @@ impl TieLodState {
         let force_lod0 = std::env::var("RC_TIE_LOD").is_ok_and(|v| v.trim() == "0");
         let cpu_cull = !std::env::var("RC_TIE_CPU_CULL").is_ok_and(|v| v.trim() == "0");
         let n = inputs.len();
-        TieLodState { buffer, inputs, occl, fog, force_lod0, last_hist: [usize::MAX; 6], entities: vec![Vec::new(); n], shown: vec![true; n], cpu_cull, sway: sway_enabled(), tail }
+        TieLodState {
+            buffer, inputs, occl, fog, force_lod0, last_hist: [usize::MAX; 6], entities: vec![Vec::new(); n], shown: vec![true; n], cpu_cull, sway: sway_enabled(), tail,
+            hidden: vec![false; n], records: None, records_dirty: false,
+        }
     }
 
     /// crate::world_lights: the ties' nibble lists and the bank bytes, into the buffer after the instance words.
@@ -222,6 +235,40 @@ impl TieLodState {
                 d[at..].copy_from_slice(&self.tail);
             }
         }
+    }
+
+    /// The static instance records and their bytes (crate::tie_render), for [`TieLodState::move_instance`].
+    pub fn set_records(&mut self, buffer: Handle<ShaderBuffer>, bytes: Vec<u8>) { self.records = Some((buffer, bytes)); }
+
+    /// Instance `ii` hidden (or shown again) by the level's objects.
+    pub fn set_hidden(&mut self, ii: usize, hidden: bool) {
+        if let Some(h) = self.hidden.get_mut(ii) { *h = hidden; }
+    }
+
+    /// Instance `ii` moved to the game matrix `m` (columns: the rows and the position, `[3][3]` = 1): its record's
+    /// model, its bounding sphere (the class sphere `bsphere` through `m`, `tie_light::instance_centre`'s rule) for
+    /// the culls and the record, its sway origin. Returns the new model (the entities' transform) and its entities.
+    pub fn move_instance(&mut self, ii: usize, m: [[f32; 4]; 4], bsphere: [f32; 4]) -> Option<(Mat4, &[Entity])> {
+        let inp = self.inputs.get_mut(ii)?;
+        let mut m = m;
+        m[3][3] = 1.0;
+        let model = crate::tie_render::axes() * Mat4::from_cols_array_2d(&m);
+        let c: [f32; 3] = std::array::from_fn(|k| m[0][k] * bsphere[0] + m[1][k] * bsphere[1] + m[2][k] * bsphere[2] + m[3][k]);
+        let len = |v: [f32; 4]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        let r = bsphere[3] * len(m[0]).max(len(m[1])).max(len(m[2]));
+        inp.sphere = [c[0], c[1], c[2], r];
+        if let Some((_, o)) = inp.sway.as_mut() { *o = [m[3][0], m[3][1], m[3][2]]; }
+        if let Some((_, bytes)) = self.records.as_mut() {
+            let at = ii * RECORD_BYTES;
+            if let Some(rec) = bytes.get_mut(at..at + RECORD_BYTES) {
+                for (k, v) in model.to_cols_array().iter().enumerate() { rec[4 * k..4 * k + 4].copy_from_slice(&v.to_le_bytes()); }
+                let centre = crate::tfrag_render::game_to_bevy(c);
+                for (k, v) in [centre.x, centre.y, centre.z].iter().enumerate() { rec[64 + 4 * k..68 + 4 * k].copy_from_slice(&v.to_le_bytes()); }
+                rec[80..84].copy_from_slice(&r.to_le_bytes());
+                self.records_dirty = true;
+            }
+        }
+        Some((model, self.entities.get(ii).map_or(&[][..], |e| &e[..])))
     }
 
     /// Instance `ii`'s part entities (spawned visible).
@@ -278,7 +325,7 @@ pub fn update_tie_lods(
     let mask = occl.as_ref().map(|o| o.mask);
     for (ii, (inp, bits)) in state.inputs.iter().zip(&state.occl).enumerate() {
         // TieProc: `mask[+0x19] & +0x18 == 0 → next`, before the draw-distance and sphere tests.
-        if mask.as_ref().is_some_and(|m| !bits.visible(m)) {
+        if state.hidden[ii] || mask.as_ref().is_some_and(|m| !bits.visible(m)) {
             hist[0] += 1;
             words.extend_from_slice(&[LOD_CULLED, 0, 0, 0, 0, 0, 0, 0]);
             continue;
@@ -319,6 +366,9 @@ pub fn update_tie_lods(
     let mut d = u32_bytes(&words);
     d.extend_from_slice(&state.tail);
     crate::asset_write::set_buffer(&mut buffers, &state.buffer, &d);
+    if std::mem::take(&mut state.records_dirty) {
+        if let Some((b, bytes)) = &state.records { crate::asset_write::set_buffer(&mut buffers, b, bytes); }
+    }
     if hist != state.last_hist && time.elapsed_secs() - *last_print >= 1.0 {
         *last_print = time.elapsed_secs();
         state.last_hist = hist;

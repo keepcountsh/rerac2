@@ -325,7 +325,8 @@ fn build_parts(c: &LevelTieClass, meshes: &mut Assets<Mesh>, untextured: &mut us
 }
 
 /// `game_to_bevy` as a 4×4 (columns = images of game x, y, z).
-fn axes() -> Mat4 { Mat4::from_mat3(Mat3::from_cols(Vec3::X, Vec3::NEG_Z, Vec3::Y)) }
+/// Game axes to Bevy's (the instance model's left factor).
+pub(crate) fn axes() -> Mat4 { Mat4::from_mat3(Mat3::from_cols(Vec3::X, Vec3::NEG_Z, Vec3::Y)) }
 
 /// The static storage record (`TieInst` in tie.wgsl): model (16 f32), centre xyz + draw distance, misc
 /// (x = bounding radius), then the 64 colours as packed RGBA8, then the class's 64 normals `LightTies` lights with,
@@ -455,8 +456,10 @@ fn spawn_ties_on(
         write_record(&mut bytes, &model, centre, dist, radius, &ties.colors[ii], normals);
         models.push(model);
     }
-    let inst_buffer = buffers.add(ShaderBuffer::new(&bytes, RenderAssetUsages::RENDER_WORLD));
+    let inst_buffer = buffers.add(ShaderBuffer::new(&bytes, RenderAssetUsages::default()));
     let mut lod_state = crate::tie_lod::TieLodState::new(lod_inputs, level.occlusion.objects.tie.clone(), level.fog, buffers);
+    // The records stay in the main world too: the game's movers rewrite them (crate::tie_lod).
+    lod_state.set_records(inst_buffer.clone(), bytes);
     let lod_buffer = lod_state.buffer.clone();
     let tint = if crate::tie_lod::tint_enabled() { 1.0 } else { 0.0 };
 

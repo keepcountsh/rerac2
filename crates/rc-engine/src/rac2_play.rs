@@ -42,7 +42,7 @@ impl Plugin for Rac2PlayPlugin {
             .init_resource::<PadFrame>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
-            .add_systems(Update, (draw_created, draw_hud))
+            .add_systems(Update, (draw_created, draw_hud, move_instances))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
             .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>));
     }
@@ -806,6 +806,50 @@ fn draw_created(
         return;
     };
     draw.update(mobys, &level.0, &mut commands, &mut meshes, &mut images, &mut materials, &mut buffers, &mut transforms);
+}
+
+/// The ties and shrubs the level's objects moved or hid (`MobyWorld::moved_ties` / `moved_shrubs` / `hidden_ties`)
+/// to the tie and shrub renderers: the new matrix with the class sphere (scaled as the loaders' instance centre).
+#[allow(clippy::too_many_arguments)]
+fn move_instances(
+    mut commands: Commands,
+    level: Res<crate::Level>,
+    play: Option<ResMut<Play>>,
+    ties: Option<ResMut<crate::tie_lod::TieLodState>>,
+    shrubs: Option<ResMut<crate::shrub_render::ShrubSway>>,
+    mut buffers: ResMut<Assets<bevy::render::storage::ShaderBuffer>>,
+    mut hidden: Local<std::collections::HashSet<usize>>,
+) {
+    let Some(mut p) = play else { return };
+    let Some(mobys) = p.mobys.as_mut() else { return };
+    let world = &mut mobys.world;
+    let lv = &level.0;
+    let scaled = |b: [f32; 4], s: f32| b.map(|x| x * s);
+    if let Some(mut ties) = ties {
+        // A new level's ties start shown.
+        if ties.is_added() { hidden.clear(); }
+        for ii in std::mem::take(&mut world.moved_ties) {
+            let (Some(m), Some(Some(ci))) = (world.ties.get(ii), lv.ties.class_of.get(ii)) else { continue };
+            let h = &lv.ties.classes[*ci].class.header;
+            if let Some((model, es)) = ties.move_instance(ii, *m, scaled(h.bsphere, h.scale)) {
+                let t = Transform::from_matrix(model);
+                for e in es.to_vec() { commands.entity(e).insert(t); }
+            }
+        }
+        if world.hidden_ties != *hidden {
+            for &ii in hidden.difference(&world.hidden_ties) { ties.set_hidden(ii, false); }
+            for &ii in &world.hidden_ties { ties.set_hidden(ii, true); }
+            *hidden = world.hidden_ties.clone();
+        }
+    }
+    if let Some(mut sway) = shrubs {
+        for ii in std::mem::take(&mut world.moved_shrubs) {
+            let (Some(m), Some(Some(ci))) = (world.shrubs.get(ii), lv.shrubs.class_of.get(ii)) else { continue };
+            let h = &lv.shrubs.classes[*ci].class.header;
+            sway.move_instance(&mut commands, ii, *m, scaled(h.bsphere, h.scale));
+        }
+        sway.flush(&mut buffers);
+    }
 }
 
 /// The hero at Ratchet's instance (class 0).

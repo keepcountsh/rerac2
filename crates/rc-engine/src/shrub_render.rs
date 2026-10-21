@@ -464,9 +464,49 @@ pub struct ShrubSway {
     last_tick: Option<(u32, [f32; 3])>,
     /// The whole buffer: `len` shears, `len` point-light lists, the bank (see `ShrubMaterial::sway`).
     data: Vec<u8>,
+    /// The static instance records ([`RECORD_BYTES`] each) and their bytes, per instance its entities with their
+    /// cull, for the instances the game moves (Going Commando's carriers: `MobyWorld::moved_shrubs`).
+    records: Option<(Handle<ShaderBuffer>, Vec<u8>)>,
+    entities: Vec<Vec<(Entity, ShrubCull)>>,
+    records_dirty: bool,
 }
 
+/// One static instance record (`ShrubInst`: model, centre + D, origin + F, 24 palette words, 24 normals).
+pub const RECORD_BYTES: usize = 384;
+
 impl ShrubSway {
+    /// Instance `ii` moved to the game matrix `m` (columns: the rows and the position): its record's model, centre
+    /// (the class sphere `bsphere` through `m`) and origin, its entities' transform and cull, its sway origin. The
+    /// records reach the GPU with [`ShrubSway::flush`].
+    pub fn move_instance(&mut self, commands: &mut Commands, ii: usize, m: [[f32; 4]; 4], bsphere: [f32; 4]) {
+        let mut m = m;
+        m[3][3] = 1.0;
+        let model = axes() * Mat4::from_cols_array_2d(&m);
+        let c: [f32; 3] = std::array::from_fn(|k| m[0][k] * bsphere[0] + m[1][k] * bsphere[1] + m[2][k] * bsphere[2] + m[3][k]);
+        let (centre, origin) = (game_to_bevy(c), game_to_bevy([m[3][0], m[3][1], m[3][2]]));
+        if let Some((_, bytes)) = self.records.as_mut() {
+            let at = ii * RECORD_BYTES;
+            if let Some(rec) = bytes.get_mut(at..at + RECORD_BYTES) {
+                for (k, v) in model.to_cols_array().iter().enumerate() { rec[4 * k..4 * k + 4].copy_from_slice(&v.to_le_bytes()); }
+                for (k, v) in [centre.x, centre.y, centre.z].iter().enumerate() { rec[64 + 4 * k..68 + 4 * k].copy_from_slice(&v.to_le_bytes()); }
+                for (k, v) in [origin.x, origin.y, origin.z].iter().enumerate() { rec[80 + 4 * k..84 + 4 * k].copy_from_slice(&v.to_le_bytes()); }
+                self.records_dirty = true;
+            }
+        }
+        let t = Transform::from_matrix(model);
+        for (e, cull) in self.entities.get_mut(ii).into_iter().flatten() {
+            cull.centre = centre;
+            commands.entity(*e).insert((t, *cull));
+        }
+        for s in self.instances.iter_mut().filter(|s| s.0 as usize == ii) { s.2 = [m[3][0], m[3][1], m[3][2]]; }
+    }
+
+    /// The moved instances' records to the GPU.
+    pub fn flush(&mut self, buffers: &mut Assets<ShaderBuffer>) {
+        if !std::mem::take(&mut self.records_dirty) { return; }
+        if let Some((b, bytes)) = &self.records { crate::asset_write::set_buffer(buffers, b, bytes); }
+    }
+
     /// Zero shear, every nibble list empty (0xffff), an empty bank.
     fn initial_data(n: usize) -> Vec<u8> {
         let mut d = vec![0u8; n * 16 + crate::world_lights::BANK_BYTES];
@@ -586,13 +626,17 @@ fn spawn_shrubs_on(
         models.push(model);
         culls.push(ShrubCull { centre, d, f, variant: 0 });
     }
-    let inst_buffer = buffers.add(ShaderBuffer::new(&bytes, RenderAssetUsages::RENDER_WORLD));
+    // In the main world too: the game's movers rewrite the records (`ShrubSway::move_instance`).
+    let inst_buffer = buffers.add(ShaderBuffer::new(&bytes, RenderAssetUsages::default()));
     // Wind sway: zero shear for every instance until `update_sway` runs (and for good with `RC_SWAY=0`); no point
     // light on any instance until crate::world_lights writes one.
     let n = shrubs.instances.len().max(1);
     let data = ShrubSway::initial_data(n);
     let sway_buffer = buffers.add(ShaderBuffer::new(&data, RenderAssetUsages::default()));
-    let mut sway = ShrubSway { enabled: sway_enabled(), buffer: sway_buffer.clone(), len: n, instances: Vec::new(), last_tick: None, data };
+    let mut sway = ShrubSway {
+        enabled: sway_enabled(), buffer: sway_buffer.clone(), len: n, instances: Vec::new(), last_tick: None, data,
+        records: Some((inst_buffer.clone(), bytes)), entities: vec![Vec::new(); shrubs.instances.len()], records_dirty: false,
+    };
 
     let fallback = images.add(Image::new_fill(
         Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
@@ -681,6 +725,8 @@ fn spawn_shrubs_on(
                     ));
                     if !exact || swayed { e.insert(NoFrustumCulling); }
                     if let Some(l) = layer { e.insert(l.clone()); }
+                    let id = e.id();
+                    sway.entities[ii].push((id, ShrubCull { variant: list, ..culls[ii] }));
                     st.entities += 1;
                     if list == 2 { st.fade_twins += 1; }
                 }
