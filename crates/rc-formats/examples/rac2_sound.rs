@@ -34,6 +34,14 @@ fn main() -> anyhow::Result<()> {
             Err(e) => println!("  {e}"),
         }
     }
+    if std::env::var("CAMS").is_ok() {
+        let pv = rc_formats::rac2::gameplay::pvar_blocks(&g)?;
+        for c in rc_formats::rac2::gameplay::cameras(&g)? {
+            let b = usize::try_from(c.pvar_index).ok().and_then(|k| pv.get(k));
+            let words: Vec<String> = b.map(|b| b.chunks(4).map(|c| { let w = u32::from_le_bytes(c.try_into().unwrap_or([0; 4])); if (w >> 23) & 0xff > 0x70 && (w >> 23) & 0xff < 0x90 { format!("{}", f32::from_bits(w)) } else { format!("{:#x}", w) } }).collect()).unwrap_or_default();
+            println!("camera class {:#x} at {:?} pvar {}: {}", c.class, c.pos, c.pvar_index, words.join(" "));
+        }
+    }
     let index = w.lump(rc_formats::rac2::level::Lump::CoreIndex)?.expect("core index");
     let data = rc_formats::wad::decompress(w.lump(rc_formats::rac2::level::Lump::CoreData)?.expect("core data"))?;
     let core = rc_formats::level::parse_level_core_for(rc_formats::Game::Rac2, index, data.len())?;

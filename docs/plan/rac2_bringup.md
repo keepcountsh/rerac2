@@ -347,6 +347,19 @@ Not yet: the speech and music (milestone E), the subtitles (they show only with 
 frames Ratchet from its record's place through the follow camera's setters `0x425e50..0x426110` while he is still
 in its cuboid), first person (class 4), the blends `0x2d8ab0` / `0x2d9488`.
 
+**The placed view** (class 0x17, analysed, not ported): its row `{0x17, 0x42b950, stub, stub, stub}`; the hook
+always says "go on" but in play, while its pvar `+0x26` is 0, runs `0x42b428`: after the level's 4th frame, with
+Ratchet in its region (Aranos: cuboid 0x1d; `0x42b1a8`: still — `|eff.xy|` ≤ 1/60 unless in the scripted walk
+0x62 / 0x63 —, with `+0x34` no stick input, the follow camera not taken by another, `0x425e88`) it takes the follow
+camera: on its first two ticks it snaps the follow record to its place (the record's position as the camera; the
+horizontal distance to Ratchet `+0x38` as D+0x18c, the height `+0x3c` as D+0x190, the look height `+0x40` = `+0x3c −
++0x38 · tan(pitch +0x2c)` as D+0x110; the pivot, target, look point and offsets from them; the yaw toward `+0x30` when
+it differs by over 2° as `+0x44`), then each tick sets the distance, the pivot and look heights (`0x425f18` with the
+lock `0x426110`, `0x425f60`, `0x425f98`), the pitch `+0x28`° (`0x426030`), the leash off unless `+0x24`, and the yaw
+target `+0x44` (`0x425fe8`: D+0x4c with the rates D+0x54 / +0x58, which the port's follow camera does not have yet).
+Leaving the region or moving sets `+0x26` (off) until `0x42b9f0` resets it (the arrival 0x1330 does after the
+fly-by). Aranos's record: at (254.3, 196.4, 54.2), pitch 0.24, yaw −2.5.
+
 **The level's end** (ported 2026-10-21): Aranos's three scene triggers 0x0f6e play 0x22 (cuboid 0x27), the movie 0x16
 (cuboid 0x2e) and 0x23 (cuboid 0x29, at the far end); the last gives item 1 and has its word [0xc] = 1, so its reward
 (`0x40ffa0` states 3 / 4) calls `0x2f50f8(1, 1)`: `0x1b1940` (`$gp + 0x2950`) = Oozla and the level's main loop ends
