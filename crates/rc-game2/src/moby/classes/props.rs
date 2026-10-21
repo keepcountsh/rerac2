@@ -401,10 +401,14 @@ pub fn update_wreck(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 
 /// 0x0f13 (`0x40eb48`, a scene's props): at the start, once its uid is dead or counted, the mobys `+0x68`[0x40] /
-/// [0x44] go; then, outside a scene (`0x1a8f00` ≠ 2), the moby [0x20] is a target with its class's collision. The
-/// scenes' part (the scene `0x1bca70` 1 / 2 by its frame `0x1bca74`: the props hidden, the uid counted, the scene
-/// mobys `0x3dbed0` / `0x3dbfb0` driven, the sounds at the frames 0xdf / 0xe2) waits for the scene system.
+/// [0x44] go; then, outside a scene (`0x1a8f00` ≠ 2), the moby [0x20] is a target with its class's collision. In the
+/// level's scene 1 (record, `0x1bca70`): at its first tick the moby [0x20] hidden, [0x40] / [0x44] gone, its uid
+/// counted, two spinning parts made on the scene's actor 2 ([0x24] / [0x28], `0x3dbed0`); held until tick 0x7b8,
+/// then turning 25° a tick ([0x2c]); at tick 0xdf the mobys [0] / [4] woken (state 1, their sound 0). In scene 2: at
+/// its first tick [0x10] and [0x14..0x1c] hidden, parts on the actors 2 and 3 ([0x24], [0x30]), turning 15° a tick
+/// to tick 0x30c, then 5°. Outside a scene the parts go.
 pub fn update_0f13(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use super::enemies::{delete_parts, has_parts, make_parts, spin_parts};
     let m = &mut w.mobys[id];
     if m.state == 0 {
         for k in [0x24, 0x28, 0x30, 0x34] { m.set_pv_i(k, 0); }
@@ -420,13 +424,73 @@ pub fn update_0f13(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         return;
     }
     if m.state != 1 { return; }
+    let in_scene = ctx.game.scenes.mode == crate::scene::SCENE;
     let t = m.pv_i(0x20);
-    if t != -1 && (t as usize) < w.mobys.len() {
+    if !in_scene && t != -1 && (t as usize) < w.mobys.len() {
         let coll = w.class(w.mobys[t as usize].o_class).is_some_and(|c| c.has_collision);
         let o = &mut w.mobys[t as usize];
         o.mode = (o.mode & 0xffbe) | crate::moby::mode::TARGET;
         o.has_collision = coll;
         w.changed = true;
+    }
+    let hide = |w: &mut MobyWorld, i: i32| {
+        if let Some(o) = usize::try_from(i).ok().and_then(|i| w.mobys.get_mut(i)) {
+            o.has_collision = false;
+            o.mode = (o.mode & 0xefff) | 0x41;
+        }
+    };
+    let player = ctx.game.scenes.player.as_ref().filter(|_| in_scene);
+    let record = player.map_or(-1, |p| rc_formats::rac2::scene::record_of(p.id));
+    let tick = player.map_or(0, |p| p.tick);
+    let actor = |k: usize| player.and_then(|p| p.actors.get(k)).map(|a| a.0).filter(|&a| a < w.mobys.len());
+    let (a2, a3) = (actor(2), actor(3));
+    if record == 1 {
+        if tick == 0 {
+            hide(w, w.mobys[id].pv_i(0x20));
+            for k in [0x44, 0x40] {
+                let i = w.mobys[id].pv_i(k);
+                if i != -1 && (i as usize) < w.mobys.len() { w.delete(i as usize); }
+            }
+            let uid = w.mobys[id].uid;
+            ctx.game.count_uid(uid);
+            if let Some(a) = a2 { make_parts(w, a, id, 0x24, ctx); }
+        } else if let Some(a) = a2 {
+            let mut angle = w.mobys[id].pv_f(0x2c);
+            if 0x7b8 <= tick {
+                angle = crate::hero::physics::add_rot(angle, 0.436_332_3);
+                w.mobys[id].set_pv_f(0x2c, angle);
+            }
+            spin_parts(w, a, id, 0x24, ctx, angle);
+        }
+        if tick == 0xdf {
+            for k in [0, 4] {
+                let i = w.mobys[id].pv_i(k);
+                if let Some(o) = usize::try_from(i).ok().filter(|&i| i < w.mobys.len()) {
+                    if w.mobys[o].state < 0xfd {
+                        ctx.host.play_sound(&w.mobys[o], 0, 0);
+                        w.mobys[o].state = 1;
+                    }
+                }
+            }
+        }
+    } else if !in_scene {
+        for at in [0x24, 0x30] {
+            if has_parts(w, id, at) { delete_parts(w, id, at); }
+        }
+    }
+    if record == 2 {
+        if tick == 0 {
+            for k in [0x10, 0x14, 0x18, 0x1c] { hide(w, w.mobys[id].pv_i(k)); }
+            if let Some(a) = a2 { make_parts(w, a, id, 0x24, ctx); }
+            if let Some(a) = a3 { make_parts(w, a, id, 0x30, ctx); }
+        } else {
+            let step = if tick < 0x30c { 0.261_799_4 } else { 0.087_266_47 };
+            for (a, at, o) in [(a2, 0x24, 0x2c), (a3, 0x30, 0x38)] {
+                let angle = crate::hero::physics::add_rot(w.mobys[id].pv_f(o), step);
+                w.mobys[id].set_pv_f(o, angle);
+                if let Some(a) = a { spin_parts(w, a, id, at, ctx, angle); }
+            }
+        }
     }
 }
 

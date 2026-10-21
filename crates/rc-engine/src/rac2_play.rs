@@ -367,6 +367,12 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
         if !p.scene_slots.iter().any(|&(c, _)| c == ci) { p.scene_slots.push((ci, anim.sequences.len())); }
         let slot = anim.sequences.len() as u8;
         anim.sequences.push(Some(a.sequence.clone()));
+        if o_class != 0 {
+            // Its first pose (the scene's first tick poses it again).
+            let state = rc_formats::moby_anim::AnimState { seq_a: slot, frame_a: 0, seq_b: slot, frame_b: 1, t: 0.0, speed: 0.0, rate: 0.0, flags: 0, trigger_count: 0, skip_advance: true };
+            mobys.created.insert(m, crate::rac2_mobys::Created { class: ci, state, snapshot: None });
+            if let Some(q) = a.positions.first() { mobys.world.mobys[m].pos = [q[0], q[1], q[2]]; }
+        }
         actors.push((m, slot));
     }
     for m in mobys.world.mobys.iter_mut().filter(|m| m.o_class == 0xcb && m.state < 0x80) { m.mode |= 0x80; }

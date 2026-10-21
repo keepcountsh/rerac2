@@ -846,9 +846,11 @@ fn place_part(w: &mut MobyWorld, id: usize, p: usize, joint: usize, ctx: &Ctx) {
     pm.mode |= crate::moby::mode::NO_UPDATE | crate::moby::mode::NO_MATRIX | crate::moby::mode::KEEP_ROWS;
 }
 
-/// `0x3dbed0(m, +0x2a0, 0, 2)`: the two parts made (`0x32a748`: at it, its draw distance; scaled 0.75) at its joints.
-fn make_parts(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
+/// `0x3dbed0(on, owner + at, 0, 2)`: the two parts made (`0x32a748`: at `on`, its draw distance; scaled 0.75) at its
+/// joints, kept in `owner`'s pvars at `at` / `at + 4`.
+pub(super) fn make_parts(w: &mut MobyWorld, on: usize, owner: usize, at: usize, ctx: &Ctx) {
     for (k, j) in PART_JOINTS.into_iter().enumerate() {
+        let id = on;
         let (pos, rot, dd) = (w.mobys[id].pos, w.mobys[id].rot, w.mobys[id].draw_dist);
         let p = w.create(PART);
         let pm = &mut w.mobys[p];
@@ -863,26 +865,30 @@ fn make_parts(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
         w.rebuild(p, &*ctx.host);
         place_part(w, id, p, j, ctx);
         w.rebuild(p, &*ctx.host);
-        ai::set_link(&mut w.mobys[id], 0x2a0 + 4 * k, Some(p));
+        ai::set_link(&mut w.mobys[owner], at + 4 * k, Some(p));
     }
 }
 
-/// The parts (`+0x2a0` / `+0x2a4`) that are still there.
-fn parts(w: &MobyWorld, id: usize) -> [Option<usize>; 2] {
-    [0, 1].map(|k| ai::link(&w.mobys[id], 0x2a0 + 4 * k).filter(|&p| w.mobys.get(p).is_some_and(|m| m.state < 0x80 && m.o_class == PART)))
+/// The parts (`owner`'s `at` / `at + 4`) that are still there.
+fn parts(w: &MobyWorld, owner: usize, at: usize) -> [Option<usize>; 2] {
+    [0, 1].map(|k| ai::link(&w.mobys[owner], at + 4 * k).filter(|&p| w.mobys.get(p).is_some_and(|m| m.state < 0x80 && m.o_class == PART)))
 }
+
+/// Whether `owner` has parts at `at`.
+pub(super) fn has_parts(w: &MobyWorld, owner: usize, at: usize) -> bool { parts(w, owner, at).iter().any(Option::is_some) }
 
 /// `0x3dc090`: the parts go.
-fn delete_parts(w: &mut MobyWorld, id: usize) {
-    for p in parts(w, id).into_iter().flatten() { w.delete(p); }
-    ai::set_link(&mut w.mobys[id], 0x2a0, None);
-    ai::set_link(&mut w.mobys[id], 0x2a4, None);
+pub(super) fn delete_parts(w: &mut MobyWorld, owner: usize, at: usize) {
+    for p in parts(w, owner, at).into_iter().flatten() { w.delete(p); }
+    ai::set_link(&mut w.mobys[owner], at, None);
+    ai::set_link(&mut w.mobys[owner], at + 4, None);
 }
 
-/// `0x3dbfb0(angle, m, parts, _)`: each part at its joint, turned `angle` about its own z.
-fn spin_parts(w: &mut MobyWorld, id: usize, ctx: &Ctx, angle: f32) {
+/// `0x3dbfb0(angle, on, owner + at, _)`: each part at its joint of `on`, turned `angle` about its own z.
+pub(super) fn spin_parts(w: &mut MobyWorld, on: usize, owner: usize, at: usize, ctx: &Ctx, angle: f32) {
     let rz = crate::moby::attach::rows_of([0.0, 0.0, angle]);
-    for (p, j) in parts(w, id).into_iter().zip(PART_JOINTS) {
+    let id = on;
+    for (p, j) in parts(w, owner, at).into_iter().zip(PART_JOINTS) {
         let Some(p) = p else { continue };
         place_part(w, id, p, j, ctx);
         let r = w.mobys[p].rows;
@@ -981,7 +987,7 @@ fn checks_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
             if let Some((p, _)) = ctx.level.cuboid_place(c) { w.mobys[id].set_pv_v(0x300, p); }
             w.mobys[id].update_dist = 0x80;
         }
-        make_parts(w, id, ctx);
+        make_parts(w, id, id, 0x2a0, ctx);
     }
     let alive = w.mobys[id].pv_b(0x2e) != 2;
     if let Some(p) = ctx.host.joint(&w.mobys[id], 3) { w.mobys[id].set_pv_v(0x310, p); }
@@ -1012,13 +1018,13 @@ fn checks_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
     let f2 = ai::find_target(w, id, ctx, r2, 10.0, a2, None, false);
     w.mobys[id].set_pv_i(0x25c, f2 as i32);
     if w.mobys[id].pos[2] < 90.0 {
-        delete_parts(w, id);
+        delete_parts(w, id, 0x2a0);
         crate::moby::bolts::drop(w, id, 0, 3, ctx);
         return true;
     }
     if !alive {
         // `0x3db458`.
-        delete_parts(w, id);
+        delete_parts(w, id, 0x2a0);
         delete_mound(w, id);
         wake_0b0b(w, id);
         return true;
@@ -1038,7 +1044,7 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     m.mode = (m.mode & 0xffbe) | crate::moby::mode::TARGET;
     m.has_collision = coll;
     let part_coll = w.class(PART).is_some_and(|c| c.has_collision);
-    for p in parts(w, id).into_iter().flatten() {
+    for p in parts(w, id, 0x2a0).into_iter().flatten() {
         let pm = &mut w.mobys[p];
         pm.mode = (pm.mode & 0xffbe) | crate::moby::mode::TARGET;
         pm.has_collision = part_coll;
@@ -1159,7 +1165,7 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let res = ai::flight(w, id, ctx);
             if res & 1 != 0 || (w.mobys[id].pv_f(0x20) <= 0.0 && w.mobys[id].pv_i(0x2ec) == 0) {
                 ctx.host.play_sound(&w.mobys[id], 0xd, 0);
-                delete_parts(w, id);
+                delete_parts(w, id, 0x2a0);
                 delete_mound(w, id);
                 crate::moby::bolts::drop(w, id, 0, 3, ctx);
                 w.delete(id);
@@ -1186,7 +1192,7 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         6 => {
             ai::flight(w, id, ctx);
             if super::props::wrapped(w, id, ctx) || w.mobys[id].pos[2] < 100.0 {
-                delete_parts(w, id);
+                delete_parts(w, id, 0x2a0);
                 crate::moby::bolts::drop(w, id, 0, 3, ctx);
                 w.delete(id);
                 return;
@@ -1418,7 +1424,7 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         angle = add_rot(angle, m.pv_f(0x2e8) * 0.017_453_294);
         m.set_pv_f(0x2ac, angle);
     }
-    spin_parts(w, id, ctx, angle);
+    spin_parts(w, id, id, 0x2a0, ctx, angle);
     let m = &mut w.mobys[id];
     for o in [0x270, 0x272, 0x26] {
         let mut t = m.pv_s(o) as i32;

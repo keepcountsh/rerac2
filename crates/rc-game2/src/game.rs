@@ -228,6 +228,16 @@ impl GameState {
         if uid & 1 != 0 { *b &= 0x8f } else { *b &= 0xf8 }
     }
 
+    /// The count up by one (at most 7).
+    pub fn count_uid(&mut self, uid: i16) {
+        let Some(b) = self.uid_bits.get_mut((uid as i32 >> 1).max(0) as usize) else { return };
+        if uid & 1 != 0 {
+            if (*b >> 4) & 7 != 7 { *b += 0x10; }
+        } else if *b & 7 != 7 {
+            *b += 1;
+        }
+    }
+
     /// Bit 3 set, the count cleared.
     pub fn set_uid_flag(&mut self, uid: i16) {
         let Some(b) = self.uid_bits.get_mut((uid as i32 >> 1).max(0) as usize) else { return };
