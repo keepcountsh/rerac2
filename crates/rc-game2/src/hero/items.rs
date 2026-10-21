@@ -369,6 +369,10 @@ fn switch(world: &mut MobyWorld, ctx: &mut Ctx) {
     it.wrench_req = false;
     if let Some(id) = it.hand { ctx.host.set_anim(&world.mobys[id], 2, 0, 2); }
     it.ready = 3;
+    // A new stance type (`0x18c0db` against the new item's row `+0x0c`): the holding layers go for good (`+0x34`).
+    if row(it.selected).map_or(0, |r| r.stance) != it.stance {
+        for l in h.layers.hold.iter_mut().flatten() { l.kill = true; }
+    }
 }
 
 /// The head item (slot 2): `0x2afc68` creates it when there is none (item `0x1a73a0`, else 0x2f: class

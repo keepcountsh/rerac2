@@ -79,6 +79,8 @@ pub fn spawn(w: &mut MobyWorld, ctx: &mut Ctx, range: f32, at: V3, owner: usize,
     let m = &mut w.mobys[id];
     m.set_pv_i(0x38, ticks);
     m.set_pv_f(0x3c, 1.0 / ticks.max(1) as f32);
+    // `$gp+0x1574`: the trails' phase starts again.
+    ctx.game.trail_phase = 0.0;
     m.scale = class_scale * 6.0;
     m.set_pv_i(0x1c, target.map_or(0, |t| t as i32));
     m.set_pv_f(0x40, 1.0);
@@ -294,13 +296,13 @@ pub fn trail(m: &crate::moby::Moby) -> Option<(Vec<[f32; 4]>, u32, u32)> {
     Some((pts, a1 << 24 | 0xff_ffff, a2 << 24 | 0x20_4080))
 }
 
-/// `0x3e4300(_, 4, _, points, 0x17, 0xe, n, inner, outer)`: the ribbons' quads, segment by segment: at each point the
-/// corners ± its width along unit(cross(point − previous, point − camera)) (the outer four times as far), the alpha
-/// × (1 − k / n) at point k.
-pub fn ribbon_quads(pts: &[[f32; 4]], n: usize, inner: u32, outer: u32, cam: V3) -> [Vec<([V3; 4], [u32; 4])>; 2] {
+/// `0x3e4300(_, 4, phase, points, 0x17, 0xe, n, inner, outer)`: the ribbons' quads (crate::fx), segment by segment:
+/// at each point the corners ± its width along unit(cross(point − previous, point − camera)) (the outer four times as
+/// far), the alpha × (1 − k / n) at point k; on every quad s runs along it from `phase` to `phase + 1` and t across it
+/// (0 at +, 1 at −); additive (ALPHA row 1).
+pub fn ribbon_quads(pts: &[[f32; 4]], n: usize, inner: u32, outer: u32, cam: V3, phase: f32, out: &mut Vec<crate::fx::FxQuad>) {
     let n = n.min(pts.len());
-    let mut out = [Vec::new(), Vec::new()];
-    if n < 2 { return out; }
+    if n < 2 { return; }
     let p3 = |k: usize| [pts[k][0], pts[k][1], pts[k][2]];
     let side = |k: usize| {
         let (p, q) = if k == 0 { (p3(0), p3(1)) } else { (p3(k), p3(k - 1)) };
@@ -310,15 +312,31 @@ pub fn ribbon_quads(pts: &[[f32; 4]], n: usize, inner: u32, outer: u32, cam: V3)
         if 0.0 < l { scale(c, pts[k][3] / l) } else { [0.0; 3] }
     };
     let fade = |c: u32, k: usize| (c & 0xff_ffff) | ((((c >> 24) as f32) * (1.0 - k as f32 / n as f32)) as i32 as u32) << 24;
+    let st = [[phase, 0.0], [phase, 1.0], [phase + 1.0, 0.0], [phase + 1.0, 1.0]];
     let mut prev: Option<(V3, V3, usize)> = None;
+    let (mut a, mut b) = (Vec::new(), Vec::new());
     for k in 0..n {
         let (p, d) = (p3(k), side(k));
         if let Some((pp, pd, pk)) = prev {
-            out[0].push(([add(pp, pd), sub(pp, pd), add(p, d), sub(p, d)], [fade(inner, pk), fade(inner, pk), fade(inner, k), fade(inner, k)]));
+            a.push(crate::fx::FxQuad { fx: 0x17, additive: true, corners: [add(pp, pd), sub(pp, pd), add(p, d), sub(p, d)], st, rgba: [fade(inner, pk), fade(inner, pk), fade(inner, k), fade(inner, k)] });
             let (pd4, d4) = (scale(pd, 4.0), scale(d, 4.0));
-            out[1].push(([add(pp, pd4), sub(pp, pd4), add(p, d4), sub(p, d4)], [fade(outer, pk), fade(outer, pk), fade(outer, k), fade(outer, k)]));
+            b.push(crate::fx::FxQuad { fx: 0xe, additive: true, corners: [add(pp, pd4), sub(pp, pd4), add(p, d4), sub(p, d4)], st, rgba: [fade(outer, pk), fade(outer, pk), fade(outer, k), fade(outer, k)] });
         }
         prev = Some((p, d, k));
     }
-    out
+    // `0x2eb998` per segment: the inner quad, then the outer.
+    for (x, y) in a.into_iter().zip(b) {
+        out.push(x);
+        out.push(y);
+    }
+}
+
+/// `0x3e4050` (the draw callback): the phase (`$gp+0x1574`) down 0.1 (wrapping at −7), then the ribbons over the first
+/// 20 points and, with more, over all of them.
+pub fn draw_trail(m: &crate::moby::Moby, cam: V3, phase: &mut f32, out: &mut Vec<crate::fx::FxQuad>) {
+    *phase -= 0.1;
+    if *phase <= -7.0 { *phase += 7.0; }
+    let Some((pts, inner, outer)) = trail(m) else { return };
+    ribbon_quads(&pts, pts.len().min(20), inner, outer, cam, *phase, out);
+    if 20 < pts.len() { ribbon_quads(&pts, pts.len(), inner, outer, cam, *phase, out); }
 }

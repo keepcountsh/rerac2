@@ -440,6 +440,8 @@ impl Hero {
         }
         anim.set_anim(Pf::f(blend), seq, frame);
         self.anim_speed = 1.0;
+        // `0x2d2508`'s end: a use that does not keep the stance ends with another sequence (`0x18c0d8`).
+        if self.mode == 0 && !self.items.keep && seq as i32 != self.items.use_seq { self.items.using = false; }
     }
 
     /// `0x2a4e48(0)`: the idle sequence — 0x51 with 1 health left, 0x67 on ice, else 0. (`0x2a4e48(1)` gives the

@@ -37,6 +37,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 println!("  bsphere {:?} lod_trans {}", k.header.bsphere, k.header.lod_trans);
                 println!("  joints at {:#x}, retarget map {:?}", k.header.joints, moby_anim::retarget_map(b, &k.header));
+                if std::env::var("LISTS").is_ok() { for l in [4usize, 12, 13, 24] { println!("  list {l}: {:?}", gadget::joint_list(b, &k.header, l)); } }
                 if let Some(e) = core.moby_classes.iter().find(|e| e.o_class == c) { println!("  class textures {:?}", e.textures); }
                 let tris: std::collections::BTreeMap<i32, usize> = k.high_lod.iter().flat_map(|s| s.triangles.iter().map(|t| t.texture)).fold(Default::default(), |mut m, t| { *m.entry(t).or_default() += 1; m });
                 println!("  triangle textures {tris:?}");

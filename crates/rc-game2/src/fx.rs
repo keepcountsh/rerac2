@@ -7,7 +7,9 @@
 //! |---|---|---|
 //! | `0x3d8340` | 0x0b0a | its three glows ([`glow`]: the pilot light at `+0x3a0`, the nozzle `+0x3b0` and the mouth `+0x3c0`); climbing, its wire (`0x3d8498`) |
 //!
-//! The Lancer's shot trail (`0x3e4050`) draws from crate::moby::classes::shot. Not ported: 0x0b0a's emerge flash
+//! | `0x3e4050` | the Lancer's shot | its trail ([`crate::moby::classes::shot::draw_trail`]) |
+//!
+//! Not ported: 0x0b0a's emerge flash
 //! (`0x3d8920` → `0x2ee190`, FX 0x3b), 0x0b0b's glows and wire (`0x3dc220`, `0x3db790`).
 
 use crate::hero::physics::{add, cross, len, scale, sub, V3};
@@ -71,11 +73,15 @@ fn draw_0b0a(w: &MobyWorld, id: usize, rng: &mut crate::rng::Rng, cam: V3, out: 
 }
 
 /// The frame's callbacks after the tick: the mobys the loop ran (they registered theirs), in the loop's order.
-pub fn callbacks(w: &MobyWorld, rng: &mut crate::rng::Rng, cam: V3) -> Vec<FxQuad> {
+pub fn callbacks(w: &MobyWorld, game: &mut crate::game::GameState, cam: V3) -> Vec<FxQuad> {
     let mut out = Vec::new();
     for id in w.run_list(cam) {
         if 0x80 <= w.mobys[id].state { continue; }
-        if w.mobys[id].o_class == 0x0b0a { draw_0b0a(w, id, rng, cam, &mut out); }
+        match w.mobys[id].o_class {
+            0x0b0a => draw_0b0a(w, id, &mut game.rng, cam, &mut out),
+            crate::moby::classes::shot::SHOT_CLASS => crate::moby::classes::shot::draw_trail(&w.mobys[id], cam, &mut game.trail_phase, &mut out),
+            _ => {}
+        }
     }
     out
 }

@@ -404,7 +404,10 @@ impl Rac2Mobys {
         let (mut scales, mut trans) = (Vec::new(), Vec::new());
         for (k, &j) in joints.iter().enumerate() {
             let (j, i) = (j as usize, k + 1);
-            quats.push(f.quat_at(j));
+            // His local rotation as his drawn pose has it: the key's, then his pose layers (the face layer covers
+            // his head's joints 8..51).
+            let pl: Vec<moby_anim::PoseLayer> = h.layers.iter().map(crate::moby_anim::InstanceLayer::pose).collect();
+            quats.push(moby_anim::layered_quat(ac, &pl, j, f.quat_at(j)));
             // The scale his joint has as the draw poses it: its key's, times his joint modifiers' (his head's 0.875,
             // which shrinks his head into the helmet, reaches the helmet too: the game's joint data carries it).
             let key = f.scales.iter().find(|r| r.joint as usize == j).map_or([1.0; 3], |r| r.value());

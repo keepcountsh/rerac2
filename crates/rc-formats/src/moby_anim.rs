@@ -1137,6 +1137,21 @@ pub fn evaluate_posed(class: &MobyAnimClass, s: &AnimState, snap: Option<&MobyFr
         .collect()
 }
 
+/// Joint `j`'s local rotation after the runtime pose layers ([`apply_layers`]' rotation step for one joint), from the
+/// key's quaternion `q` (as `i16` components, the frame encoding): what [`evaluate_posed`] turns into the joint's
+/// matrix. Going Commando's helmet takes its joints' local rotations from Ratchet's this way (the face layer turns
+/// his head joints).
+pub fn layered_quat(class: &MobyAnimClass, layers: &[PoseLayer], j: usize, q: [i16; 4]) -> [i16; 4] {
+    let mut cur = quat_bits(q);
+    for l in layers {
+        if l.weight <= 0.0 || l.weight.is_nan() || !l.joints.contains(&(j as u8)) { continue; }
+        let (w, uw) = (l.weight.to_bits(), ps2::sub(ONE, l.weight.to_bits()));
+        let Some((lq, _, _)) = layer_local(class, l, j) else { continue };
+        cur = nlerp_flip(cur, lq, uw, w);
+    }
+    cur.map(|c| (f32::from_bits(c) * 32768.0).round().clamp(-32768.0, 32767.0) as i16)
+}
+
 /// The runtime pose layers (§6.4) on the local records `[q, inherited scale, translation, _]`, in list order.
 fn apply_layers(class: &MobyAnimClass, layers: &[PoseLayer], rec: &mut [[V4; 4]]) {
     for l in layers {

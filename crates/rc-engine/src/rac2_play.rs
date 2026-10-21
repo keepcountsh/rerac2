@@ -393,7 +393,7 @@ fn tick(
     // `UpdateParts` (`0x331150`), after the hero.
     if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game2::fx).
-    p.fx_quads = rc_game2::fx::callbacks(&mobys.world, &mut p.game.rng, p.camera.pos);
+    p.fx_quads = rc_game2::fx::callbacks(&mobys.world, &mut p.game, p.camera.pos);
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
         for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {
@@ -1056,9 +1056,8 @@ fn draw_canopy(
     draw.slots.show(&mut commands, &mut vis, &mut a, groups, crate::fx_draw::LIST1_BIAS, "ship canopy");
 }
 
-/// The mobys' draw callbacks through crate::fx_draw: every live Lancer shot's trail (`0x3e4050`, rc_game2's
-/// `shot::trail`: two additive ribbons, FX 0x17 and 0xe, over the first 20 points, then again over all of them), then
-/// the quads the tick's callbacks made (rc_game2::fx).
+/// The mobys' draw callbacks through crate::fx_draw: the quads the tick's callbacks made (rc_game2::fx: the shots'
+/// trails, 0x0b0a's glows), one group per texture and blend.
 #[derive(Resource, Default)]
 struct ShotDraw {
     slots: crate::fx_draw::FxSlots,
@@ -1076,22 +1075,6 @@ fn draw_shots(
     mut materials: ResMut<Assets<crate::fx_draw::FxPrimMaterial>>,
     mut vis: Query<&mut Visibility>,
 ) {
-    use rc_game2::moby::classes::shot;
-    let mut bufs = [crate::fx_draw::PrimBuf::default(), crate::fx_draw::PrimBuf::default()];
-    if let Some((p, m)) = play.as_ref().and_then(|p| p.mobys.as_ref().map(|m| (p, m))) {
-        let cam = p.camera.pos;
-        for mb in &m.world.mobys {
-            let Some((pts, inner, outer)) = shot::trail(mb) else { continue };
-            let mut passes = vec![pts.len().min(20)];
-            if 20 < pts.len() { passes.push(pts.len()); }
-            for n in passes {
-                for (k, quads) in shot::ribbon_quads(&pts, n, inner, outer, cam).into_iter().enumerate() {
-                    for (q, c) in quads { bufs[k].quad(q, [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], c); }
-                }
-            }
-        }
-    }
-    let [inner, outer] = bufs;
     let mut groups = Vec::new();
     // The callbacks' quads, one group per texture and blend in the order they came.
     if let Some(p) = play.as_ref() {
@@ -1103,8 +1086,6 @@ fn draw_shots(
         }
         for ((fx, additive), prims) in keyed { if !prims.is_empty() { groups.push(crate::fx_draw::FxGroup { fx, additive, subtract: false, prims }); } }
     }
-    if !inner.is_empty() { groups.push(crate::fx_draw::FxGroup { fx: 0x17, additive: true, subtract: false, prims: inner }); }
-    if !outer.is_empty() { groups.push(crate::fx_draw::FxGroup { fx: 0xe, additive: true, subtract: false, prims: outer }); }
     let fog = fog.map(|f| f.uniform).unwrap_or_else(|| crate::game_camera::TfragFog::new(&level.0.fog));
     let tex = level.0.particles.textures.as_ref().map(|t| t.fx_textures.as_slice());
     let mut a = crate::fx_draw::FxAssets { meshes: &mut meshes, images: &mut images, materials: &mut materials, fx: tex, fog };
