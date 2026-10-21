@@ -595,12 +595,15 @@ impl Hero {
         let b = add(self.pos, [0.0, 0.0, -48.0]);
         let mut hit = env.line(a, b, 2);
         if let Some(o) = hit {
+            // `0x2e2410`: the footstep class of the hit (on a moby 0; on level 7's 1).
+            self.footstep = if o.moby.is_some() { u8::from(env.level == 7) } else { o.sound_class() as u8 };
             self.surface = o.surface_id();
             match self.surface {
                 0 => {
                     self.surf.water_z = o.point[2];
                     if self.pos[2] < self.surf.water_z && self.water.under < 1 { self.water.under = 1; }
                     hit = env.line(a, b, 0x24);
+                    if let Some(o) = &hit { self.footstep = o.sound_class() as u8; }
                 }
                 0xd => {
                     self.surf.water_z = o.point[2];

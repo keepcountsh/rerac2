@@ -206,6 +206,9 @@ pub struct AudioOut {
     /// `RC_AUDIO_SFX` / `RC_AUDIO_MUSIC` given: they win over the saved game's options ([`sync_options`]).
     fixed_sfx: bool,
     fixed_music: bool,
+    /// A game other than R&C1's tick runs the EE frames and pushes them (Going Commando's, crate::rac2_play): the
+    /// frames it did not run get IOP-only ones here.
+    pub external: bool,
 }
 
 impl AudioOut {
@@ -313,7 +316,7 @@ impl Plugin for AudioOutPlugin {
             println!("audio: RC_REVERB=0: no reverb output");
         }
         app.add_audio_source::<MixerStream>()
-            .insert_resource(AudioOut { system, ring, wav, done: 0, buf: Vec::new(), last_report: 0, trace, fixed_sfx: fixed_sfx.is_some(), fixed_music: fixed_music.is_some() })
+            .insert_resource(AudioOut { system, ring, wav, done: 0, buf: Vec::new(), last_report: 0, trace, fixed_sfx: fixed_sfx.is_some(), fixed_music: fixed_music.is_some(), external: false })
             .add_systems(Startup, start_output)
             // After the scene frame (which runs before the tick) and the tick, which a running scene suspends.
             .add_systems(FixedUpdate, scene_sound.after(crate::gameplay::GameTick))
@@ -392,7 +395,7 @@ fn run_audio(
     let input = FrameInput { listener, hero_pos: listener.pos };
     let out = &mut *out;
     // With the game tick the EE frames ran in its sound step; fill the ticks it did not run with IOP-only frames.
-    let driven = play.is_some();
+    let driven = play.is_some() || out.external;
     while out.done < ticks.0 {
         out.buf.clear();
         if driven {

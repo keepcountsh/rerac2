@@ -287,6 +287,27 @@ impl Hero {
         }
     }
 
+    /// `0x2a6420` (the end of `0x2a6dd0`): the walk, run and back-pedal footsteps of this tick, as feet (0 left, 1
+    /// right) for `0x2a61c8(0x18b2bd, foot, 1, 0x1e)`: none in the walk's first 15 ticks, at its tick 22 the left
+    /// foot; then, while no blend runs, the key times this tick's advance passed (`0x2b3aa0`): the run (4) 12.5
+    /// left and 1.0 right, the back-pedal (0x14) 8.0 left and 21.0 right, the walk (3) 49.5 left and 17.0 right.
+    pub fn footsteps(&self, v: &rc_game::hero::anim::AnimView) -> Vec<u8> {
+        let mut feet = Vec::new();
+        if self.state == 2 && self.timer < 0xf { return feet; }
+        if self.state == 2 && self.timer == 0x16 { feet.push(0); }
+        let keys: &[(f32, u8)] = match v.seq_b {
+            4 => &[(12.5, 0), (1.0, 1)],
+            0x14 => &[(8.0, 0), (21.0, 1)],
+            3 => &[(49.5, 0), (17.0, 1)],
+            _ => &[],
+        };
+        if v.blending() { return feet; }
+        for &(f, foot) in keys {
+            if f < v.frame && v.frame - f <= v.frame_step { feet.push(foot); }
+        }
+        feet
+    }
+
     /// `0x2ca358`: the walk / run sequence and its playback speed (Clank's body; the back-pedal while strafing
     /// backwards; else the walk 3 / run 4 by the speed, swapped in phase).
     pub(super) fn walk_anim(&mut self, anim: &mut dyn AnimCtl) {

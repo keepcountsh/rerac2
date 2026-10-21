@@ -118,6 +118,7 @@ fn tick(
     mut anim: Option<ResMut<MobyAnim>>,
     carry: Option<Res<Carry>>,
     mut change: ResMut<crate::level_switch::LevelChange>,
+    mut audio: Option<ResMut<crate::audio_out::AudioOut>>,
 ) {
     // The front end's layer is up: the game waits (as R&C1's tick does under its front end).
     if front.is_some_and(|f| !f.done()) { return; }
@@ -144,7 +145,7 @@ fn tick(
             .map_err(|e| eprintln!("rac2: no class blobs ({e:#}): no moby collision"))
             .unwrap_or(crate::rac2_level::ClassBlobs { collision: Vec::new(), blobs: Default::default() });
         let mut created = Default::default();
-        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut created, hero: None, hero_chains: &[], camera: p.camera.pos };
+        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut created, hero: None, hero_chains: &[], camera: p.camera.pos, sound: None };
         let fresh = !p.loaded;
         let m = crate::rac2_mobys::Rac2Mobys::load(lv, blobs, &host, &mut p.game, fresh);
         p.loaded = true;
@@ -216,7 +217,9 @@ fn tick(
     // the camera `0x2d9f38`.
     {
         let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
-        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, camera: p.camera.pos };
+        // The class sounds play during the loop (`0x3605f0`), heard from the camera as the last tick left it.
+        let sound = audio.as_deref_mut().map(|o| crate::rac2_mobys::HostSound { system: o.system(), listener: listener(&p.camera), tick: p.ticks });
+        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, camera: p.camera.pos, sound };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
         mobys.world.tick(p.camera.pos, &mut ctx);
@@ -239,8 +242,30 @@ fn tick(
             coll, pad: &p.pad, cam_yaw: p.camera.yaw(), cam_pos: p.camera.pos, cam_rows: p.camera.rows, mirror: false, scene: scene.as_ref(), hero_moby: mobys.hero_moby, targets: &targets, hit, death_z,
             clank: p.game.clank, pack: p.game.pack(), boots: p.game.boots, charge_boots: p.game.charge_boots, grind_boots: p.game.grind_boots, rails: &mobys.rails, level: p.game.level, classes: &classes, nodes: &nodes, hooks: &hooks, pulls: &pulls,
         };
+        let before = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let mut ctl = p.anim.ctl(class);
         hero_update(&mut p.hero, &env, &mut ctl);
+        // His animation's advance (`0x313420`): the first trigger whose time it passed plays its class sound on his
+        // moby (`0x3605f0`), as R&C1's `RatchetAnimAdvance` does.
+        let after = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
+        if let (Some(out), Some(h)) = (audio.as_deref_mut(), mobys.hero_moby) {
+            let sys = out.system();
+            let mut rng = sys.rng;
+            if let Some(idx) = rc_game::audio::class_sounds::ratchet_trigger(class, &before, &after) {
+                let ev = rc_game::moby_update::services::SoundEvent { index: idx as i32, flags: 0, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
+                sys.play_class_sound(&ev, Some(h), &listener(&p.camera), &mut rng);
+            }
+            // `0x2a6420`: the footsteps, `0x360920`: level def `class·4 + foot·2 + variant` past the level's
+            // footstep base, on his moby. Not ported: the boots' variant (0x18b0b8).
+            for foot in p.hero.footsteps(&after) {
+                let i = mobys.footstep_base + p.hero.footstep as usize * 4 + foot as usize * 2;
+                let Some(def) = sys.data.sounds.level_defs.get(i).copied() else { continue };
+                let owner = rc_game::audio::voices::Owner { id: h as u32, privileged: true };
+                let k = sys.slots.play(&def, 0, Some(owner), Some(p.hero.pos), None, 0x400, &listener(&p.camera), &mut rng);
+                if let Some(log) = sys.play_log.as_mut() { log.push((p.ticks, rc_game::audio::class_sounds::FOOTSTEP_LOG_CLASS, i as i32, 0, k)); }
+            }
+            sys.rng = rng;
+        }
     }
     // `0x2ae140` (in the hero's update): the trigger areas asked about list Ratchet when he is in them.
     p.game.area_tick(&mobys.level, p.hero.pos);
@@ -259,13 +284,13 @@ fn tick(
     {
         let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
-        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, camera: p.camera.pos };
+        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, camera: p.camera.pos, sound: None };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
         rc_game2::hero::items::item_pass(&mut mobys.world, &mut ctx);
     }
     if mobys.world.changed {
-        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], camera: p.camera.pos };
+        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], camera: p.camera.pos, sound: None };
         mobys.snap = Some(crate::rac2_mobys::take_snapshot(&mobys.world, &mobys.coll, &host));
         mobys.world.changed = false;
     }
@@ -296,6 +321,20 @@ fn tick(
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh);
     // The help panel (`0x2f5680`).
     p.help.tick(&mut p.game, p.pad.pressed & rc_game::pad::button::TRIANGLE != 0, &p.texts);
+    // The sound step (`sound_update` after the camera): the slots follow their owners (the mobys' positions; a
+    // deleted one stops its sound), heard from this tick's camera; then the tick's 800 samples.
+    if let Some(out) = audio.as_deref_mut() {
+        let input = rc_game::audio::FrameInput { listener: listener(&p.camera), hero_pos: p.hero.pos };
+        let world = &mobys.world;
+        let owner = |id: u32| world.mobys.get(id as usize).filter(|m| m.state < 0x80).map(|m| m.pos);
+        out.external = true;
+        let (sys, buf) = out.parts();
+        let mut rng = sys.rng;
+        sys.game_frame_with(&input, p.ticks as u32 + 1, &mut rng, &owner);
+        sys.rng = rng;
+        sys.render(rc_game::audio::SAMPLES_PER_FRAME, buf);
+        out.push_frame();
+    }
     if p.trace {
         let v = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let h = &p.hero;
@@ -486,7 +525,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let class = &lv.mobys.anim[p.class];
         let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
         let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
-        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, camera: p.camera.pos };
+        let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, camera: p.camera.pos, sound: None };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
         mobys.world.tick(p.camera.pos, &mut ctx);
@@ -544,7 +583,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         }
     }
     if mobys.world.changed {
-        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], camera: p.camera.pos };
+        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], camera: p.camera.pos, sound: None };
         mobys.snap = Some(crate::rac2_mobys::take_snapshot(&mobys.world, &mobys.coll, &host));
         mobys.world.changed = false;
     }
@@ -687,6 +726,11 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
+}
+
+/// The sound code's listener: the follow camera (`0x1b8d40`, its rows).
+fn listener(c: &FollowCamera) -> rc_game::audio::voices::Listener {
+    rc_game::audio::voices::Listener { pos: c.pos, rows: c.rows, underwater: false, water_height: 0.0 }
 }
 
 /// The camera's inputs: the options' yaw and pitch normal (`0x1a7bb0` / `0x1a7bac`, the defaults).

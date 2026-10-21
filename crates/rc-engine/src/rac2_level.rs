@@ -161,6 +161,33 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     );
     Ok(LoadedLevel {
         tfrags, textures, fog, background, mobys, ties, shrubs, sky, occlusion, tfrag_lod, particles, hud: None,
-        water: Default::default(), sea: Default::default(), collision, death_z, audio: None, gameplay, moby_class_order, timings: t,
+        water: Default::default(), sea: Default::default(), audio: audio(&wad, core_index, &core, &core_data, collision.clone()), collision, death_z, gameplay, moby_class_order, timings: t,
     })
+}
+
+/// The level's sound data for crate::audio_out (rc_game::audio, the 989snd bank R&C1's reader parses as it is): the
+/// level's core sound bank (the file's part 1) and the sound definitions (level and class, `0x304660`'s remap).
+/// Not yet: the sound instances, the env sample points and the music (`AUDIOn.WAD`). None with `RC_AUDIO=0` or when
+/// the bank does not read (with a warning).
+fn audio(wad: &LevelWad, core_index: &[u8], core: &level::LevelCore, core_data: &[u8], collision: Option<rc_formats::collision::Collision>) -> Option<rc_game::audio::LevelAudio> {
+    if !crate::audio_out::enabled() { return None; }
+    let run = || -> Result<rc_game::audio::LevelAudio> {
+        let part = wad.part_bytes(Part::CoreBank)?.context("no core sound bank part")?;
+        let bank = if rc_formats::wad::is_wad(part) { rc_formats::wad::decompress(part)? } else { part.to_vec() };
+        let bank = std::sync::Arc::new(rc_formats::sound_bank::parse_bank(&bank)?);
+        let sounds = rc_formats::sound_bank::parse_level_sounds_for(Game::Rac2, core_index, core, core_data)?;
+        Ok(rc_game::audio::LevelAudio {
+            bank, sounds, instances: Vec::new(), instance_pvars: Vec::new(), music: Default::default(), env_points: Vec::new(), collision: collision.map(std::sync::Arc::new),
+        })
+    };
+    match run() {
+        Ok(a) => {
+            println!("audio: {} sounds, {} samples, {} level defs, {} classes with sounds", a.bank.sounds.len(), a.bank.vags.len(), a.sounds.level_defs.len(), a.sounds.classes.iter().filter(|c| !c.defs.is_empty()).count());
+            Some(a)
+        }
+        Err(e) => {
+            eprintln!("audio: the level's sound data not read ({e:#}); no audio");
+            None
+        }
+    }
 }

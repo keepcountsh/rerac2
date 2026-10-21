@@ -50,6 +50,9 @@ pub struct Rac2Mobys {
     pub rails: Vec<rc_game2::paths::GrindPath>,
     /// The level's volumes and paths.
     pub level: rc_game2::level::LevelData,
+    /// The level defs' footstep base (`$gp − 0x60e4`, `0x3012a0`): the level settings' word after their variant
+    /// blocks (`[0x17 + 8·n]`, n = `[0x1a]`; `[0x1f]` without blocks).
+    pub footstep_base: usize,
 }
 
 /// Ratchet's animation as the hero update left it, for his attachment points.
@@ -73,6 +76,15 @@ pub struct Host<'a> {
     pub hero_chains: &'a [Vec<u8>],
     /// The camera's position (`0x1b8d40`).
     pub camera: V3,
+    /// The sound system the class sounds play into (crate::audio_out); None: no sound.
+    pub sound: Option<HostSound<'a>>,
+}
+
+/// The moby loop's sound side: the audio system, the listener (the camera as the last tick left it) and the tick.
+pub struct HostSound<'a> {
+    pub system: &'a mut rc_game::audio::AudioSystem,
+    pub listener: rc_game::audio::voices::Listener,
+    pub tick: u64,
 }
 
 impl Host<'_> {
@@ -203,6 +215,27 @@ impl MobyHost for Host<'_> {
 
     /// The sphere of sequence B, blended from A by t when they differ (`0x313dc0`: `B·t + A·(1 − t)`; A = the
     /// snapshot slot: B's).
+    /// `0x3605f0`: R&C1's `PlayClassSound` (the class's defs at `+0x28`, count `+0x0d`; the slot remembers the index),
+    /// on the audio system's stream.
+    fn play_sound(&mut self, m: &Moby, index: i32, mode: i32) -> i32 {
+        let Some(s) = self.sound.as_mut() else { return -1 };
+        let ev = rc_game::moby_update::services::SoundEvent { index, flags: mode as u32, moby: m.index, o_class: m.o_class, sound_class: m.o_class, pos: m.pos, tick: s.tick };
+        let mut rng = s.system.rng;
+        let k = s.system.play_class_sound(&ev, None, &s.listener, &mut rng);
+        s.system.rng = rng;
+        k
+    }
+
+    /// `0x3602f0(handle)`: the slot released.
+    fn stop_sound(&mut self, handle: i32) {
+        if let Some(s) = self.sound.as_mut() { if 0 <= handle { s.system.slots.release(handle); } }
+    }
+
+    fn sound_playing(&self, handle: i32) -> bool {
+        let Some(s) = self.sound.as_ref() else { return false };
+        usize::try_from(handle).ok().and_then(|i| s.system.slots.slots.get(i)).is_some_and(|x| x.state != rc_game::audio::voices::state::FREE)
+    }
+
     fn sequence_sphere(&self, m: &Moby) -> Option<[f32; 4]> {
         let (class, s, _) = self.state_of(m)?;
         let seqs = &self.lv.anim.get(class)?.sequences;
@@ -212,6 +245,14 @@ impl MobyHost for Host<'_> {
         let Some(a) = sphere(s.seq_a) else { return Some(b) };
         Some(std::array::from_fn(|i| b[i] * s.t + a[i] * (1.0 - s.t)))
     }
+}
+
+fn footstep_base(gameplay: &[u8]) -> usize {
+    let Ok(Some(s)) = rc_formats::rac2::gameplay::level_settings(gameplay) else { return 0 };
+    let w = |i: usize| s.get(4 * i..4 * i + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+    let n = w(0x1a);
+    let at = if n == 0 { 0x1f } else if n < 1 { 0x17 } else { 0x17 + 8 * n as usize };
+    usize::try_from(w(at)).unwrap_or(0)
 }
 
 impl Rac2Mobys {
@@ -289,7 +330,7 @@ impl Rac2Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, hero_targets, rails, level: rc_game2::level::LevelData::load(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, hero_targets, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }

@@ -345,7 +345,13 @@ pub struct ClassSounds {
 /// Parses the remap block at core header +0x70 (index-relative `s16 defs_off, defs_count, map_off,
 /// map_count`, then one `{s16 off, s16 count}` per moby class) and applies it as the loader does.
 /// `core_data` is the decompressed core data (class blobs).
-pub fn parse_level_sounds(core_index: &[u8], core: &LevelCore, core_data: &[u8]) -> Result<LevelSounds> {
+pub fn parse_level_sounds(core_index: &[u8], core: &LevelCore, core_data: &[u8]) -> Result<LevelSounds> { parse_level_sounds_for(crate::Game::Rac1, core_index, core, core_data) }
+
+/// [`parse_level_sounds`] for `game`. Going Commando's per-class lists (`0x304660`) open with one more word, which
+/// the loader writes + 1 into each def's bank handle: def `j` takes the list's entry `j + 1`, the header count is the
+/// list's count less one.
+pub fn parse_level_sounds_for(game: crate::Game, core_index: &[u8], core: &LevelCore, core_data: &[u8]) -> Result<LevelSounds> {
+    let skip = usize::from(game == crate::Game::Rac2);
     let idx = Buf(core_index);
     let base = core.header.sound_remap_offset;
     if base <= 0 { return Ok(LevelSounds::default()); }
@@ -368,7 +374,7 @@ pub fn parse_level_sounds(core_index: &[u8], core: &LevelCore, core_data: &[u8])
     for (c, entry) in core.moby_classes.iter().enumerate() {
         let at = base + 8 + 4 * c;
         let (off, count) = (idx.i16(at)?, idx.i16(at + 2)?);
-        let bank_ids: Vec<u16> = (0..count.max(0) as usize).map(|j| idx.u16(rel(off)? + 4 * j)).collect::<Result<_>>()?;
+        let bank_ids: Vec<u16> = (skip..count.max(0) as usize).map(|j| idx.u16(rel(off)? + 4 * j)).collect::<Result<_>>()?;
         let (defs, header_count) = if entry.offset_in_asset_wad > 0 {
             let blob = entry.offset_in_asset_wad as usize;
             let n = data.u8(blob + 0x0d)?;
@@ -377,7 +383,7 @@ pub fn parse_level_sounds(core_index: &[u8], core: &LevelCore, core_data: &[u8])
             // The loader writes entry[j] into def j for every j < header count, walking past the class's remap
             // list when the header count is larger (level 10 class 1229: 12 defs, 6 ids; it picks up the next
             // class's ids). Same here.
-            for (j, d) in defs.iter_mut().enumerate() { d.index = idx.u16(rel(off)? + 4 * j)?; }
+            for (j, d) in defs.iter_mut().enumerate() { d.index = idx.u16(rel(off)? + 4 * (j + skip))?; }
             (defs, Some(n))
         } else {
             (Vec::new(), None)

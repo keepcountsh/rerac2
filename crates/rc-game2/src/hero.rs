@@ -225,6 +225,8 @@ pub struct Hero {
     pub last_ground_point: V3,
     /// `0x18b2b0`: surface id under the feet.
     pub surface: i32,
+    /// `0x18b2bd`: the ground's footstep class (`0x2e2410`, the hit's sound bits; 0 on a moby).
+    pub footstep: u8,
     /// `0x18a160`: ticks on the ground; **`0x18a16e`: ticks in the air** (0 = grounded); `0x18a16c`.
     pub grounded_ticks: i32,
     pub air_ticks: i16,
@@ -388,7 +390,7 @@ impl Hero {
             fall_g: 0.006_111_111_5, fall_dec: 0.001_944_444_5, run_keep: 0, walk_gate: 0, on_moby: false, cap_top: 0.8, cap_bottom: 0.7, cap_radius: 0.45, cap_radius_vel: 0.0,
             cap_top_target: 0.8, cap_bottom_target: 0.7, cap_radius_target: 0.45, cap_hit: 0, contact_point: [0.0; 3],
             contact_normal: [0.0; 3], ground_point: [0.0; 3], ground_z: 0.0, height: 32.0, ground_normal: [0.0, 0.0, 1.0],
-            slope: 0.0, last_ground_point: [0.0; 3], surface: -1, grounded_ticks: 0, air_ticks: 0, f16c: 0, snap_vel: 0.0,
+            slope: 0.0, last_ground_point: [0.0; 3], surface: -1, footstep: 0, grounded_ticks: 0, air_ticks: 0, f16c: 0, snap_vel: 0.0,
             drag: [0.0; 3], drag_src: [0.0; 3], stick: [0.0; 2], stick_mag: 0.0, stick_mag_prev: 0.0, run_hold: 0,
             quick_turn: 0, run_dir: [1.0, 0.0, 0.0], run_yaw: 0.0, anim_speed: 1.0, state: 0, substate: 0, group: 0,
             prev_state: 0, prev_group: 0, prev2_state: 0, prev2_group: 0, prev_timer: 0, cam_mode: 0, mode: 0, jump: JumpBlock { air_turn: 0.250_011_4, terminal: 0.833_333_3, ..JumpBlock::default() },
