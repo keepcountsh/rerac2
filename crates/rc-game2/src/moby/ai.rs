@@ -439,6 +439,141 @@ pub fn hold(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> i32 {
     move_step(w, id, ctx, yaw, pos)
 }
 
+/// `0x32dd60(m, path)`: the walk along a path (the movement block's `+0xc4` the path + 1, `+0xc8` the point it heads
+/// for, `+0xca` the last; a new path starts at its first point, `0x32de68`): each frame toward the point, the goal its
+/// last; within the stop distance of it the next (or back), at the last 1.
+pub fn follow_path(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, path: i32) -> bool {
+    let Some(points) = usize::try_from(path).ok().and_then(|p| ctx.level.paths.get(p)).cloned() else { return false };
+    if points.is_empty() { return false; }
+    let m = &mut w.mobys[id];
+    let o = mv(m);
+    if m.pv_i(o + 0xc4) != path + 1 {
+        m.set_pv_i(o + 0xc4, path + 1);
+        m.set_pv_s(o + 0xca, points.len() as i16 - 1);
+        m.set_pv_s(o + 0xc8, 0);
+    }
+    let at = |i: i16| { let p = points[(i.max(0) as usize).min(points.len() - 1)]; [p[0], p[1], p[2]] };
+    let (i, last) = (m.pv_s(o + 0xc8), m.pv_s(o + 0xca));
+    let p = at(i);
+    let yaw = atan2(p[0] - m.pos[0], p[1] - m.pos[1]);
+    move_step(w, id, ctx, yaw, at(last));
+    let m = &mut w.mobys[id];
+    if m.pv_f(o + 0x34) < dist2(m.pos, at(i)) { return false; }
+    if i == last { return true; }
+    m.set_pv_s(o + 0xc8, if i <= last { i + 1 } else { i - 1 });
+    false
+}
+
+/// `0x31c278(up, r, step, slope, m, &pos, &target, flags)`: a step from `pos` toward `target` that keeps to walkable
+/// ground. A target whose ground (`0x31ce98`, from `up` above it) is more than `step` off (flag 1: only higher) is not
+/// taken; the line `up` above the feet `1.2·r` ahead (flags 0x24, flag 2 kept) meeting a face steeper than `slope`
+/// slides the step along it; then (without flag 2) up to six spheres of `r` at `up + r` above the target, a touch by a
+/// moby or above `slope` from the feet pushing the target out. The new ground is tested again, and `pos` takes the
+/// target's x and y. Returns whether the step went as asked.
+pub fn step_walk(ctx: &Ctx, id: usize, up: f32, r: f32, step: f32, slope: f32, pos: &mut V3, target: &mut V3, flags: u32) -> bool {
+    use rc_game::collision_query::{coll_line_m, coll_sphere_m, QueryFlags};
+    let mut ok = true;
+    let off = |g: f32, p: V3| step < (g - p[2]).abs() && ((flags & 1 == 0 && g < p[2]) || p[2] < g);
+    let g = ground_z(ctx, 0.5, [target[0], target[1], target[2] + up], 0x20);
+    if off(g, *pos) {
+        *target = *pos;
+        ok = false;
+    }
+    let mut d = sub(*target, *pos);
+    let probe = set_len(d, r * 1.2);
+    let a = [pos[0], pos[1], pos[2] + up];
+    let b = add(a, probe);
+    if ok {
+        let hit = ctx.coll.and_then(|c| coll_line_m(c, ctx.scene, a, b, QueryFlags(flags & 2 | 0x24), Some(id)));
+        if let Some(h) = hit.filter(|h| 0 < h.kind) {
+            let n = h.normal;
+            if slope <= atan2(n[2], len2(n)) {
+                let n = set_len([n[0], n[1], 0.0], 1.0);
+                let into = -d[0] * n[0] - d[1] * n[1];
+                if 0.0 < into {
+                    d = add(d, scale(n, into));
+                    ok = false;
+                }
+            }
+            *target = add(*pos, d);
+        }
+    }
+    if flags & 2 == 0 {
+        let lift = up + r;
+        for _ in 0..6 {
+            let c = [target[0], target[1], target[2] + lift];
+            let Some(h) = ctx.coll.and_then(|cl| coll_sphere_m(cl, ctx.scene, c, r, QueryFlags(0x24), Some(id))) else { break };
+            let rise = atan2(dist2(*target, h.point), h.point[2] - target[2]);
+            if h.moby.is_some() || slope < rise {
+                let pc = h.pushed_centre.unwrap_or(c);
+                *target = [pc[0], pc[1], pc[2] - lift];
+                ok = false;
+            }
+        }
+    }
+    let g = ground_z(ctx, 0.5, [target[0], target[1], target[2] + up], 0x20);
+    if off(g, *pos) {
+        *target = *pos;
+        ok = false;
+    }
+    pos[0] = target[0];
+    pos[1] = target[1];
+    ok
+}
+
+/// `0x323958(up, step, m, block)`: the wander about a home. The block: `+0x00` home, `+0x10` the radius, `+0x14` the
+/// speed, `+0x18` the turn, `+0x1c` how far from home, `+0x20` how near Ratchet, `+0x24` the heading, (s16) `+0x28`
+/// turning, `+0x2a` its ticks, `+0x2c` / `+0x2e` their range. A new heading (45°..150° to a side) is held for a while;
+/// the step ([`step_walk`]) along the facing, on the ground; blocked or too far out, home is the heading for 30..90
+/// ticks; near Ratchet the heading turns away from him (the nearer, the less).
+pub fn wander(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, up: f32, step: f32, b: usize) {
+    if w.mobys[id].pv_s(b + 0x28) == 0 {
+        let t = ctx.game.rng.randf_signed(0.785_398_2, 2.617_994);
+        let m = &mut w.mobys[id];
+        m.set_pv_f(b + 0x24, m.pv_f(b + 0x24) + t);
+        let (lo, hi) = (m.pv_s(b + 0x2c) as i32, m.pv_s(b + 0x2e) as i32);
+        let n = ctx.game.rng.rand_range(lo, hi);
+        let m = &mut w.mobys[id];
+        m.set_pv_s(b + 0x2a, n as i16);
+        m.set_pv_s(b + 0x28, 1);
+    } else {
+        let m = &mut w.mobys[id];
+        let mut yaw = m.rot[2];
+        approach_angle(m.pv_f(b + 0x24), m.pv_f(b + 0x18), &mut yaw, 0);
+        m.rot[2] = yaw;
+        let mut t = m.pv_s(b + 0x2a) as i32;
+        let done = crate::moby::countdown(&mut t);
+        m.set_pv_s(b + 0x2a, t as i16);
+        if done { m.set_pv_s(b + 0x28, 0); }
+    }
+    let m = &w.mobys[id];
+    let mut pos = m.pos;
+    let s = m.pv_f(b + 0x14);
+    let mut target = [pos[0] + m.rot[2].cos() * s, pos[1] + m.rot[2].sin() * s, pos[2]];
+    let ok = step_walk(ctx, id, up, m.pv_f(b + 0x10), step, 0.523_598_8, &mut pos, &mut target, 0);
+    pos[2] = ground_z(ctx, 0.5, pos, 0);
+    let hero = ctx.hero.pos;
+    let m = &mut w.mobys[id];
+    m.pos = pos;
+    let home = m.pv_v(b);
+    if !ok || m.pv_f(b + 0x1c) < dist2(pos, home) {
+        m.set_pv_f(b + 0x24, atan2(home[0] - pos[0], home[1] - pos[1]));
+        let n = ctx.game.rng.rand_range(0x1e, 0x5a);
+        let m = &mut w.mobys[id];
+        m.set_pv_s(b + 0x2a, n as i16);
+        m.set_pv_s(b + 0x28, 1);
+    } else {
+        let d = dist2(pos, hero);
+        let near = m.pv_f(b + 0x20);
+        if d < near {
+            let away = atan2(pos[0] - hero[0], pos[1] - hero[1]);
+            let h = m.pv_f(b + 0x24);
+            m.set_pv_f(b + 0x24, add_rot(h, sub_rot(away, h) * (d / near)));
+        }
+    }
+    w.changed = true;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Hurt: the damage intake, the reaction, the knock-back flight, the attack sphere.
 //

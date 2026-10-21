@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
     let pv = rac2::gameplay::pvar_blocks(&g)?;
     if let Ok(k) = std::env::var("PVAR_CLASS") {
         let k: i32 = k.parse()?;
-        for m in mobys.iter().filter(|m| m.base.o_class == k).take(3) {
+        for m in mobys.iter().filter(|m| m.base.o_class == k).take(std::env::var("PVAR_TAKE").ok().and_then(|s| s.parse().ok()).unwrap_or(3)) {
             let Some(b) = usize::try_from(m.base.pvar_index).ok().and_then(|i| pv.get(i)) else { continue };
             println!("class {k} pvar {} ({:#x} bytes):", m.base.pvar_index, b.len());
             for (r, c) in b.chunks(16).enumerate() {

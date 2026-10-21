@@ -781,3 +781,650 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if m.state_ticks != -1 { m.state_ticks = m.state_ticks.wrapping_add(1); }
     w.changed = true;
 }
+
+// ---------------------------------------------------------------------------------------------------
+// 0x0b0b (`0x3d9020`, its set-up and checks `0x3dac08`, its tail `0x3db4b8`): the burrower's bigger kin, with two
+// spinning parts (0x0aa2, `+0x2a0` / `+0x2a4`, at its joints 0 and 2).
+//
+// Set up as 0x0b0a (scaled 1.1, mirrored half the time, the movement block at `+0x110`: radius 0.8, gravity 1/180, 30°
+// of turn left; hurts into state 0xf, sub-state 5); its wander (`+0x200`: home, radius 1, 3 from home, 10 from
+// Ratchet), its wander's rest `+0x2d8` (120..700 ticks), the bite's damage `+0x2cc`. On the ground (state 1; `+0x2dc`:
+// wandering, 2), else as a mound (0x0ab7, `+0x2e0`; state 3, sub-state 2). Each tick: the damage and the wakes (its
+// group's 0x0b0b `+0x276`; a death, or more than 20 over the ground once, lets the group's next 0x0b0a or 0x0b0b up,
+// `+0x294`); `+0x2ec`: west of x 170.7 it falls away (state 0x10, sub-state 6); its two areas; under z 90 it bursts.
+//
+// Sub-states: 0 on the ground — him in the first area after `+0x2d0`, or within 3.4, up (0xb, sequence 1 or 5; a
+// cuboid: 10); woken, 9 / 3; 2 the mound — him in the first area after `+0x2d0`, or woken: out (5, sequence 0x19),
+// the mound's hits taking its health; 3 waiting — him in an area and less than 3.25 above: up, else after `+0x270` the
+// wander (2, sequence 4); 4 fighting — him gone from the areas (or above): rest (9, sequence 7); 5 the hurt's flight:
+// dead, its parts, its mound, its bolts, deleted; over, the fight (0xc) or rest; with `+0x2ec`, a sphere of 0.9
+// around it; 6 the fall away: 0.4 a tick down y until the flight ends or under z 100.
+//
+// States: 1 (`+0x2f0`) holding; 2 / 9 wandering ([`crate::moby::ai::wander`], sequence 8 / 0xb, with rests 4 / 2 and
+// 6 / 7); 3 swaying; 4 / 5 down out of the mound facing him, 7 down to the ground, 8 the emerge (sequence 0xf) then
+// the fight; 10 the climb to `+0x300`; 0xb up, then the fight; 0xc the fight: along its path (`+0x2f8`) first, within
+// 2.8 facing him within 12° the bite (0xd, sequence 0x1b or 0x10), else up to him; 0xd the bite: frames 19..25 four
+// spheres at its joints 0, 1, 2, 9 doing `+0x2cc`, its parts spinning faster (25°) from frame 17; his hurt by it → 0xe
+// (sequence 0x11, its parts still through frames 12..15). The parts spin 8° a tick but on the ground, as a mound or
+// in the flight.
+//
+// Not ported: its sounds but the two, the debris and the bursts (`0x3210a8`, `0x3f8348`, `0x327498`), the parts'
+// sparks (`0x3dbc20`), the bite's trail (`0x3dbde8`, `0x3dbe88`, `0x3dc100`), the shadow, the colour flash, the head's
+// aims (`0x324208`, `0x327308`), the draw callbacks, the scene's hiding (`0x1a8f00` = 2).
+
+const PART: i16 = 0x0aa2;
+const PART_JOINTS: [usize; 2] = [0, 2];
+
+/// `0x3db680`: the group's 0x0b0b (not dead) are woken.
+fn wake_0b0b(w: &mut MobyWorld, id: usize) {
+    let g = w.mobys[id].group;
+    let Some(members) = usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned() else { return };
+    for i in members {
+        let m = &mut w.mobys[i];
+        if m.state < 0x80 && m.o_class == 0x0b0b { m.set_pv_s(0x276, 1); }
+    }
+}
+
+/// The group's first 0x0b0a or 0x0b0b still held (`+0x294` = 0) is let up, while more than one of the group lives.
+fn let_next_up(w: &mut MobyWorld, id: usize) {
+    let g = w.mobys[id].group;
+    if super::props::group_alive(w, g as i32) < 2 { return; }
+    let members = usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default();
+    if let Some(&i) = members.iter().find(|&&i| matches!(w.mobys[i].o_class, 0x0b0a | 0x0b0b) && w.mobys[i].pv_i(0x294) == 0) {
+        w.mobys[i].set_pv_i(0x294, 1);
+    }
+}
+
+/// `0x3253f0(m, part, joint, 0)`: the part at the joint's frame (its rows made unit), shown as `m` is.
+fn place_part(w: &mut MobyWorld, id: usize, p: usize, joint: usize, ctx: &Ctx) {
+    let Some((r, t)) = ctx.host.joint_matrix(&w.mobys[id], joint) else { return };
+    let hidden = w.mobys[id].mode & 1 != 0;
+    let pm = &mut w.mobys[p];
+    pm.pos = t;
+    pm.rows = r.map(|row| set_len(row, 1.0));
+    pm.mode = if hidden { pm.mode | 0x41 } else { pm.mode & 0xffbe };
+    pm.mode |= crate::moby::mode::NO_UPDATE | crate::moby::mode::NO_MATRIX | crate::moby::mode::KEEP_ROWS;
+}
+
+/// `0x3dbed0(m, +0x2a0, 0, 2)`: the two parts made (`0x32a748`: at it, its draw distance; scaled 0.75) at its joints.
+fn make_parts(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
+    for (k, j) in PART_JOINTS.into_iter().enumerate() {
+        let (pos, rot, dd) = (w.mobys[id].pos, w.mobys[id].rot, w.mobys[id].draw_dist);
+        let p = w.create(PART);
+        let pm = &mut w.mobys[p];
+        pm.update_dist = 0xff;
+        pm.drawn = 1;
+        pm.parent = Some(id);
+        pm.pos = pos;
+        pm.rot = rot;
+        pm.mode &= 0xfff8;
+        pm.scale *= 0.75;
+        pm.draw_dist = dd;
+        w.rebuild(p, &*ctx.host);
+        place_part(w, id, p, j, ctx);
+        w.rebuild(p, &*ctx.host);
+        ai::set_link(&mut w.mobys[id], 0x2a0 + 4 * k, Some(p));
+    }
+}
+
+/// The parts (`+0x2a0` / `+0x2a4`) that are still there.
+fn parts(w: &MobyWorld, id: usize) -> [Option<usize>; 2] {
+    [0, 1].map(|k| ai::link(&w.mobys[id], 0x2a0 + 4 * k).filter(|&p| w.mobys.get(p).is_some_and(|m| m.state < 0x80 && m.o_class == PART)))
+}
+
+/// `0x3dc090`: the parts go.
+fn delete_parts(w: &mut MobyWorld, id: usize) {
+    for p in parts(w, id).into_iter().flatten() { w.delete(p); }
+    ai::set_link(&mut w.mobys[id], 0x2a0, None);
+    ai::set_link(&mut w.mobys[id], 0x2a4, None);
+}
+
+/// `0x3dbfb0(angle, m, parts, _)`: each part at its joint, turned `angle` about its own z.
+fn spin_parts(w: &mut MobyWorld, id: usize, ctx: &Ctx, angle: f32) {
+    let rz = crate::moby::attach::rows_of([0.0, 0.0, angle]);
+    for (p, j) in parts(w, id).into_iter().zip(PART_JOINTS) {
+        let Some(p) = p else { continue };
+        place_part(w, id, p, j, ctx);
+        let r = w.mobys[p].rows;
+        w.mobys[p].rows = rz.map(|z| add(add(scale(r[0], z[0]), scale(r[1], z[1])), scale(r[2], z[2])));
+        w.rebuild(p, &*ctx.host);
+    }
+}
+
+/// The mound (`+0x2e0`) goes.
+fn delete_mound(w: &mut MobyWorld, id: usize) {
+    if let Some(h) = ai::link(&w.mobys[id], 0x2e0).filter(|&h| w.mobys.get(h).is_some_and(|m| m.o_class == 0x0ab7)) { w.delete(h); }
+    ai::set_link(&mut w.mobys[id], 0x2e0, None);
+}
+
+/// `0x3dac08`. Returns whether it is to go.
+fn checks_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
+    if w.mobys[id].state == 0 {
+        let mirror = ctx.game.rng.randi(2) == 1;
+        let m = &mut w.mobys[id];
+        m.scale *= 1.1;
+        m.set_pv_b(0x48, 20);
+        m.set_pv_b(0x4a, 16);
+        if mirror { m.mode |= crate::moby::mode::MIRROR; }
+        m.set_pv_i(0x18, 0x110);
+        m.set_pv_i(0x2ac, 0);
+        m.set_pv_i(0x2bc, 0);
+        m.set_pv_i(0x2c0, -1);
+        m.set_pv_f(0x284, m.pv_f(0x284) * 0.017_453_294);
+        m.set_pv_v(0x520, m.pos);
+        m.set_pv_f(0x2e8, 8.0);
+        m.set_pv_b(0x70, 0xf);
+        m.set_pv_i(0xa8, 5);
+        m.set_pv_f(0x9c, 0.4);
+        m.set_pv_i(0x2c4, 0);
+        m.set_pv_i(0x2c8, 0);
+        m.set_pv_f(0x90, if m.pv_i(0x2ec) != 0 { 0.07 } else { 0.5 });
+        m.set_pv_f(0x94, 0.9);
+        m.set_pv_f(0x114, 0.5);
+        m.set_pv_f(0x110, 0.8);
+        m.set_pv_f(0x11c, 0.9);
+        m.set_pv_f(0x120, 1.553_343);
+        m.set_pv_f(0x140, 0.523_598_8);
+        m.set_pv_f(0x13c, 0.005_555_556);
+        m.set_pv_f(0x118, 0.9);
+        ai::senses(m, 0.003_333_333_5, 0.100_000_01, 0.001_163_553, 0.104_719_76);
+        m.set_pv_v(0x200, m.pos);
+        m.set_pv_f(0x21c, 3.0);
+        m.set_pv_f(0x220, 10.0);
+        m.set_pv_f(0x210, 1.0);
+        let t = ctx.game.rng.rand_range(120, 700);
+        let m = &mut w.mobys[id];
+        m.set_pv_b(0x2e, 1);
+        m.set_pv_i(0x280, 0);
+        m.set_pv_i(0x2e4, 0);
+        m.set_pv_b(0x28, 3);
+        m.set_pv_i(0x2d8, t);
+        m.set_pv_f(0x2cc, m.pv_b(0x34) as f32);
+        // The point above it it climbs to: 20 up from its joint 3, or what is in the way.
+        let j3 = ctx.host.joint(&w.mobys[id], 3).unwrap_or(w.mobys[id].pos);
+        let mut top = [j3[0], j3[1], j3[2] + 20.0];
+        let hit = ctx.coll.and_then(|c| rc_game::collision_query::coll_line_m(c, ctx.scene, j3, top, rc_game::collision_query::QueryFlags(0), Some(id)));
+        if let Some(h) = hit { top[2] = h.point[2]; }
+        let m = &mut w.mobys[id];
+        m.set_pv_v(0x300, top);
+        m.set_pv_v(0x310, j3);
+        if m.pv_i(0x27c) == 0 && m.pv_i(0x288) == -1 {
+            let g = ai::ground_z(ctx, 0.5, w.mobys[id].pos, 0);
+            let m = &mut w.mobys[id];
+            m.pos[2] = g;
+            m.set_state(1, 0);
+            super::props::set_seq(w, id, ctx, 0, 0, 0);
+            if w.mobys[id].pv_i(0x2dc) != 0 {
+                w.mobys[id].set_state(2, 0);
+                super::props::set_seq(w, id, ctx, 4, 0, 10);
+            }
+        } else {
+            m.set_state(3, 2);
+            super::props::set_seq(w, id, ctx, 0xc, 0, 0);
+            let m = &mut w.mobys[id];
+            m.has_collision = false;
+            m.set_pv_f(0x30, 2.5);
+            let (pos, ud, dd) = (m.pos, m.update_dist, m.draw_dist);
+            let h = w.create(0x0ab7);
+            let hm = &mut w.mobys[h];
+            hm.update_dist = ud;
+            hm.draw_dist = dd;
+            hm.drawn = 1;
+            hm.mode |= 0x41;
+            hm.pos = pos;
+            w.rebuild(h, &*ctx.host);
+            ai::set_link(&mut w.mobys[id], 0x2e0, Some(h));
+        }
+        let c = w.mobys[id].pv_i(0x288);
+        if c != -1 {
+            w.mobys[id].set_state(2, 0);
+            if let Some((p, _)) = ctx.level.cuboid_place(c) { w.mobys[id].set_pv_v(0x300, p); }
+            w.mobys[id].update_dist = 0x80;
+        }
+        make_parts(w, id, ctx);
+    }
+    let alive = w.mobys[id].pv_b(0x2e) != 2;
+    if let Some(p) = ctx.host.joint(&w.mobys[id], 3) { w.mobys[id].set_pv_v(0x310, p); }
+    let kind = ai::take_damage(w, id, ctx, false);
+    if kind != 0 || !alive {
+        let m = &mut w.mobys[id];
+        m.set_pv_f(0x30, 0.5);
+        if kind == 5 {
+            m.rot[0] = 0.0;
+            m.rot[1] = 0.839_724_4;
+        }
+        wake_0b0b(w, id);
+        if matches!(kind, 4 | 5) || !alive { let_next_up(w, id); }
+    }
+    // Once more than 20 over the ground, the group's next is let up.
+    let g = ai::ground_z(ctx, 0.5, w.mobys[id].pos, 0);
+    let m = &mut w.mobys[id];
+    if 20.0 < m.pos[2] - g && 0 <= m.group && m.pv_i(0x2c8) == 0 {
+        m.set_pv_i(0x2c8, 1);
+        let_next_up(w, id);
+    }
+    let m = &mut w.mobys[id];
+    if m.pv_i(0x2ec) != 0 && m.pos[0] < 170.7 && m.sub_state != 6 { m.set_state(0x10, 6); }
+    let m = &w.mobys[id];
+    let (r1, a1, r2, a2) = (m.pv_f(0x268), m.pv_i(0x250), m.pv_f(0x26c), m.pv_i(0x254));
+    let f1 = ai::find_target(w, id, ctx, r1, 10.0, a1, None, false);
+    w.mobys[id].set_pv_i(0x258, f1 as i32);
+    let f2 = ai::find_target(w, id, ctx, r2, 10.0, a2, None, false);
+    w.mobys[id].set_pv_i(0x25c, f2 as i32);
+    if w.mobys[id].pos[2] < 90.0 {
+        delete_parts(w, id);
+        crate::moby::bolts::drop(w, id, 0, 3, ctx);
+        return true;
+    }
+    if !alive {
+        // `0x3db458`.
+        delete_parts(w, id);
+        delete_mound(w, id);
+        wake_0b0b(w, id);
+        return true;
+    }
+    false
+}
+
+/// 0x0b0b (above).
+pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if checks_0b0b(w, id, ctx) {
+        w.delete(id);
+        return;
+    }
+    if w.mobys[id].state != 0xc && w.mobys[id].sub_state != 2 { ai::hold(w, id, ctx); }
+    let coll = w.class(0x0b0b).is_some_and(|c| c.has_collision);
+    let m = &mut w.mobys[id];
+    m.mode = (m.mode & 0xffbe) | crate::moby::mode::TARGET;
+    m.has_collision = coll;
+    let part_coll = w.class(PART).is_some_and(|c| c.has_collision);
+    for p in parts(w, id).into_iter().flatten() {
+        let pm = &mut w.mobys[p];
+        pm.mode = (pm.mode & 0xffbe) | crate::moby::mode::TARGET;
+        pm.has_collision = part_coll;
+    }
+    let slow = |m: &mut crate::moby::Moby| ai::senses(m, 0.002_222_222_4, 0.066_666_67, 0.001_163_553, 0.104_719_76);
+    let fast = |m: &mut crate::moby::Moby| ai::senses(m, 0.003_333_333_5, 0.100_000_01, 0.001_163_553, 0.104_719_76);
+    let first = |m: &mut crate::moby::Moby| { let f = m.once & 2 == 0; m.once |= 2; f };
+    let seq_a = |w: &MobyWorld, ctx: &Ctx| ctx.host.anim(&w.mobys[id]).map_or(0xff, |a| a.seq_a);
+    let seq_b = |w: &MobyWorld, ctx: &Ctx| super::props::seq(w, id, ctx);
+    // Up: sequence 1 from its first, else 5 at a random frame.
+    let up_seq = |w: &mut MobyWorld, ctx: &mut Ctx| {
+        if seq_a(w, ctx) == 0 {
+            super::props::set_seq(w, id, ctx, 1, 0, 4);
+        } else if seq_b(w, ctx) != 5 {
+            let f = ctx.game.rng.randi(2) as u8;
+            let b = ctx.game.rng.rand_range(10, 20) as u8;
+            ctx.host.set_anim(&w.mobys[id], 5, f, b);
+        }
+    };
+    let out_of_mound = |w: &mut MobyWorld, ctx: &mut Ctx| {
+        w.mobys[id].set_state(5, -1);
+        super::props::set_seq(w, id, ctx, 0x19, 0, 4);
+        w.mobys[id].set_pv_i(0x2e4, 1);
+    };
+    let target = ai::link(&w.mobys[id], 0x240).and_then(|t| w.mobys.get(t)).map(|t| t.pos);
+    let goal = w.mobys[id].pv_v(0x230);
+    let tp = target.unwrap_or(goal);
+    match w.mobys[id].sub_state {
+        0 => {
+            let m = &mut w.mobys[id];
+            if first(m) { slow(m); }
+            let m = &mut w.mobys[id];
+            if m.pv_i(0x258) == 1 && m.pv_i(0x294) != 0 {
+                let mut t = m.pv_i(0x2d0);
+                let ready = crate::moby::countdown(&mut t);
+                m.set_pv_i(0x2d0, t);
+                if ready {
+                    m.set_state(0xb, 4);
+                    up_seq(w, ctx);
+                    if w.mobys[id].pv_i(0x288) != -1 {
+                        w.mobys[id].set_state(10, 1);
+                        super::props::set_seq(w, id, ctx, 0x1a, 0, 4);
+                    }
+                }
+            } else if target.is_some_and(|p| dist2(m.pos, p) <= 3.4) {
+                m.set_state(0xb, 4);
+                up_seq(w, ctx);
+                w.mobys[id].set_pv_i(0x294, 1);
+            } else if m.pv_s(0x276) != 0 && m.pv_i(0x294) != 0 {
+                m.set_state(9, 3);
+                m.set_pv_s(0x276, 0);
+                if m.pv_s(0x270) < 300 {
+                    let t = ctx.game.rng.rand_range(0x1e0, 600);
+                    w.mobys[id].set_pv_s(0x270, t as i16);
+                }
+            }
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            if first(m) { slow(m); }
+            m.has_collision = false;
+            let held = m.pv_i(0x294) == 0 || m.pv_i(0x2e4) != 0;
+            if m.pv_i(0x258) == 1 && !held {
+                let mut t = m.pv_i(0x2d0);
+                let ready = crate::moby::countdown(&mut t);
+                m.set_pv_i(0x2d0, t);
+                if ready { out_of_mound(w, ctx); }
+            } else if m.pv_s(0x276) != 0 && !held {
+                m.set_pv_s(0x276, 0);
+                out_of_mound(w, ctx);
+            }
+            // The mound takes the hits.
+            if let Some(h) = ai::link(&w.mobys[id], 0x2e0).filter(|&h| h < w.mobys.len()) {
+                if let Some(rec) = w.hit_message(h).filter(|r| r.tmpl.flags & 0x10000 != 0) {
+                    if w.mobys[id].pv_s(0x26) < 1 {
+                        let m = &mut w.mobys[id];
+                        m.set_pv_f(0x20, m.pv_f(0x20) - rec.tmpl.damage);
+                        m.set_pv_s(0x26, 0xf);
+                        w.clear_hit(h);
+                        if w.mobys[id].pv_i(0x2e4) == 0 { out_of_mound(w, ctx); }
+                        if w.mobys[id].pv_f(0x20) <= 0.0 { w.mobys[id].set_state(0xf, 5); }
+                    }
+                }
+                let p = w.mobys[id].pos;
+                if let Some(hm) = w.mobys.get_mut(h) { hm.pos = p; }
+            }
+        }
+        3 => {
+            let m = &mut w.mobys[id];
+            if first(m) { slow(m); }
+            let m = &w.mobys[id];
+            let seen = m.pv_i(0x258) == 1 || m.pv_i(0x25c) == 1;
+            if seen && m.pv_i(0x294) != 0 && ctx.hero.pos[2] - m.pos[2] < 3.25 {
+                w.mobys[id].set_state(0xb, 4);
+                up_seq(w, ctx);
+            } else if m.pv_s(0x270) == 0 {
+                w.mobys[id].set_state(2, 0);
+                super::props::set_seq(w, id, ctx, 4, 0, 10);
+            }
+        }
+        4 => {
+            let m = &mut w.mobys[id];
+            if first(m) { fast(m); }
+            let m = &w.mobys[id];
+            let seen = m.pv_i(0x258) == 1 || m.pv_i(0x25c) == 1;
+            if !(seen && m.pv_f(0x238) - m.pos[2] < 3.25) && m.state != 5 && m.state != 4 {
+                w.mobys[id].set_state(9, 3);
+                if seq_b(w, ctx) != 7 {
+                    let f = ctx.game.rng.randi(2) as u8;
+                    let b = ctx.game.rng.rand_range(10, 20) as u8;
+                    ctx.host.set_anim(&w.mobys[id], 7, f, b);
+                }
+                let t = ctx.game.rng.rand_range(0x244, 600);
+                w.mobys[id].set_pv_s(0x270, t as i16);
+            }
+        }
+        5 => {
+            let res = ai::flight(w, id, ctx);
+            if res & 1 != 0 || (w.mobys[id].pv_f(0x20) <= 0.0 && w.mobys[id].pv_i(0x2ec) == 0) {
+                ctx.host.play_sound(&w.mobys[id], 0xd, 0);
+                delete_parts(w, id);
+                delete_mound(w, id);
+                crate::moby::bolts::drop(w, id, 0, 3, ctx);
+                w.delete(id);
+                return;
+            }
+            if res & 2 != 0 {
+                let m = &w.mobys[id];
+                if m.pv_i(0x258) == 1 || m.pv_i(0x25c) == 1 {
+                    w.mobys[id].set_state(0xc, 4);
+                    super::props::set_seq(w, id, ctx, 0xb, 0, 10);
+                } else {
+                    w.mobys[id].set_state(9, 3);
+                    super::props::set_seq(w, id, ctx, 7, 0, 10);
+                    let t = ctx.game.rng.rand_range(0x244, 600);
+                    w.mobys[id].set_pv_s(0x270, t as i16);
+                }
+                w.mobys[id].set_pv_i(0x294, 1);
+            }
+            if w.mobys[id].pv_i(0x2ec) != 0 {
+                let p = w.mobys[id].pos;
+                ai::attack_sphere(w, id, ctx, 0.9, 0.1, 1.0, p, 0x10000, 0, 1, 0);
+            }
+        }
+        6 => {
+            ai::flight(w, id, ctx);
+            if super::props::wrapped(w, id, ctx) || w.mobys[id].pos[2] < 100.0 {
+                delete_parts(w, id);
+                crate::moby::bolts::drop(w, id, 0, 3, ctx);
+                w.delete(id);
+                return;
+            }
+            w.mobys[id].pos[1] -= 0.4;
+        }
+        _ => {}
+    }
+    let to_target = atan2(tp[0] - w.mobys[id].pos[0], tp[1] - w.mobys[id].pos[1]);
+    let face = |w: &mut MobyWorld| ai::turn_to(&mut w.mobys[id], to_target, 0.001, 0.01, 0.1, 0x28c);
+    let tilt_back = |w: &mut MobyWorld, both: bool| {
+        let m = &mut w.mobys[id];
+        let mut v = m.pv_f(0x290);
+        spring(0.0, 0.016_666_668, 0.0, 0.066_666_67, &mut m.rot[1], &mut v);
+        if both { spring(0.0, 0.016_666_668, 0.0, 0.066_666_67, &mut m.rot[0], &mut v); }
+        m.set_pv_f(0x290, v);
+    };
+    let emerge = |w: &mut MobyWorld, ctx: &mut Ctx| {
+        w.mobys[id].set_state(8, -1);
+        super::props::set_seq(w, id, ctx, 0xf, 0, 3);
+    };
+    let stop_loop = |w: &mut MobyWorld, ctx: &mut Ctx| {
+        let h = w.mobys[id].pv_i(0x2c0);
+        if h != -1 { ctx.host.stop_sound(h); }
+        w.mobys[id].set_pv_i(0x2c0, -1);
+    };
+    // After the bite or its hurt: the fight again, at a run when he is farther than 4.
+    let back_to_fight = |w: &mut MobyWorld, ctx: &mut Ctx| {
+        if 4.0 < dist2(w.mobys[id].pos, tp) {
+            fast(&mut w.mobys[id]);
+            w.mobys[id].set_state(0xc, -1);
+            super::props::set_seq(w, id, ctx, 0xb, 0, 10);
+        } else {
+            slow(&mut w.mobys[id]);
+            w.mobys[id].set_state(0xc, -1);
+            super::props::set_seq(w, id, ctx, 8, 0, 10);
+        }
+    };
+    // The wander with its rests (`walk` the walk sequence, `rests` the two rest sequences, `speed` the wander's).
+    let roam = |w: &mut MobyWorld, ctx: &mut Ctx, walk: u8, rests: [u8; 2], speed: f32, step: f32, hi: i32| {
+        let m = &mut w.mobys[id];
+        let mut t = m.pv_i(0x2d8);
+        crate::moby::countdown(&mut t);
+        m.set_pv_i(0x2d8, t);
+        let b = seq_b(w, ctx);
+        if b != walk && !rests.contains(&b) { super::props::set_seq(w, id, ctx, walk, 0, 0xe); }
+        let m = &mut w.mobys[id];
+        let mut s = m.pv_f(0x214);
+        approach(if m.pv_i(0x2d8) < 0x15 { 0.0 } else { speed }, step, &mut s);
+        m.set_pv_f(0x214, s);
+        let b = seq_b(w, ctx);
+        if b != walk {
+            if rests.contains(&b) && super::props::wrapped(w, id, ctx) {
+                let t = ctx.game.rng.rand_range(120, hi);
+                w.mobys[id].set_pv_i(0x2d8, t);
+                super::props::set_seq(w, id, ctx, walk, 0, 0xc);
+            }
+            return;
+        }
+        if w.mobys[id].pv_i(0x2d8) == 0 {
+            ctx.host.set_anim(&w.mobys[id], rests[1], 0, 0xc);
+            if ctx.game.rng.randi(3) == 1 { ctx.host.set_anim(&w.mobys[id], rests[0], 0, 0xc); }
+        }
+        ai::wander(w, id, ctx, 0.35, 0.25, 0x200);
+    };
+    match w.mobys[id].state {
+        1 => {
+            if w.mobys[id].pv_i(0x2f0) != 0 { ai::hold(w, id, ctx); }
+        }
+        2 => roam(w, ctx, 8, [2, 4], 0.05, 0.000_833_333_36, 700),
+        3 => super::props::sway(&mut w.mobys[id], 0.069_813_17, 0.052_359_88, 0.013_089_97, 0x298, 0x29c),
+        4 => {
+            let m = &mut w.mobys[id];
+            m.set_pv_i(0x2bc, m.pv_i(0x2bc) + 1);
+            face(w);
+            tilt_back(w, true);
+            let g = ai::ground_z(ctx, 0.5, w.mobys[id].pos, 0);
+            let m = &mut w.mobys[id];
+            if 0.05 < m.pos[2] - g {
+                let mut v = m.pv_f(0x280);
+                ease(g - 3.0, 0.016_666_668, 0.163_475_5, 0.166_666_67, &mut m.pos[2], &mut v);
+                m.set_pv_f(0x280, v);
+            } else {
+                stop_loop(w, ctx);
+                emerge(w, ctx);
+                let coll = w.class(0x0b0b).is_some_and(|c| c.has_collision);
+                w.mobys[id].has_collision = coll;
+                delete_mound(w, id);
+                let m = &mut w.mobys[id];
+                m.set_pv_f(0x30, 0.5);
+                m.mode |= crate::moby::mode::TARGET;
+            }
+        }
+        5 => {
+            if !ctx.host.sound_playing(w.mobys[id].pv_i(0x2c0)) {
+                let h = ctx.host.play_sound(&w.mobys[id], 0xb, 4);
+                w.mobys[id].set_pv_i(0x2c0, h);
+            }
+            let m = &mut w.mobys[id];
+            m.set_pv_i(0x2bc, m.pv_i(0x2bc) + 1);
+            face(w);
+            tilt_back(w, true);
+            let g = ai::ground_z(ctx, 0.5, w.mobys[id].pos, 0);
+            let m = &mut w.mobys[id];
+            if 0.05 < m.pos[2] - g {
+                m.pos[2] -= g * 0.000_25;
+            } else {
+                stop_loop(w, ctx);
+                emerge(w, ctx);
+            }
+            if super::props::wrapped(w, id, ctx) {
+                w.mobys[id].set_state(4, -1);
+                super::props::set_seq(w, id, ctx, 0x1a, 0, 0xf);
+            }
+        }
+        6 => {
+            if super::props::wrapped(w, id, ctx) {
+                w.mobys[id].set_state(7, -1);
+                super::props::set_seq(w, id, ctx, 0xe, 0, 0xf);
+            }
+        }
+        7 => {
+            tilt_back(w, false);
+            face(w);
+            let g = ai::ground_z(ctx, 0.5, w.mobys[id].pos, 0);
+            let m = &mut w.mobys[id];
+            if 0.05 < m.pos[2] - g {
+                let mut v = m.pv_f(0x280);
+                ease(g - 3.0, 0.025, 0.163_475_5, 0.25, &mut m.pos[2], &mut v);
+                m.set_pv_f(0x280, v);
+            } else {
+                emerge(w, ctx);
+            }
+        }
+        8 => {
+            if super::props::wrapped(w, id, ctx) {
+                w.mobys[id].set_state(0xc, 4);
+                super::props::set_seq(w, id, ctx, 8, 0, 0xf);
+                let coll = w.class(0x0b0b).is_some_and(|c| c.has_collision);
+                w.mobys[id].has_collision = coll;
+                let g = ai::ground_z(ctx, 0.5, w.mobys[id].pos, 0);
+                w.mobys[id].pos[2] = g;
+            }
+        }
+        9 => roam(w, ctx, 0xb, [7, 6], 0.1, 0.001_666_666_7, 200),
+        10 => {
+            let m = &mut w.mobys[id];
+            let t = m.pv_v(0x300);
+            let target = [t[0], t[1], t[2] - 3.0];
+            let d = sub(target, m.pos);
+            m.rot[2] = atan2(d[0], d[1]);
+            m.rot[1] = atan2(len2(d), d[2]);
+            let mut v = m.pv_f(0x280);
+            ai::spring_to(&mut m.pos, target, 0.016_666_668, 0.0, 0.333_333_34, &mut v);
+            m.set_pv_f(0x280, v);
+            if dist(m.pos, target) < 0.4 {
+                super::props::set_seq(w, id, ctx, 0xe, 0, 10);
+                w.mobys[id].set_state(7, -1);
+            }
+        }
+        0xb => {
+            ai::hold(w, id, ctx);
+            if super::props::wrapped(w, id, ctx) {
+                fast(&mut w.mobys[id]);
+                w.mobys[id].set_state(0xc, -1);
+                super::props::set_seq(w, id, ctx, 0xb, 0, 0xf);
+            }
+        }
+        0xc => {
+            let path = w.mobys[id].pv_i(0x2f8);
+            if path == -1 {
+                let m = &w.mobys[id];
+                let d = dist2(m.pos, tp);
+                let yaw_goal = atan2(goal[0] - m.pos[0], goal[1] - m.pos[1]);
+                if d < 2.8 && rot_dist(m.rot[2], yaw_goal) < 0.209_439_53 {
+                    w.mobys[id].set_state(0xd, -1);
+                    super::props::set_seq(w, id, ctx, 0x1b, 0, 6);
+                    if ctx.game.rng.randi(2) == 1 { ctx.host.set_anim(&w.mobys[id], 0x10, 0, 6); }
+                    w.mobys[id].set_pv_i(0x2b0, 0);
+                } else if d <= 2.8 {
+                    let p = w.mobys[id].pos;
+                    ai::move_step(w, id, ctx, to_target, p);
+                } else {
+                    let off = w.mobys[id].pv_f(0x284);
+                    ai::move_toward(w, id, ctx, off, goal);
+                }
+            } else if ai::follow_path(w, id, ctx, path) || dist2(w.mobys[id].pos, tp) <= 3.4 {
+                w.mobys[id].set_pv_i(0x2f8, -1);
+            }
+            if 5.0 < dist2(w.mobys[id].pos, tp) && seq_a(w, ctx) == 8 {
+                super::props::set_seq(w, id, ctx, 0xb, 0, 4);
+                fast(&mut w.mobys[id]);
+            }
+        }
+        0xd => {
+            if super::props::wrapped(w, id, ctx) {
+                w.mobys[id].set_pv_f(0x2e8, 8.0);
+                if ctx.hero.damage.hit_by == Some(id) {
+                    w.mobys[id].set_state(0xe, -1);
+                    super::props::set_seq(w, id, ctx, 0x11, 0, 7);
+                } else {
+                    back_to_fight(w, ctx);
+                }
+            }
+            ai::hold(w, id, ctx);
+            let f = ctx.host.frame_time(&w.mobys[id]);
+            if matches!(seq_a(w, ctx), 0x1b | 0x10) {
+                if (19.0..=25.0).contains(&f) {
+                    let dmg = w.mobys[id].pv_f(0x2cc);
+                    for (r, j) in [(0.35, 0), (0.15, 1), (0.15, 2), (0.35, 9)] { ai::attack_joint(w, id, ctx, r, dmg, 1.0, j, 1, 0, 1, 0); }
+                }
+                if (17.0..=25.0).contains(&f) { w.mobys[id].set_pv_f(0x2e8, 25.0); }
+            }
+        }
+        0xe => {
+            if super::props::wrapped(w, id, ctx) { back_to_fight(w, ctx); }
+            ai::hold(w, id, ctx);
+            let f = ctx.host.frame_time(&w.mobys[id]);
+            let still = seq_a(w, ctx) == 0x11 && !(5.0 < f && (f < 12.0 || 15.0 < f));
+            w.mobys[id].set_pv_i(0x2c4, still as i32);
+        }
+        _ => {}
+    }
+    // `0x3db4b8`: the parts spun (not on the ground, as a mound, in the flight or held still), the timers, the
+    // state's ticks.
+    let m = &mut w.mobys[id];
+    let mut angle = m.pv_f(0x2ac);
+    if m.sub_state != 0 && m.state != 3 && m.sub_state != 5 && m.pv_i(0x2c4) == 0 {
+        angle = add_rot(angle, m.pv_f(0x2e8) * 0.017_453_294);
+        m.set_pv_f(0x2ac, angle);
+    }
+    spin_parts(w, id, ctx, angle);
+    let m = &mut w.mobys[id];
+    for o in [0x270, 0x272, 0x26] {
+        let mut t = m.pv_s(o) as i32;
+        crate::moby::countdown(&mut t);
+        m.set_pv_s(o, t as i16);
+    }
+    if m.state_ticks != -1 { m.state_ticks = m.state_ticks.wrapping_add(1); }
+    w.changed = true;
+}
