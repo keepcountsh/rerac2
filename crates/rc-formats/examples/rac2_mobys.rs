@@ -16,11 +16,30 @@ fn main() -> anyhow::Result<()> {
     let core = level::parse_level_core_for(Game::Rac2, index, data.len())?;
     let ids: Vec<i32> = core.moby_classes.iter().map(|e| e.o_class).collect();
     println!("core moby classes ({}): {ids:?}", ids.len());
+    if std::env::var("STASH").is_ok() {
+        let h = &core.header;
+        println!("stash list at {:#x}, moby textures {:?}, gs_ram {:?}", h.moby_gs_stash_list, h.moby_textures, h.gs_ram);
+        let o = h.moby_gs_stash_list as usize;
+        if o > 0 { println!("stash: {:?}", index[o..(o + 64).min(index.len())].chunks(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()); }
+        for e in core.moby_classes.iter().filter(|e| e.textures[0] == 0xff && (e.unknown_8 != 0 || e.o_class == 0xd54 || e.o_class >= 0x10d0 && e.o_class < 0x10f0)) { println!("no-tex class {:#x} off {:#x} u8 {:#x} uc {:#x}", e.o_class, e.offset_in_asset_wad, e.unknown_8, e.unknown_c); }
+    }
     println!("gadget words: {:x?}", core.gadgets.iter().take(16).collect::<Vec<_>>());
-    for c in [0, 13, 14, 71, 500, 501, 511] {
+    for c in std::env::var("CLASSES").ok().map(|v| v.split(',').filter_map(|x| x.parse::<i32>().ok()).collect::<Vec<_>>()).unwrap_or(vec![0, 13, 14, 71, 500, 501, 511]) {
         let Some(b) = core.block(&data, &format!("moby_class/{c:04}")) else { continue };
         if let Ok(k) = moby::parse_moby_class_for(Game::Rac2, b) {
-            println!("class {c}: mode {:#x} ty {:#x} mode2 {:#x} scale {} coll {:#x} seqs {} joints {}", k.header.mode_bits, k.header.ty, k.header.mode_bits2, k.header.scale, k.header.collision, k.header.sequence_count, k.header.joint_count);
+            println!("class {c}: mode {:#x} ty {:#x} mode2 {:#x} scale {} coll {:#x} seqs {} joints {} glow_a {} glow_b {}", k.header.mode_bits, k.header.ty, k.header.mode_bits2, k.header.scale, k.header.collision, k.header.sequence_count, k.header.joint_count, k.header.rac1_byte_a, k.header.rac1_byte_b);
+            if std::env::var("CLASSES").is_ok() {
+                for (i, sm) in k.high_lod.iter().enumerate().take(30) {
+                    let (mut lo, mut hi) = ([i16::MAX; 3], [i16::MIN; 3]);
+                    for v in &sm.vertices { for (a, x) in [v.x, v.y, v.z].into_iter().enumerate() { lo[a] = lo[a].min(x); hi[a] = hi[a].max(x); } }
+                    let joints: std::collections::BTreeSet<u8> = sm.vertices.iter().flat_map(|v| v.skin.joints[..v.skin.count.max(1) as usize].to_vec()).collect();
+                    println!("  part {i}: {} verts, tex {:?}, range {:?}..{:?}, joints {:?}", sm.vertices.len(), sm.texture_indices, lo, hi, joints);
+                }
+                println!("  bsphere {:?} lod_trans {}", k.header.bsphere, k.header.lod_trans);
+                if let Some(e) = core.moby_classes.iter().find(|e| e.o_class == c) { println!("  class textures {:?}", e.textures); }
+                let tris: std::collections::BTreeMap<i32, usize> = k.high_lod.iter().flat_map(|s| s.triangles.iter().map(|t| t.texture)).fold(Default::default(), |mut m, t| { *m.entry(t).or_default() += 1; m });
+                println!("  triangle textures {tris:?}");
+            }
         }
     }
     {

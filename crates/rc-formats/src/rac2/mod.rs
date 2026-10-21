@@ -9,6 +9,7 @@
 //! - [`level`]: a level file `G/LEVELn.WAD` and its lumps; [`gameplay`]: its gameplay file.
 //! - [`armor`]: `ARMOR.WAD`, Ratchet's mesh and textures for level class 0.
 //! - [`scene`]: `SCENEn.WAD`, a level's in-engine scenes.
+//! - [`space`]: `SPACE.WAD`, the ship's paint.
 //! - [`boot`]: reads from the boot ELF's loaded image (the font's glyph table, the menu definitions).
 
 pub mod armor;
@@ -18,6 +19,7 @@ pub mod gameplay;
 pub mod gui_sprite;
 pub mod level;
 pub mod scene;
+pub mod space;
 pub mod toc;
 
 /// A picture as the GS holds it: RGBA bytes, alpha 0x80 = opaque (not scaled).

@@ -21,6 +21,8 @@ fn main() -> anyhow::Result<()> {
             match parse_scene_chunk(&dec, i, Region::Ntsc) {
                 Ok(c) => {
                     println!("    parsed: end {} actors {:?} cams {} subs {}", c.header.end_tick, c.actors.iter().map(|a| a.class).collect::<Vec<_>>(), c.camera.len(), c.subtitles.len());
+                    for a in &c.actors { println!("    actor {:#x}: pos0 {:?} posN {:?} n {}", a.class, a.positions.first(), a.positions.last(), a.positions.len()); }
+                    if let Some(k) = c.camera.first() { println!("    cam0 {:?}", k); }
                     for sub in &c.subtitles { println!("    subtitle {}..{}: {:?}", sub.start, sub.end, String::from_utf8_lossy(&sub.text[0])); }
                 }
                 Err(e) => println!("    R&C1 parser: {e}"),
