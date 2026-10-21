@@ -796,9 +796,8 @@ pub(super) fn sway(m: &mut crate::moby::Moby, tilt: f32, step_a: f32, step_b: f3
     m.set_pv_f(b, crate::hero::physics::add_rot(pb, step_b));
 }
 
-/// 0x0adb (`0x3d1d60`, a hovering craft): after a random 0..39 ticks it bobs 1.5 about its height (100°/s) and sways
-/// 9° (10°/s, 50°/s: the tunables `$gp+0x1128..0x1138`); its thrusters' particles (`0x335bb8`, six a tick) wait for
-/// the effects pass.
+/// 0x0adb (`0x3d1d60`, the craft hovering outside): after a random 0..39 ticks it bobs 1.5 about its height (100°/s)
+/// and sways 9° (10°/s, 50°/s: the tunables `$gp+0x1128..0x1138`); every tick its two thrusters' exhaust ([`thrusters`]).
 pub fn update_0adb(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     const DEG_S: f32 = 0.000_290_888_25;
     if w.mobys[id].state == 0 {
@@ -815,11 +814,59 @@ pub fn update_0adb(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let mut t = m.pv_i(0x10);
         if crate::moby::countdown(&mut t) { m.state = 2; }
         m.set_pv_i(0x10, t);
+        thrusters(w, id, ctx);
     } else if m.state == 2 {
         let base = m.pv_f(0x28);
         bob(m, 1.5, 100.0 * DEG_S, base, 0xc, 0);
         sway(m, 9.0 * 0.017_453_294, 10.0 * DEG_S, 50.0 * DEG_S, 4, 8);
         w.changed = true;
+        thrusters(w, id, ctx);
+    }
+}
+
+/// 0x0adb's exhaust (`0x3d1d60`, states 1 and 2): from 2.3 behind it and 0.75 up, at 0.25 to either side (rows 0, 2,
+/// 1), each side two orange glow puffs (`0x335bb8` = crate::particles::puff: 0xdf204080, 100000, jitter 0.1, growing
+/// ×1.0..0.9, a random spin ±0..15) and a white one (0xdfffffff, 60000, jitter 0.05, ×1.0..0.97, spin 16, a random
+/// roll), all drifting 0.15 a tick backwards and fading from alpha 0xdf over 20 ticks (phase 2). The game patches the
+/// first orange puff's life twice and leaves the second's at 10: so here.
+fn thrusters(w: &MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::particles::puff;
+    use rc_game::particles::rec;
+    let m = &w.mobys[id];
+    let Some(sys) = ctx.parts.as_deref_mut() else { return };
+    let g = &mut ctx.game.rng;
+    let r = m.rows;
+    let vel = r[0].map(|x| x * -0.15);
+    let mut pos: [f32; 3] = std::array::from_fn(|k| m.pos[k] + r[0][k] * -2.3 + r[2][k] * 0.75);
+    let timed = |sys: &mut rc_game::particles::Particles, i: usize, life_of: usize| {
+        let life = rec::i16(&sys.pool.recs[life_of], 0xa) as u8;
+        let rr = &mut sys.pool.recs[i];
+        rec::set_u32(rr, 0x24, 2);
+        rr[0x2a] = 0xdf;
+        rr[0x2b] = life;
+    };
+    let life20 = |sys: &mut rc_game::particles::Particles, i: usize| {
+        rec::set_i16(&mut sys.pool.recs[i], 0xa, 0x14);
+        sys.pool.recs[i][9] = 0x70 + 4;
+    };
+    for side in [0.25, -0.5] {
+        pos = std::array::from_fn(|k| pos[k] + r[1][k] * side);
+        let mut spin = g.randi(0x10);
+        if g.randi(2) != 0 { spin = -spin; }
+        let a = puff(sys, g, 0.1, 1.0, 0.9, 100_000.0, pos, spin, vel, 0xdf20_4080, 0);
+        if let Some(a) = a {
+            life20(sys, a);
+            timed(sys, a, a);
+        }
+        if let Some(b) = puff(sys, g, 0.1, 1.0, 0.9, 100_000.0, pos, spin, vel, 0xdf20_4080, 0) {
+            if let Some(a) = a { life20(sys, a); }
+            timed(sys, b, a.unwrap_or(b));
+        }
+        if let Some(c) = puff(sys, g, 0.05, 1.0, 0.97, 60_000.0, pos, 0x10, vel, 0xdfff_ffff, 0) {
+            life20(sys, c);
+            sys.pool.recs[c][8] = g.randi(0xff) as u8;
+            timed(sys, c, a.unwrap_or(c));
+        }
     }
 }
 
