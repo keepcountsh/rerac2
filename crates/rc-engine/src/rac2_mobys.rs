@@ -150,6 +150,15 @@ impl Host<'_> {
         }
     }
 
+    /// A created moby's animation, at its class's first sequence (`InitMobyInstance`), unless it has one.
+    fn spawn_created(&mut self, m: &Moby) {
+        if self.created.contains_key(&m.index) || self.placed_index(m).is_some() { return; }
+        let Some(ci) = self.class_of(m.o_class) else { return };
+        if let Some(st) = self.lv.anim.get(ci).map(AnimState::spawn) {
+            self.created.insert(m.index, Created { class: ci, state: st, snapshot: None, serial: m.serial });
+        }
+    }
+
     fn class_of(&self, o_class: i16) -> Option<usize> { self.lv.classes.iter().position(|c| c.o_class == o_class as i32) }
 
     /// `0x3117a0`: the loop sound `lp` (`+0x6c`, 0xff none) on its voice slot (`+0x6d`): without a slot it plays (flags
@@ -196,6 +205,8 @@ impl MobyHost for Host<'_> {
     fn advance(&mut self, m: &Moby) {
         let lv = self.lv;
         self.drop_stale(m);
+        // A created moby nothing set a sequence on plays its class's first from its creation (the Lancer's equip).
+        if m.instance.is_none() { self.spawn_created(m); }
         let (class, before, after) = if let Some(c) = self.created.get_mut(&m.index) {
             let Some(ac) = lv.anim.get(c.class) else { return };
             let before = c.state;
@@ -226,13 +237,7 @@ impl MobyHost for Host<'_> {
     fn set_anim(&mut self, m: &Moby, seq: u8, frame: u8, blend: u8) {
         let lv = self.lv;
         self.drop_stale(m);
-        if !self.created.contains_key(&m.index) && self.placed_index(m).is_none() {
-            if let Some(ci) = self.class_of(m.o_class) {
-                if let Some(st) = lv.anim.get(ci).map(AnimState::spawn) {
-                    self.created.insert(m.index, Created { class: ci, state: st, snapshot: None, serial: m.serial });
-                }
-            }
-        }
+        self.spawn_created(m);
         if let Some(c) = self.created.get_mut(&m.index) {
             if let Some(ac) = lv.anim.get(c.class) { moby_anim::set_sequence(&mut c.state, ac, seq, frame as i32, blend as i32, &mut c.snapshot); }
             return;
