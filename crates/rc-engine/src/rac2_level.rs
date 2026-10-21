@@ -19,13 +19,19 @@ pub fn file_name(index: u32) -> String { format!("G/LEVEL{index}.WAD") }
 
 /// Ratchet's body (rc_formats::rac2::armor): level class 0's header and skeleton with armour `armor`'s packets, its
 /// textures appended to the level's moby texture table (slot `k` of the armour = entry `moby_textures.len() + k`).
+/// The wrench (class 0x47) is supplied the same way from its row ([`rc_formats::rac2::armor::WRENCH_ROW`]).
 fn attach_ratchet(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, armor: usize) -> Result<()> {
+    attach_armour_row(root, core, mobys, textures, 0, armor)
+}
+
+/// Armour row `row`'s mesh and textures into class `o_class` ([`attach_ratchet`]).
+fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, o_class: i32, row: usize) -> Result<()> {
     use rc_formats::rac2::{armor as ar, toc::Toc};
     let hdr = crate::disc_source::read(root, "RC2.HDR")?;
     let parts = ar::armors(&Toc::parse(&hdr)?)?;
-    let part = *parts.get(armor).with_context(|| format!("no armour {armor}"))?;
+    let part = *parts.get(row).with_context(|| format!("no armour row {row}"))?;
     let a = ar::read(&crate::disc_source::read(root, "G/ARMOR.WAD")?, part)?;
-    let class = mobys.classes.iter_mut().find(|c| c.o_class == 0).context("no class 0 in the level")?;
+    let class = mobys.classes.iter_mut().find(|c| c.o_class == o_class).with_context(|| format!("no class {o_class} in the level"))?;
     rc_formats::moby::attach_packets(Game::Rac2, &mut class.class, &a.mesh)?;
     let base = core.moby_textures.len().max(textures.iter().filter(|t| t.table == texture::TextureTable::Moby).map(|t| t.index + 1).max().unwrap_or(0));
     for (k, t) in a.textures.into_iter().enumerate() {
@@ -120,6 +126,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let mut textures = textures;
     let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
     if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("rac2: Ratchet's armour not attached ({e:#}); he has no mesh"); }
+    if let Err(e) = attach_armour_row(root, &core, &mut mobys, &mut textures, 0x47, rc_formats::rac2::armor::WRENCH_ROW) { eprintln!("rac2: the wrench's mesh not attached ({e:#})"); }
     let occlusion = crate::occlusion::load(&core, &core_data, &gameplay, &tfrags, &ties.instances, &mobys.instances).context("loading occlusion")?;
     let particles = crate::particle_render::LevelParticles {
         textures: rc_formats::particle_tex::parse_particle_textures(&core, core_index, &core_data).map_err(|e| eprintln!("rac2: no particle textures ({e})")).ok(),

@@ -39,6 +39,11 @@ pub struct Armor {
     pub textures: Vec<Texture>,
 }
 
+/// The wrench's row: after the armours, row 9 + the item table's variant byte (`0x2624f4` of the wrench's row, 0 on
+/// the disc). Its parts are an armour's (`0x2fed18`: the texture, then the mesh into the same buffer; the level entry
+/// `0x304660` puts the mesh into class 0x47's header).
+pub const WRENCH_ROW: usize = 9;
+
 pub fn read(wad: &[u8], p: ArmorParts) -> Result<Armor> {
     let part = |(at, len): (usize, usize), what: &'static str| Buf(wad).sub(at, len.min(wad.len().saturating_sub(at)), what);
     let tex = part(p.textures, "armour textures")?;
