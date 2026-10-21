@@ -95,6 +95,8 @@ impl Hero {
             }
         }
         if into {
+            // Into the water: its sound 3 (`0x2b9c90(3, 0)`) after the state.
+            self.sounds.push((3, 0));
             let id = if self.group == 0x14 || self.hp == 0 { 0x67 } else { 0x36 };
             if self.group == 0x11 {
                 // Up through the surface from below (`0x2c9098` returns 1; the treading 0x36).

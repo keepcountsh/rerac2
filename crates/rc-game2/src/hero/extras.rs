@@ -179,6 +179,7 @@ impl Hero {
             0x7b => {
                 let stop = self.surf.boots != 0 || (env.pad.held & button::R1 == 0 && 0x3c < self.timer);
                 if stop {
+                    self.sounds.push((9, 0));
                     self.land_lag = 0x1e;
                     self.set_state(anim, env, 3, false);
                     self.set_anim(anim, 11.0, 6, 4);

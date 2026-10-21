@@ -355,6 +355,14 @@ pub struct Hero {
     pub no_update: bool,
     /// Hits Ratchet's body deals this tick (the Thruster-Pack's ram), delivered by the item pass.
     pub hits_out: Vec<HeroHit>,
+    /// His class sounds of this tick (`0x2b9c90(index, flags)`: `0x3605f0` on his moby), played by the engine.
+    pub sounds: Vec<(i32, i32)>,
+    /// His looping sounds (`0x18c24c + 4k`, 9 channels): `0x2b9cb8(k, Ratchet, index)` this tick keeps channel k
+    /// playing (started looped, flags 4, when its slot no longer plays his sound), `loop_stops` the channels a state
+    /// stops (`0x3602f0`), `loops_off` every channel stopped (`0x2a6708`: the movement group changed).
+    pub loops: Vec<(usize, i32)>,
+    pub loop_stops: Vec<usize>,
+    pub loops_off: bool,
     /// His posture's joint records (`posture`).
     pub posture: posture::Posture,
     /// `0x189ef0`: the point the enemies aim at — the ground under him raised 0.5 while he is within 4 of it, else
@@ -398,7 +406,7 @@ impl Hero {
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
             bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
-            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], slide_speed: 0.0, stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, push: [0.0; 3], swing: Default::default(), swing_cooldown: 0, gear: Default::default(), grind: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), posture: Default::default(), aim_point: [0.0; 3], unported_seen: Vec::new(),
+            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], slide_speed: 0.0, stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, push: [0.0; 3], swing: Default::default(), swing_cooldown: 0, gear: Default::default(), grind: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), sounds: Vec::new(), loops: Vec::new(), loop_stops: Vec::new(), loops_off: false, posture: Default::default(), aim_point: [0.0; 3], unported_seen: Vec::new(),
         }
     }
 

@@ -394,6 +394,9 @@ impl Hero {
 
     pub(super) fn trans_grind(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> Option<i32> {
         if self.state == 0x71 {
+            let v = anim.view();
+            // The grab's key 11 passed: the sound 10 (the line's sparks `0x38cc88` are not ported).
+            if v.seq_b == 0x6c && 11.0 < v.frame && v.frame - 11.0 <= v.frame_step { self.sounds.push((10, 0)); }
             if anim.view().seq_b == 0x6c && anim.view().flags & 2 != 0 { self.set_anim(anim, 30.0, 0x5f, 0); }
             if self.grind.pole_off < 6 { return None; }
             self.set_state(anim, env, 6, true);

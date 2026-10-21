@@ -81,7 +81,10 @@ impl Hero {
             Entry::Anim(blend, seq, frame) => if play { self.set_anim(anim, blend, seq, frame) },
             Entry::Done => {}
         }
+        self.entry_sound(id);
         if self.group == 0x14 { self.items.no_use = 1; }
+        // `0x2a6708`: a new movement group stops his looping sounds.
+        if self.group != self.prev_group { self.loops_off = true; }
         if self.group != self.prev_group { self.group_timer = 0; }
         self.timer = 0;
         self.substate_timer = 0;
@@ -89,9 +92,53 @@ impl Hero {
         true
     }
 
+    /// The sounds `0x2c4560`'s entries play (`0x2b9c90`): the stop 4 at more than 0.058 forward speed 9, Clank's
+    /// helicopter landing 0x74 (Ratchet's body) 14 with flags 0x20, 0x66 8, the ledge grabs 0x32 / 0x34 from the
+    /// swing group (0x12) 3, the death 0x3e 20, the drownings and sinkings 0x65 / 0x78 / 0x79 / 0x7a 7.
+    fn entry_sound(&mut self, id: i32) {
+        let s = match id {
+            4 if 0.058_333_337 < self.fwd_speed => (9, 0),
+            0x74 if self.mode == 0 => (14, 0x20),
+            0x66 => (8, 0),
+            0x32 | 0x34 if self.prev_group == 0x12 => (3, 0),
+            0x3e => (20, 0),
+            0x65 | 0x78 | 0x79 | 0x7a => (7, 0),
+            _ => return,
+        };
+        self.sounds.push(s);
+    }
+
+    /// `0x2ba8e0`'s looping sounds (`0x2b9cb8`, `0x3602f0` on a channel): the pack's hover 8 (the Heli-Pack's rotor 2
+    /// on channel 3, else the jets 0xd on 4, the other stopped), the grinds 0x27 / 0x2a 0 on channel 0 (the rail jumps
+    /// 0x28 / 0x29 and 0x3e stop it), the slide 0x30 0x13 on channel 2 (on levels 0 and 1; level 1 only in its variant
+    /// 0, which the hero does not see), the swim 0x34 0xf on channel 5 (0x33 stops it), the zip line 0x71 on its
+    /// slide sequence 0x5f 0 on channel 0, the boots' dash 0x7b and the updraft 0x82 0xd on channel 4. Not ported: the
+    /// thruster double jump's (`0x2b6668`) and the voice `0x2d6cc8(0x16)` of the swim.
+    fn loop_sounds(&mut self, env: &Env, seq: u8) {
+        match self.state {
+            8 if env.pack == 2 => {
+                self.loop_stops.push(4);
+                self.loops.push((3, 2));
+            }
+            8 => {
+                self.loop_stops.push(3);
+                self.loops.push((4, 0xd));
+            }
+            0x28 | 0x29 | 0x3e => self.loop_stops.push(0),
+            0x27 | 0x2a => self.loops.push((0, 0)),
+            0x30 if env.level == 0 || env.level == 1 => self.loops.push((2, 0x13)),
+            0x34 => self.loops.push((5, 0xf)),
+            0x33 => self.loop_stops.push(5),
+            0x71 if seq == 0x5f => self.loops.push((0, 0)),
+            0x7b | 0x82 => self.loops.push((4, 0xd)),
+            _ => {}
+        }
+    }
+
     /// `0x2ba8e0`: the current state's physics. `false` for a state the port has not got.
     pub fn state_physics(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> bool {
         let (substate, seq) = (self.substate, anim.view().seq_b);
+        self.loop_sounds(env, seq);
         match module_of(self.state) {
             Module::Ground => self.phys_ground(env, anim),
             Module::Walk => self.phys_walk(env, anim),

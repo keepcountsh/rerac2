@@ -599,6 +599,8 @@ impl Hero {
             if 0.0 < ticks { self.anim_speed_for_ticks(&v, j.f_hold, ticks, j.f334, -1.0); }
             return None;
         }
+        // Into water this tick (`0x18a158` = 1): the splash's sound 12 (its splash `0x2aac58` is not ported).
+        if self.water.under == 1 { self.sounds.push((12, 0)); }
         let v = anim.view();
         if j.landed == 0 && self.air_ticks == 0 && j.descending != 0 && !early_double {
             self.jump.landed = 1;

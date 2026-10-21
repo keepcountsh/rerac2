@@ -100,6 +100,8 @@ struct Play {
     scene_listener: Option<rc_game::audio::voices::Listener>,
     /// A movie started this tick (its sound stops the others').
     movie_started: bool,
+    /// His looping sounds' slots per channel (`0x18c24c`).
+    hero_loops: [i32; 9],
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -274,6 +276,25 @@ fn tick(
             if let Some(idx) = rc_game::audio::class_sounds::ratchet_trigger(class, &before, &after) {
                 let ev = rc_game::moby_update::services::SoundEvent { index: idx as i32, flags: 0, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
                 sys.play_class_sound(&ev, Some(h), &listener(&p.camera), &mut rng);
+            }
+            // His states' own sounds (`0x2b9c90`).
+            for (index, flags) in std::mem::take(&mut p.hero.sounds) {
+                let ev = rc_game::moby_update::services::SoundEvent { index, flags: flags as u32, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
+                sys.play_class_sound(&ev, Some(h), &listener(&p.camera), &mut rng);
+            }
+            // His looping sounds: a channel whose slot still plays his sound keeps it; stopped channels release it.
+            let ours = |sys: &rc_game::audio::AudioSystem, k: i32| usize::try_from(k).ok().and_then(|i| sys.slots.slots.get(i)).is_some_and(|s| s.state != rc_game::audio::voices::state::FREE && s.owner.is_some_and(|o| o.id == h as u32));
+            let mut stops = std::mem::take(&mut p.hero.loop_stops);
+            if std::mem::take(&mut p.hero.loops_off) { stops.extend(0..p.hero_loops.len()); }
+            for k in stops {
+                let Some(slot) = p.hero_loops.get_mut(k) else { continue };
+                if ours(sys, *slot) { sys.slots.release(*slot); }
+                *slot = -1;
+            }
+            for (k, index) in std::mem::take(&mut p.hero.loops) {
+                if k >= p.hero_loops.len() || ours(sys, p.hero_loops[k]) { continue; }
+                let ev = rc_game::moby_update::services::SoundEvent { index, flags: 4, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
+                p.hero_loops[k] = sys.play_class_sound(&ev, Some(h), &listener(&p.camera), &mut rng);
             }
             // `0x2a6420`: the footsteps, `0x360920`: level def `class·4 + foot·2 + variant` past the level's
             // footstep base, on his moby. Not ported: the boots' variant (0x18b0b8).
@@ -775,7 +796,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
-        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false,
+        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9],
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
