@@ -108,7 +108,7 @@ fn movie_bytes(root: &Path, sizes: &[u64], m: toc::Movie) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-enum Msg { Opened(f64), Picture(Vec<u8>), End, Failed(String) }
+enum Msg { Opened(f64, Option<Vec<[i16; 2]>>), Picture(Vec<u8>), End, Failed(String) }
 
 /// A movie being played.
 pub(crate) struct Playing {
@@ -119,6 +119,8 @@ pub(crate) struct Playing {
     frame: u64,
     received: u64,
     pub(crate) ended: bool,
+    /// The movie's audio (its first channel, 48 kHz stereo; `rc_video`), once the worker opened it.
+    audio: Option<Vec<[i16; 2]>>,
 }
 
 fn decode(bytes: Vec<u8>, tx: SyncSender<Msg>) {
@@ -127,7 +129,8 @@ fn decode(bytes: Vec<u8>, tx: SyncSender<Msg>) {
         Err(e) => { let _ = tx.send(Msg::Failed(e.to_string())); return; }
     };
     drop(bytes);
-    if tx.send(Msg::Opened(m.fps())).is_err() { return; }
+    let audio = m.audio.take();
+    if tx.send(Msg::Opened(m.fps(), audio)).is_err() { return; }
     loop {
         match m.next_frame() {
             Ok(Some(f)) => {
@@ -151,7 +154,7 @@ impl Playing {
             Some(Err(e)) => { let _ = tx.send(Msg::Failed(e.to_string())); }
             None => { let _ = tx.send(Msg::Failed(format!("no movie {id:#x}"))); }
         }
-        Playing { id, rx: Mutex::new(rx), fps: None, frame: 0, received: 0, ended: false }
+        Playing { id, rx: Mutex::new(rx), fps: None, frame: 0, received: 0, ended: false, audio: None }
     }
 
     /// An in-level movie (`0x371bd8`): `RC2.HDR`'s movie row `row` (crate::rac2_play; the front end's rows by id
@@ -170,7 +173,7 @@ impl Playing {
             Ok(b) => { std::thread::spawn(move || decode(b, tx)); }
             Err(e) => { let _ = tx.send(Msg::Failed(format!("{e:#}"))); }
         }
-        Playing { id, rx: Mutex::new(rx), fps: None, frame: 0, received: 0, ended: false }
+        Playing { id, rx: Mutex::new(rx), fps: None, frame: 0, received: 0, ended: false, audio: None }
     }
 
     /// One frame: the picture for it (waiting for the worker if it is behind), or None when it has not changed.
@@ -181,7 +184,7 @@ impl Playing {
             let want = self.fps.map(|f| (self.frame as f64 * f / 60.0) as u64 + 1);
             if self.ended || want.is_some_and(|w| self.received >= w) { break; }
             match rx.recv() {
-                Ok(Msg::Opened(f)) => self.fps = Some(f),
+                Ok(Msg::Opened(f, a)) => (self.fps, self.audio) = (Some(f), a),
                 Ok(Msg::Picture(p)) => { self.received += 1; picture = Some(p); }
                 Ok(Msg::End) | Err(_) => self.ended = true,
                 Ok(Msg::Failed(e)) => { eprintln!("rac2: movie {:#x}: {e}; it ends here", self.id); self.ended = true; }
@@ -189,6 +192,20 @@ impl Playing {
         }
         self.frame += 1;
         picture
+    }
+
+    /// The audio of the frame [`Playing::advance`] last showed: its 800 samples (silence past the end or without
+    /// audio).
+    pub(crate) fn audio_frame(&self) -> [[i16; 2]; 800] {
+        let mut chunk = [[0i16; 2]; 800];
+        if let Some(pcm) = &self.audio {
+            let at = self.frame.saturating_sub(1) as usize * 800;
+            if at < pcm.len() {
+                let n = (pcm.len() - at).min(800);
+                chunk[..n].copy_from_slice(&pcm[at..at + n]);
+            }
+        }
+        chunk
     }
 }
 

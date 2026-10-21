@@ -96,6 +96,10 @@ struct Play {
     movie_picture: Option<Vec<u8>>,
     /// The level being left (`0x2f50f8`): the game waits while the next one loads (crate::level_switch).
     leaving: Option<i32>,
+    /// The scene camera as the sound code's listener (its last frame).
+    scene_listener: Option<rc_game::audio::voices::Listener>,
+    /// A movie started this tick (its sound stops the others').
+    movie_started: bool,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -186,6 +190,10 @@ fn tick(
     }
     // `0x32c858`: a scene or a movie starting or ending.
     mode_changes(p, &mut level.0);
+    // A movie stops every sound and the music (R&C1's `StartPssMovie`: `movie_stop`).
+    if std::mem::take(&mut p.movie_started) {
+        if let Some(out) = audio.as_deref_mut() { out.system().movie_stop(); }
+    }
     let input = match &script.0 {
         Some(s) => s.at(p.ticks),
         None if *source == CameraSource::Play => frame.0,
@@ -196,11 +204,23 @@ fn tick(
     match p.game.scenes.mode {
         rc_game2::scene::SCENE => {
             scene_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut());
+            // The scene's audio frame (the world runs in a scene: `0x3716f8`), heard from the scene camera.
+            if let Some(out) = audio.as_deref_mut() {
+                let l = p.scene_listener.unwrap_or_else(|| listener(&p.camera));
+                let input = rc_game::audio::FrameInput { listener: l, hero_pos: p.hero.pos };
+                let owner = |id: u32| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id as usize)).filter(|m| m.state < 0x80).map(|m| m.pos);
+                out.external = true;
+                let (sys, buf) = out.parts();
+                let mut rng = sys.rng;
+                sys.scene_frame_with(true, &input, p.ticks as u32 + 1, &mut rng, &owner, buf);
+                sys.rng = rng;
+                out.push_frame();
+            }
             p.ticks += 1;
             return;
         }
         rc_game2::scene::MOVIE => {
-            movie_tick(p);
+            movie_tick(p, audio.as_deref_mut());
             p.ticks += 1;
             return;
         }
@@ -390,6 +410,7 @@ fn mode_changes(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
             rc_game2::scene::Change::StartScene(id) => start_scene(p, lv, id),
             rc_game2::scene::Change::StartMovie(id) => {
                 println!("rac2: movie {id:#x}");
+                p.movie_started = true;
                 p.movie = Some(crate::rac2::Playing::level(id as u32, rc_formats::rac2::scene::record_of(id) as usize));
             }
         }
@@ -398,7 +419,7 @@ fn mode_changes(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
 
 /// A movie's frame (mode 1, `0x371e50`): its picture at the movie's rate; at its end, or skipped (Start alone on
 /// Aranos, else Start with L1 L2 R1 R2 held), the chain's next or back. No sound yet.
-fn movie_tick(p: &mut Play) {
+fn movie_tick(p: &mut Play, mut audio: Option<&mut crate::audio_out::AudioOut>) {
     let start = p.pad.pressed & rc_game::pad::button::START != 0;
     let skip = start && (p.game.level <= 0 || p.pad.held & 0xf == 0xf);
     let over = match p.movie.as_mut() {
@@ -408,8 +429,20 @@ fn movie_tick(p: &mut Play) {
         }
         None => true,
     };
+    // The movie's audio, one vsync's 800 samples a frame (R&C1's `mix_movie`).
+    if let (Some(out), Some(m)) = (audio.as_deref_mut(), p.movie.as_ref()) {
+        out.external = true;
+        let chunk = m.audio_frame();
+        let mut buf = std::mem::take(&mut out.buf);
+        buf.clear();
+        out.system().mix_movie(&chunk, &mut buf);
+        out.buf = buf;
+        out.push_frame();
+    }
     if over || skip {
         p.movie = None;
+        // Its end: the level's music again (`movie_exit`).
+        if let Some(out) = audio { out.system().movie_exit(); }
         let hp = p.hero.hp;
         let g = &mut p.game;
         g.scenes.movie_done(skip, hp, &mut g.scenes_seen);
@@ -427,6 +460,18 @@ fn load_scene(p: &mut Play, id: i32) -> anyhow::Result<Option<rc_formats::scene:
     }
     let (wad, table) = p.scene_wad.as_ref().expect("scene file");
     Ok(table.scene(wad, rc_formats::rac2::scene::record_of(id) as usize)?)
+}
+
+/// A scene's speech: its record's English stream (`speech[0]`, sectors from `SCENEn.WAD`'s start), a `VAGp` file
+/// (its size from the header's big-endian data size).
+fn scene_speech(p: &Play, id: i32) -> Option<std::sync::Arc<[u8]>> {
+    let (wad, table) = p.scene_wad.as_ref()?;
+    let r = table.records.get(rc_formats::rac2::scene::record_of(id) as usize)?;
+    let at = *r.speech.first().filter(|&&s| s != 0)? as usize * 2048;
+    let head = wad.get(at..at + 0x30)?;
+    if &head[..4] != b"VAGp" { return None; }
+    let size = u32::from_be_bytes(head[0xc..0x10].try_into().ok()?) as usize;
+    Some(std::sync::Arc::from(wad.get(at..(at + 0x30 + size).min(wad.len()))?))
 }
 
 /// `0x370e08` / `0x305428`: the scene's actors made (class 0: Ratchet's moby; each in the next sequence slot of its
@@ -490,6 +535,10 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
     for m in mobys.world.mobys.iter_mut().filter(|m| m.o_class == 0xcb && m.state < 0x80) { m.mode |= 0x80; }
     if let Some(h) = p.hero.items.hand.and_then(|h| mobys.world.mobys.get_mut(h)) { h.mode |= 1; }
     println!("rac2: scene {id:#x}: {} ticks, actors {:?}", scene.end_tick(), scene.actor_classes());
+    // `0x370e08`: the music paused, the scene's speech streamed (its record's English VAG; crate::audio_out).
+    use rc_game::audio::scene::{post, SceneAudioCmd};
+    post(SceneAudioCmd::PauseMusic);
+    if let Some(vag) = scene_speech(p, id) { post(SceneAudioCmd::Speech { vag }); }
     let g = &mut p.game;
     g.scenes.start_scene(id, std::sync::Arc::new(scene), actors, &mut g.scenes_seen);
 }
@@ -513,6 +562,9 @@ fn end_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
     let at = p.hero.pos;
     let ground = lv.collision.as_ref().and_then(|c| rc_game::collision_query::coll_line(c, [at[0], at[1], at[2] + 0.5], [at[0], at[1], 0.01], rc_game::collision_query::QueryFlags(2))).map(|o| o.point[2]);
     p.game.scenes.end_scene(&mut p.hero, ground);
+    // `0x3711e8`: the speech stopped, the music back 30 ticks later.
+    rc_game::audio::scene::post(rc_game::audio::scene::SceneAudioCmd::StopSpeech);
+    rc_game::audio::scene::post(rc_game::audio::scene::SceneAudioCmd::ResumeMusic { after: 30 });
     p.camera = FollowCamera::new(&cam_input(&p.hero, lv.collision.as_ref(), [0.0; 2]));
 }
 
@@ -588,6 +640,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         mobys.world.changed = false;
     }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: crate::game_camera::FAR });
+    p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }
 
 fn scene_view(c: &rc_game::scene_player::SceneCamera) -> CameraView {
@@ -722,7 +775,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
-        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None,
+        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false,
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
