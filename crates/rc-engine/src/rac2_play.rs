@@ -528,7 +528,8 @@ struct GameHud {
     icons: std::collections::HashMap<(u16, u16), (usize, [f32; 2])>,
 }
 
-/// The HUD layer, made on the first frame with a game (its own 2D camera above the world's), then drawn each frame.
+/// The HUD layer, made on the first frame with a game (composited on the main camera's UI, as crate::hud_render's
+/// HUD is), then drawn each frame.
 #[allow(clippy::too_many_arguments)]
 fn draw_hud(
     mut commands: Commands,
@@ -538,6 +539,7 @@ fn draw_hud(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<crate::hud_render::HudMaterial>>,
     mut composites: ResMut<Assets<crate::hud_render::HudComposite>>,
+    flycams: Query<Entity, With<crate::fly_cam::FlyCam>>,
 ) {
     let Some(p) = play.as_mut() else { return };
     let Some(hud) = hud else {
@@ -560,7 +562,8 @@ fn draw_hud(
             }
             Err(e) => eprintln!("rac2: no HUD icons ({e:#})"),
         }
-        let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::None, ..default() }, Name::new("rac2 HUD camera"))).id();
+        // On the main camera's UI, as crate::hud_render's HUD is.
+        let Some(cam) = flycams.iter().next() else { return };
         let scaling = crate::hud_render::scaling(crate::graphics::Hud::Original);
         let layer = crate::hud_render::Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &textures, scaling, cam);
         commands.insert_resource(GameHud { layer, data, icons });
