@@ -7,10 +7,12 @@
 //! |---|---|---|
 //! | `0x3d8340` | 0x0b0a | its three glows ([`glow`]: the pilot light at `+0x3a0`, the nozzle `+0x3b0` and the mouth `+0x3c0`); climbing, its wire (`0x3d8498`) |
 //!
+//! | `0x3dc220` | 0x0b0b | its three glows ([`glow`]: the visor at joint 4, the chest at joint 5, below it joint 6 at (0.25, 0, 0)) |
 //! | `0x3e4050` | the Lancer's shot | its trail's newest point and the trail ([`crate::moby::classes::shot::draw_trail`]) |
 //!
 //! Not ported: 0x0b0a's emerge flash
-//! (`0x3d8920` → `0x2ee190`, FX 0x3b), 0x0b0b's glows and wire (`0x3dc220`, `0x3db790`).
+//! (`0x3d8920` → `0x2ee190`, FX 0x3b), 0x0b0b's wire (`0x3db790`), the group branch of `0x3dc220` (a grouped 0x0b0b
+//! draws every drawn member of its class in the group: here each draws its own).
 
 use crate::hero::physics::{add, cross, len, scale, sub, V3};
 use crate::moby::MobyWorld;
@@ -72,13 +74,29 @@ fn draw_0b0a(w: &MobyWorld, id: usize, rng: &mut crate::rng::Rng, cam: V3, out: 
     glow(out, rng, 0.15, m.pv_v(0x3c0), GLOW_0B0A[1], 0x10, 0x30, cam);
 }
 
+/// 0x0b0b's glow colours (`0x3dc220`'s words): the visor orange, the chest blue.
+const GLOW_0B0B: [u32; 2] = [0x0000_36f6, 0x00ff_3e00];
+
+/// `0x3dc220` (0x0b0b, drawn): `0x3db998` (= [`glow`]) at joint 4 (0.125, orange, 0x20 / 0x20), joint 5 (0.15, blue,
+/// 0x30 / 0x20) and joint 6's matrix × (0.25, 0, 0) (0.15, blue, 0x10 / 0x30).
+fn draw_0b0b(w: &MobyWorld, host: &dyn crate::moby::MobyHost, id: usize, rng: &mut crate::rng::Rng, cam: V3, out: &mut Vec<FxQuad>) {
+    let m = &w.mobys[id];
+    if m.drawn == 0 { return; }
+    let (Some(a), Some(b), Some((rows, p))) = (host.joint(m, 4), host.joint(m, 5), host.joint_matrix(m, 6)) else { return };
+    let c = add(p, scale(rows[0], 0.25));
+    glow(out, rng, 0.125, a, GLOW_0B0B[0], 0x20, 0x20, cam);
+    glow(out, rng, 0.15, b, GLOW_0B0B[1], 0x30, 0x20, cam);
+    glow(out, rng, 0.15, c, GLOW_0B0B[1], 0x10, 0x30, cam);
+}
+
 /// The frame's callbacks after the tick: the mobys the loop ran (they registered theirs), in the loop's order.
-pub fn callbacks(w: &mut MobyWorld, game: &mut crate::game::GameState, cam: V3) -> Vec<FxQuad> {
+pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, cam: V3) -> Vec<FxQuad> {
     let mut out = Vec::new();
     for id in w.run_list(cam) {
         if 0x80 <= w.mobys[id].state { continue; }
         match w.mobys[id].o_class {
             0x0b0a => draw_0b0a(w, id, &mut game.rng, cam, &mut out),
+            0x0b0b => draw_0b0b(w, host, id, &mut game.rng, cam, &mut out),
             crate::moby::classes::shot::SHOT_CLASS => crate::moby::classes::shot::draw_trail(&mut w.mobys[id], cam, &mut game.trail_phase, &mut out),
             _ => {}
         }

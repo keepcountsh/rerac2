@@ -131,12 +131,23 @@ pub fn update_0ac8(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
 }
 
-/// 0x0d1e (`0x3fa808`, the searchlights): the pitch turning 0.0524 a tick; two light cones out of it (`0x33f550`,
-/// the engine's lights: not drawn yet).
-pub fn update_0d1e(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
-    if w.mobys[id].state == 0 { w.mobys[id].set_state(1, -1); }
+/// 0x0d1e (`0x3fa808`, the searchlights): its glow word red (0x150000ff) at the start; the pitch turning 0.0524 a
+/// tick, and two red glows a tick out of its lamp (crate::particles::glow: 243600, at (0, 0.538, −0.379) and (0,
+/// 0.512, 0.377) × its scale over its class's, pulled 0.1, 2 ticks, faded unless facing the camera).
+pub fn update_0d1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if w.mobys[id].state == 0 {
+        w.mobys[id].glow = 0x1500_00ff;
+        w.mobys[id].set_state(1, -1);
+    }
+    if w.mobys[id].state != 1 { return; }
+    let k = w.mobys[id].scale / w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
     let m = &mut w.mobys[id];
-    if m.state == 1 { m.rot[1] = crate::hero::physics::add_rot(m.rot[1], 0.052_359_88); }
+    m.rot[1] = crate::hero::physics::add_rot(m.rot[1], 0.052_359_88);
+    let (pos, far) = (m.pos, m.draw_dist);
+    let Some(sys) = ctx.parts.as_deref_mut() else { return };
+    for o in [[0.0, 0.537_874_2, -0.378_557_2], [0.0, 0.512_307_2, 0.377_115_2]] {
+        crate::particles::glow(sys, &mut ctx.game.rng, 243_600.0, 0.1, o.map(|x| x * k), id, pos, far, true, 0x1500_00ff, 2);
+    }
 }
 
 /// 0x12f9 (`0x383bb0`): a barrier held by two objects (the moby indices `+0x68`[4] / [8]): once either is gone (state
@@ -161,10 +172,18 @@ pub fn update_12f9(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 
 /// The breakables (0x12fa the lamps `0x383ce0`, 0x1143 `0x414368`): a hit with the flags 0x4010000 (the wrench and
 /// blasts) while `+0x68`[0] = 0 breaks them (state 2: the shards `0x32b580` and the burst `0x2ecfb0`, not drawn),
-/// then they are deleted. The lamp's light (`0x33f550`) is the engine's.
-pub fn update_breakable(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
+/// then they are deleted. The lamp at its start sheds its lasting glow (crate::particles::glow: grey 0x32608080 at (0,
+/// 0, −23) × its scale, its size 5.25e6 and its pull 15 × its scale, far 0x60).
+pub fn update_breakable(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     match w.mobys[id].state {
-        0 => w.mobys[id].set_state(1, -1),
+        0 => {
+            if w.mobys[id].o_class == 0x12fa {
+                let m = &w.mobys[id];
+                let (s, pos) = (m.scale, m.pos);
+                if let Some(sys) = ctx.parts.as_deref_mut() { crate::particles::glow(sys, &mut ctx.game.rng, s * 5.25e6, s * 15.0, [0.0, 0.0, -23.0 * s], id, pos, 0x60, false, 0x3260_8080, -1); }
+            }
+            w.mobys[id].set_state(1, -1);
+        }
         1 => {
             if let Some(h) = w.hit_message(id) {
                 if h.tmpl.flags & 0x0401_0000 != 0 && w.mobys[id].pv_i(0) == 0 { w.mobys[id].set_state(2, -1); }

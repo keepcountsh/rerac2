@@ -393,7 +393,11 @@ fn tick(
     // `UpdateParts` (`0x331150`), after the hero.
     if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game2::fx).
-    p.fx_quads = rc_game2::fx::callbacks(&mut mobys.world, &mut p.game, p.camera.pos);
+    {
+        // The callbacks read joints (0x0b0b's glows) through the loop's host, as the draw reads the mobys' poses.
+        let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
+        p.fx_quads = rc_game2::fx::callbacks(&mut mobys.world, &host, &mut p.game, p.camera.pos);
+    }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
         for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {

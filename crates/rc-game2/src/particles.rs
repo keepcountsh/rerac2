@@ -163,12 +163,13 @@ pub fn puff(sys: &mut Particles, rng: &mut Rng, jitter: f32, grow_lo: f32, grow_
     Some(i)
 }
 
-/// `0x33f550(size, pull, offset, moby, rgba, joint −1, def 1, life, 0, −1)`: a glow (type 0x59) on moby `moby` at
-/// `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` of the way toward the
-/// camera, for `life` ticks; additive, near 1 / far the moby's draw distance (`+0x32 >> 5`, ×32). Starts at the moby's position plus the offset (unturned): its
+/// `0x33f550(size, pull, offset, moby, rgba, joint −1, def 1, life, facing, far)`: a glow (type 0x59) on moby `moby`
+/// at `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` of the way toward
+/// the camera, for `life` ticks (−1: while the moby lives); `facing`: faded unless it faces the camera
+/// ([`update_glow`]); additive, near 1 / far `far` (the caller's, else the moby's draw distance `+0x32`) >> 5, ×32. Starts at the moby's position plus the offset (unturned): its
 /// update places it the same tick.
 #[allow(clippy::too_many_arguments)]
-pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f32; 3], moby: usize, pos: [f32; 3], draw_dist: i16, rgba: u32, life: i16) -> Option<usize> {
+pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f32; 3], moby: usize, pos: [f32; 3], far: i16, facing: bool, rgba: u32, life: i16) -> Option<usize> {
     let i = sys.create_part(0x59)?;
     let def = sys.def_frame(0x59, 1);
     let rot = rng.randi(0xff) as u8;
@@ -177,15 +178,15 @@ pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f
     rec::set_ff(r, 0xc, size);
     r[1] = 0;
     r[3] = 0x48;
-    // Near 1; far the moby's draw distance >> 5 (in 32s; the hand item's 0x20: 1).
-    r[9] = ((draw_dist >> 5) << 4) as u8 + 4;
+    // Near 1; far `far` >> 5 (in 32s: the caller's, else the moby's draw distance; the hand item's 0x20: 1).
+    r[9] = ((far >> 5) << 4) as u8 + 4;
     r[8] = rot;
     rec::set_i16(r, 0xa, life);
     r[2] = def;
     rec::set_u32(r, 0x20, moby as u32 + 1);
     rec::set_u32(r, 0x24, u32::MAX);
     rec::set_ff(r, 0x28, pull);
-    rec::set_i16(r, 0x2c, 0);
+    rec::set_i16(r, 0x2c, facing as i16);
     rec::set_i16(r, 0x2e, 0);
     rec::set_v3(r, 0x30, offset);
     rec::set_v3(r, 0x10, [pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2]]);
@@ -204,6 +205,17 @@ pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld
     };
     let o = rec::v3(r, 0x30);
     let p: [f32; 3] = std::array::from_fn(|k| m.pos[k] + (m.rows[0][k] * o[0] + m.rows[1][k] * o[1] + m.rows[2][k] * o[2]));
+    // Facing (`+0x2c`): d = unit(it − camera)·unit(it − moby); turned away (d > 0) its alpha keeps only bits 0x05,
+    // else it is scaled by −d. (The game reads the first vector from the stack, set only with `+0x2e`; here it is the
+    // camera's, as meant.)
+    if rec::i16(r, 0x2c) != 0 {
+        let unit = |v: [f32; 3]| { let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt(); if 0.0 < l { v.map(|x| x / l) } else { v } };
+        let (a, b) = (unit(std::array::from_fn(|k| p[k] - cam[k])), unit(std::array::from_fn(|k| p[k] - m.pos[k])));
+        let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let c = rec::u32(r, 4);
+        let c = if -d < 0.0 { c & 0x05ff_ffff } else { c & 0xff_ffff | ((r[7] as f32 * -d) as i32 as u32) << 24 };
+        rec::set_u32(r, 4, c);
+    }
     let pull = rec::ff(r, 0x28);
     rec::set_v3(r, 0x10, std::array::from_fn(|k| p[k] + (cam[k] - p[k]) * pull));
 }
