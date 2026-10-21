@@ -161,28 +161,61 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     );
     Ok(LoadedLevel {
         tfrags, textures, fog, background, mobys, ties, shrubs, sky, occlusion, tfrag_lod, particles, hud: None,
-        water: Default::default(), sea: Default::default(), audio: audio(&wad, core_index, &core, &core_data, collision.clone()), collision, death_z, gameplay, moby_class_order, timings: t,
+        water: Default::default(), sea: Default::default(), audio: audio(root, index, &wad, core_index, &core, &core_data, collision.clone()), collision, death_z, gameplay, moby_class_order, timings: t,
     })
 }
 
+/// The level's music (`G/AUDIOn.WAD`): its header (`s32 size, 0`, then `{sector, bytes}` from +8) lists mono VAG
+/// streams in left / right pairs (`rc2_l00_main_al` / `_ar`, `_bl` / `_br`); pair k is the stereo track k (R&C1's
+/// level start plays track 0 once, then track 1 looping).
+fn music(root: &Path, index: u32) -> Result<[Option<std::sync::Arc<rc_game::audio::music::MusicTrack>>; 15]> {
+    let file = crate::disc_source::read(root, &format!("G/AUDIO{index}.WAD"))?;
+    let w = |o: usize| -> Option<usize> { file.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) };
+    let size = w(0).context("AUDIO header")?.min(file.len());
+    let mut streams = Vec::new();
+    let mut o = 8;
+    while o + 8 <= size {
+        let (sector, bytes) = (w(o).unwrap_or(0), w(o + 4).unwrap_or(0));
+        if bytes == 0 { break; }
+        let at = sector * 2048;
+        streams.push(file.get(at..at + bytes).context("AUDIO stream past the end")?);
+        o += 8;
+    }
+    let mut tracks: [Option<std::sync::Arc<rc_game::audio::music::MusicTrack>>; 15] = Default::default();
+    for (k, pair) in streams.chunks(2).enumerate().take(15) {
+        let t = match pair {
+            [l, r] => rc_game::audio::music::MusicTrack::from_vag_pair(l, r)?,
+            [m] => rc_game::audio::music::MusicTrack::from_vag(m)?,
+            _ => continue,
+        };
+        tracks[k] = Some(std::sync::Arc::new(t));
+    }
+    Ok(tracks)
+}
+
 /// The level's sound data for crate::audio_out (rc_game::audio, the 989snd bank R&C1's reader parses as it is): the
-/// level's core sound bank (the file's part 1) and the sound definitions (level and class, `0x304660`'s remap).
-/// Not yet: the sound instances, the env sample points and the music (`AUDIOn.WAD`). None with `RC_AUDIO=0` or when
-/// the bank does not read (with a warning).
-fn audio(wad: &LevelWad, core_index: &[u8], core: &level::LevelCore, core_data: &[u8], collision: Option<rc_formats::collision::Collision>) -> Option<rc_game::audio::LevelAudio> {
+/// level's core sound bank (the file's part 1), the sound definitions (level and class, `0x304660`'s remap) and the
+/// music ([`music`]). Not yet: the sound instances and the env sample points. None with `RC_AUDIO=0` or when the
+/// bank does not read (with a warning).
+fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &level::LevelCore, core_data: &[u8], collision: Option<rc_formats::collision::Collision>) -> Option<rc_game::audio::LevelAudio> {
     if !crate::audio_out::enabled() { return None; }
     let run = || -> Result<rc_game::audio::LevelAudio> {
         let part = wad.part_bytes(Part::CoreBank)?.context("no core sound bank part")?;
         let bank = if rc_formats::wad::is_wad(part) { rc_formats::wad::decompress(part)? } else { part.to_vec() };
         let bank = std::sync::Arc::new(rc_formats::sound_bank::parse_bank(&bank)?);
         let sounds = rc_formats::sound_bank::parse_level_sounds_for(Game::Rac2, core_index, core, core_data)?;
+        let music = music(root, index).unwrap_or_else(|e| {
+            eprintln!("audio: the level's music not read ({e:#})");
+            Default::default()
+        });
         Ok(rc_game::audio::LevelAudio {
-            bank, sounds, instances: Vec::new(), instance_pvars: Vec::new(), music: Default::default(), env_points: Vec::new(), collision: collision.map(std::sync::Arc::new),
+            bank, sounds, instances: Vec::new(), instance_pvars: Vec::new(), music, env_points: Vec::new(), collision: collision.map(std::sync::Arc::new),
         })
     };
     match run() {
         Ok(a) => {
-            println!("audio: {} sounds, {} samples, {} level defs, {} classes with sounds", a.bank.sounds.len(), a.bank.vags.len(), a.sounds.level_defs.len(), a.sounds.classes.iter().filter(|c| !c.defs.is_empty()).count());
+            let names: Vec<&str> = a.music.iter().flatten().map(|m| m.name.as_str()).collect();
+            println!("audio: {} sounds, {} samples, {} level defs, {} classes with sounds, music {:?}", a.bank.sounds.len(), a.bank.vags.len(), a.sounds.level_defs.len(), a.sounds.classes.iter().filter(|c| !c.defs.is_empty()).count(), names);
             Some(a)
         }
         Err(e) => {

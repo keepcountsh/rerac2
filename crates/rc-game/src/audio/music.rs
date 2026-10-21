@@ -25,19 +25,29 @@ use rc_formats::vag;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// One music VAG: its body up to and including the end frame (the 0x7 pad frame is never played).
+/// One music VAG: its body up to and including the end frame (the 0x7 pad frame is never played). A stereo track
+/// (Going Commando's left / right pairs) has a right channel too: `body` is then the left one.
 #[derive(Clone, Debug)]
 pub struct MusicTrack {
     pub name: String,
     pub rate: u32,
     pub body: Arc<[u8]>,
+    pub right: Option<Arc<[u8]>>,
 }
 
 impl MusicTrack {
     pub fn from_vag(bytes: &[u8]) -> rc_formats::buf::Result<Self> {
         let (h, body) = vag::parse_vag(bytes)?;
         let ext = vag::sample_extent(body, 0)?;
-        Ok(MusicTrack { name: h.name, rate: h.sample_rate, body: Arc::from(&body[..ext.bytes()]) })
+        Ok(MusicTrack { name: h.name, rate: h.sample_rate, body: Arc::from(&body[..ext.bytes()]), right: None })
+    }
+
+    /// A stereo track from its left and right VAGs (the same rate).
+    pub fn from_vag_pair(left: &[u8], right: &[u8]) -> rc_formats::buf::Result<Self> {
+        let mut t = Self::from_vag(left)?;
+        let r = Self::from_vag(right)?;
+        t.right = Some(r.body);
+        Ok(t)
     }
     /// Length in seconds at the recorded rate.
     pub fn seconds(&self) -> f64 { (self.body.len() / vag::FRAME_BYTES * vag::FRAME_SAMPLES) as f64 / self.rate as f64 }
@@ -408,6 +418,18 @@ struct Stream {
     /// The voice registers and ungrouped volume chosen at `Play` (restored by `Continue`).
     vol: [u16; 2],
     basevol: (i16, i16),
+    /// A stereo track's right channel: its voice and generation, the part waiting for `Continue`, its registers
+    /// and ungrouped volume (the left voice then keeps only the left side, the right one only the right).
+    right: Option<RightVoice>,
+}
+
+#[derive(Clone, Debug)]
+struct RightVoice {
+    voice: usize,
+    generation: u32,
+    pending: Option<StreamPart>,
+    vol: [u16; 2],
+    basevol: (i16, i16),
 }
 
 /// Stream voices use a fast linear attack and release (989snd's stream ADSR is not reversed).
@@ -426,6 +448,12 @@ impl Streams {
         let v = ((127 * vol) >> 10).clamp(0, 127);
         let base = vm.make_volume(127, 0, v, 0, 127, 0);
         (vm.voice_registers(base, group as usize), base)
+    }
+
+    /// A stereo pair's sides: the left voice keeps the left volume, the right voice the right.
+    fn sides(vm: &VoiceManager, base: (i16, i16), group: u8) -> (([u16; 2], (i16, i16)), ([u16; 2], (i16, i16))) {
+        let (l, r) = ((base.0, 0), (0, base.1));
+        ((vm.voice_registers(l, group as usize), l), (vm.voice_registers(r, group as usize), r))
     }
 
     fn alive(&self, spu: &Spu, h: i32) -> bool {
@@ -451,14 +479,37 @@ impl Streams {
                         Some(_) => {}
                         None => spu.voices[s.voice].queue_part(part),
                     }
+                    if let (Some(rv), Some(body)) = (s.right.as_mut(), t.right.as_ref()) {
+                        if rv.pending.is_none() { spu.voices[rv.voice].queue_part(StreamPart { data: Arc::clone(body), looped: flags & 4 != 0 }); }
+                    }
                     return Some(StreamReply { player, cb, value: queue });
                 }
                 let Some(i) = vm.allocate(spu, group as usize, 127, 0) else { return Some(StreamReply { player, cb, value: 0 }) };
                 self.next += 1;
                 let h = self.next;
                 let pitch = vag::rate_to_pitch(t.rate);
-                let (regs, base) = Self::volume(vm, vol, group);
-                let mut s = Stream { voice: i, generation: 0, group, pending: None, pitch, vol: regs, basevol: base };
+                let (mut regs, mut base) = Self::volume(vm, vol, group);
+                // A stereo track: a second voice for the right channel (none free: the left plays alone, centred).
+                let mut right = None;
+                if let Some(body) = t.right.as_ref() {
+                    vm.voices[i].owner = VoiceUse::Stream { handle: h as u32 };
+                    if let Some(j) = vm.allocate(spu, group as usize, 127, 0) {
+                        let ((lr, lb), (rr, rb)) = Self::sides(vm, base, group);
+                        (regs, base) = (lr, lb);
+                        let rpart = StreamPart { data: Arc::clone(body), looped: flags & 4 != 0 };
+                        let mut rv = RightVoice { voice: j, generation: 0, pending: None, vol: rr, basevol: rb };
+                        if flags & 1 != 0 {
+                            rv.pending = Some(rpart);
+                        } else {
+                            spu.voices[j].key_on(VoiceData::Stream { cur: rpart, queue: Default::default() }, 0, pitch, STREAM_ADSR1, STREAM_ADSR2);
+                        }
+                        spu.voices[j].vol = rr;
+                        rv.generation = spu.voices[j].generation;
+                        vm.voices[j] = VoiceSlot { owner: VoiceUse::Stream { handle: h as u32 }, priority: 127, group, basevol: rb, start_tick: 0, generation: rv.generation };
+                        right = Some(rv);
+                    }
+                }
+                let mut s = Stream { voice: i, generation: 0, group, pending: None, pitch, vol: regs, basevol: base, right };
                 if flags & 1 != 0 {
                     s.pending = Some(part);
                 } else {
@@ -478,6 +529,14 @@ impl Streams {
                         s.generation = spu.voices[s.voice].generation;
                         vm.voices[s.voice] = VoiceSlot { owner: VoiceUse::Stream { handle: handle as u32 }, priority: 127, group: s.group, basevol: s.basevol, start_tick: 0, generation: s.generation };
                     }
+                    if let Some(rv) = s.right.as_mut() {
+                        if let Some(part) = rv.pending.take() {
+                            spu.voices[rv.voice].key_on(VoiceData::Stream { cur: part, queue: Default::default() }, 0, s.pitch, STREAM_ADSR1, STREAM_ADSR2);
+                            spu.voices[rv.voice].vol = rv.vol;
+                            rv.generation = spu.voices[rv.voice].generation;
+                            vm.voices[rv.voice] = VoiceSlot { owner: VoiceUse::Stream { handle: handle as u32 }, priority: 127, group: s.group, basevol: rv.basevol, start_tick: 0, generation: rv.generation };
+                        }
+                    }
                 }
                 None
             }
@@ -485,13 +544,25 @@ impl Streams {
                 if let Some(s) = self.streams.remove(&handle) {
                     if spu.voices[s.voice].generation == s.generation { spu.voices[s.voice].key_off(); }
                     if vm.voices[s.voice].owner == (VoiceUse::Stream { handle: handle as u32 }) { vm.voices[s.voice].owner = VoiceUse::Free; }
+                    if let Some(rv) = s.right {
+                        if spu.voices[rv.voice].generation == rv.generation { spu.voices[rv.voice].key_off(); }
+                        if vm.voices[rv.voice].owner == (VoiceUse::Stream { handle: handle as u32 }) { vm.voices[rv.voice].owner = VoiceUse::Free; }
+                    }
                 }
                 None
             }
             StreamCommand::SetVolume { player, handle, vol } => {
                 let alive = self.alive(spu, handle);
                 if let (true, Some(s)) = (alive, self.streams.get_mut(&handle)) {
-                    let (regs, base) = Self::volume(vm, vol, s.group);
+                    let (mut regs, mut base) = Self::volume(vm, vol, s.group);
+                    if let Some(rv) = s.right.as_mut() {
+                        let ((lr, lb), (rr, rb)) = Self::sides(vm, base, s.group);
+                        (regs, base) = (lr, lb);
+                        rv.vol = rr;
+                        rv.basevol = rb;
+                        if spu.voices[rv.voice].generation == rv.generation { spu.voices[rv.voice].vol = rr; }
+                        if vm.voices[rv.voice].generation == rv.generation { vm.voices[rv.voice].basevol = rb; }
+                    }
                     s.vol = regs;
                     s.basevol = base;
                     spu.voices[s.voice].vol = regs;
@@ -505,6 +576,12 @@ impl Streams {
                     if let Some(s) = self.streams.remove(&handle) {
                         if vm.voices[s.voice].owner == (VoiceUse::Stream { handle: handle as u32 }) && vm.voices[s.voice].generation == s.generation {
                             vm.voices[s.voice].owner = VoiceUse::Free;
+                        }
+                        if let Some(rv) = s.right {
+                            if spu.voices[rv.voice].generation == rv.generation { spu.voices[rv.voice].key_off(); }
+                            if vm.voices[rv.voice].owner == (VoiceUse::Stream { handle: handle as u32 }) && vm.voices[rv.voice].generation == rv.generation {
+                                vm.voices[rv.voice].owner = VoiceUse::Free;
+                            }
                         }
                     }
                 }
@@ -589,7 +666,7 @@ mod tests {
         let mut body = vec![0u8; 32];
         body[1] = 0;
         body[16 + 1] = 1;
-        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body) });
+        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body), right: None });
         let tracks: [Option<Arc<MusicTrack>>; 15] = std::array::from_fn(|k| (k == 0).then(|| track.clone()));
         let mut vm = VoiceManager::default();
         let mut spu = Spu::new(Arc::from(Vec::new()));
@@ -631,7 +708,7 @@ mod tests {
         let mut body = vec![0u8; 32];
         body[1] = 0;
         body[16 + 1] = 1;
-        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body) });
+        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body), right: None });
         let tracks: [Option<Arc<MusicTrack>>; 15] = std::array::from_fn(|k| (k < 2).then(|| track.clone()));
         let mut vm = VoiceManager::default();
         let mut spu = Spu::new(Arc::from(Vec::new()));
