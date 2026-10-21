@@ -345,8 +345,24 @@ cuboid 0x1d), two fly-bys, the follow camera (class 0), 4 / 5 / 6 / 7 (first per
 Not yet: the speech and music (milestone E), the subtitles (they show only with the subtitle option, off by default;
 `0x2e7f80` draws them in a rounded box, `*` lines as captions), the placed view 0x17 (`0x42b950` / `0x42b428`: it
 frames Ratchet from its record's place through the follow camera's setters `0x425e50..0x426110` while he is still
-in its cuboid), first person (class 4), the blends `0x2d8ab0` / `0x2d9488`, the level's end after the movie 0x16
-(to Oozla). What is known of the end: the main loop changes level when `0x1b1940` (the level to go to) differs from
-the current one (`0x367400`); its writers in the overlay are a menu page (`0x3477b8`, levels 1 / 2 / 4 / 6) and the
-space travel (mode 6, `0x362010`); `0x30d658` (called by 0x0f6e and the arrival, read before as a HUD flash) is the
-autosave. What sends Aranos to Oozla after the movie is still to find.
+in its cuboid), first person (class 4), the blends `0x2d8ab0` / `0x2d9488`.
+
+**The level's end** (ported 2026-10-21): Aranos's three scene triggers 0x0f6e play 0x22 (cuboid 0x27), the movie 0x16
+(cuboid 0x2e) and 0x23 (cuboid 0x29, at the far end); the last gives item 1 and has its word [0xc] = 1, so its reward
+(`0x40ffa0` states 3 / 4) calls `0x2f50f8(1, 1)`: `0x1b1940` (`$gp + 0x2950`) = Oozla and the level's main loop ends
+(`$gp − 0x611c` = `0x1a8ed4`), then `0x367400` loads it. The port: `GameState::go_to_level`, the engine loads the
+level through the shared `crate::level_switch` and carries the game-wide state (`GameState::enter_level`). Not
+ported: the autosave `0x30d658` it asks for. The other ways to leave a level: the ship (below) and the menu.
+
+**The ship** (`0x3012a0`): the level load places Ratchet's parked ship 0x0d54 at the level settings' `+0x3c`
+(yaw `+0x48`) when x > 0, its update `0x361628`: Ratchet near it (or on it) gets the prompt 0x12ea and △ starts
+the space travel (`0x1b1a60` = 1; play mode → mode 6 `0x364260`, which writes `0x1b1940`). Aranos's is at the
+placeholder (20, 20, 20): the arrival's ship (0x1330) is its own and is hidden after the fly-by. The ship class's
+own update `0x3fd5a0` is empty. Its texture is the paint (`rc_formats::rac2::space`): one PIF of `SPACE.WAD` at the
+header's `+0xad0` row `paint` (`0x2ff030`), given by `0x304660` to every class whose core entry has `+8 ≠ 0` (the
+ship and its parts; their texture slots are 0xff). Not ported: the parked ship, its prompt, the space travel, the
+hull mesh (`0x2fef68`, `SPACE.WAD` row `+0xab8`, a further 0x0d54 the load appends).
+
+**Old-format classes** (`0x2ffe70`): a class with header byte 0xb set has R&C1's vertex table headers in its high
+and low packets; the load converts them (u32s to u16s, the multiplier offset zeroed) and clears the byte. Oozla's
+class 2700 is one; `rc_formats::moby` reads them as R&C1 packets without multipliers.
