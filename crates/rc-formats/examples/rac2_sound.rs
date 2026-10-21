@@ -17,6 +17,23 @@ fn main() -> anyhow::Result<()> {
             if let Some(i) = b.windows(4).position(|x| x == b"SBlk") { println!("SBlk at {i:#x}: {:x?}", &b[i..i + 0x40]); }
         }
     }
+    let g = w.part_bytes(rc_formats::rac2::level::Part::Gameplay)?.expect("gameplay");
+    let g = if rc_formats::wad::is_wad(g) { rc_formats::wad::decompress(g)? } else { g.to_vec() };
+    if let Some(sec) = rc_formats::rac2::gameplay::section(&g, "sound_instances")? {
+        let h: Vec<String> = sec[..0x40.min(sec.len())].chunks(4).map(|c| format!("{:08x}", u32::from_le_bytes(c.try_into().unwrap()))).collect();
+        println!("sound_instances: {} bytes, head {}", sec.len(), h.join(" "));
+        match rc_formats::sound_bank::parse_sound_instances_at(sec, 0) {
+            Ok(v) => {
+                let pv = rc_formats::rac2::gameplay::pvar_blocks(&g)?;
+                for i in v.iter().take(20) {
+                    let b = usize::try_from(i.pvar_index).ok().and_then(|k| pv.get(k));
+                    let words: Vec<i32> = b.map(|b| b.chunks(4).map(|c| i32::from_le_bytes(c.try_into().unwrap_or([0; 4]))).collect()).unwrap_or_default();
+                    println!("  class {} pvar {} range {} at {:?} pvars {:?}", i.o_class, i.pvar_index, i.range, i.position(), words);
+                }
+            }
+            Err(e) => println!("  {e}"),
+        }
+    }
     let index = w.lump(rc_formats::rac2::level::Lump::CoreIndex)?.expect("core index");
     let data = rc_formats::wad::decompress(w.lump(rc_formats::rac2::level::Lump::CoreData)?.expect("core data"))?;
     let core = rc_formats::level::parse_level_core_for(rc_formats::Game::Rac2, index, data.len())?;

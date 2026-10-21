@@ -490,9 +490,15 @@ impl SoundInstance {
 
 /// Reads section 0x0c: `s32 count, pad[3]`, then `count` 0x90-byte records.
 pub fn parse_sound_instances(gameplay: &[u8]) -> Result<Vec<SoundInstance>> {
-    let g = Buf(gameplay);
-    let p = g.u32(SOUND_INSTANCES_POINTER)? as usize;
+    let p = Buf(gameplay).u32(SOUND_INSTANCES_POINTER)? as usize;
     if p == 0 { return Ok(Vec::new()); }
+    parse_sound_instances_at(gameplay, p)
+}
+
+/// The sound instance records at `p` in `gameplay` (`s32 count, pad[3]`, then the records): R&C1's section 0x0c,
+/// or Going Commando's `sound_instances` section (`crate::rac2::gameplay`, offset 0 of its bytes).
+pub fn parse_sound_instances_at(gameplay: &[u8], p: usize) -> Result<Vec<SoundInstance>> {
+    let g = Buf(gameplay);
     let n = g.i32(p)?;
     if n < 0 { return invalid("negative sound instance count"); }
     g.check(p + 0x10, 0x90 * n as usize, "sound instances")?;

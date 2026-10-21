@@ -161,7 +161,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     );
     Ok(LoadedLevel {
         tfrags, textures, fog, background, mobys, ties, shrubs, sky, occlusion, tfrag_lod, particles, hud: None,
-        water: Default::default(), sea: Default::default(), audio: audio(root, index, &wad, core_index, &core, &core_data, collision.clone()), collision, death_z, gameplay, moby_class_order, timings: t,
+        water: Default::default(), sea: Default::default(), audio: audio(root, index, &wad, core_index, &core, &core_data, &gameplay, collision.clone()), collision, death_z, gameplay, moby_class_order, timings: t,
     })
 }
 
@@ -195,9 +195,9 @@ fn music(root: &Path, index: u32) -> Result<[Option<std::sync::Arc<rc_game::audi
 
 /// The level's sound data for crate::audio_out (rc_game::audio, the 989snd bank R&C1's reader parses as it is): the
 /// level's core sound bank (the file's part 1), the sound definitions (level and class, `0x304660`'s remap) and the
-/// music ([`music`]). Not yet: the sound instances and the env sample points. None with `RC_AUDIO=0` or when the
+/// music ([`music`]) and the sound instances. Not yet: the env sample points. None with `RC_AUDIO=0` or when the
 /// bank does not read (with a warning).
-fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &level::LevelCore, core_data: &[u8], collision: Option<rc_formats::collision::Collision>) -> Option<rc_game::audio::LevelAudio> {
+fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &level::LevelCore, core_data: &[u8], gameplay: &[u8], collision: Option<rc_formats::collision::Collision>) -> Option<rc_game::audio::LevelAudio> {
     if !crate::audio_out::enabled() { return None; }
     let run = || -> Result<rc_game::audio::LevelAudio> {
         let part = wad.part_bytes(Part::CoreBank)?.context("no core sound bank part")?;
@@ -208,14 +208,22 @@ fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &leve
             eprintln!("audio: the level's music not read ({e:#})");
             Default::default()
         });
+        // The sound instances (the gameplay's `sound_instances` section, R&C1's records) with their pvar blocks (in
+        // the moby pvar table: `{def, min, max, timer, slot}`, the reverb boxes' `{type, depth}`).
+        let instances = match rc_formats::rac2::gameplay::section(gameplay, "sound_instances")? {
+            Some(sec) => rc_formats::sound_bank::parse_sound_instances_at(sec, 0)?,
+            None => Vec::new(),
+        };
+        let pvars = rc_formats::rac2::gameplay::pvar_blocks(gameplay)?;
+        let instance_pvars = instances.iter().map(|i| usize::try_from(i.pvar_index).ok().and_then(|k| pvars.get(k)).cloned()).collect();
         Ok(rc_game::audio::LevelAudio {
-            bank, sounds, instances: Vec::new(), instance_pvars: Vec::new(), music, env_points: Vec::new(), collision: collision.map(std::sync::Arc::new),
+            bank, sounds, instances, instance_pvars, music, env_points: Vec::new(), collision: collision.map(std::sync::Arc::new),
         })
     };
     match run() {
         Ok(a) => {
             let names: Vec<&str> = a.music.iter().flatten().map(|m| m.name.as_str()).collect();
-            println!("audio: {} sounds, {} samples, {} level defs, {} classes with sounds, music {:?}", a.bank.sounds.len(), a.bank.vags.len(), a.sounds.level_defs.len(), a.sounds.classes.iter().filter(|c| !c.defs.is_empty()).count(), names);
+            println!("audio: {} sounds, {} samples, {} level defs, {} classes with sounds, {} sound instances, music {:?}", a.bank.sounds.len(), a.bank.vags.len(), a.sounds.level_defs.len(), a.sounds.classes.iter().filter(|c| !c.defs.is_empty()).count(), a.instances.len(), names);
             Some(a)
         }
         Err(e) => {
