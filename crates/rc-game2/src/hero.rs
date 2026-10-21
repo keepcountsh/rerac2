@@ -579,5 +579,14 @@ pub fn hero_update(hero: &mut Hero, env: &Env, anim: &mut dyn AnimCtl) -> HeroTi
     HeroTick::Ran
 }
 
+/// `0x25daa0 + 100·n`: the eased blend curves of a negative SetAnim blend (`0x2d2508`: `curves[−blend − 1]`, stepped by
+/// `0x2d2888`): R&C1's three and a fourth, −4, five ticks (the use stance's return, crate::hero::items).
+pub const CURVES: [&[u32]; 4] = [
+    rc_game::hero::anim::CURVES[0],
+    rc_game::hero::anim::CURVES[1],
+    rc_game::hero::anim::CURVES[2],
+    &[0x3eb3_3333, 0x3f11_eb85, 0x3f4c_cccd, 0x3f6b_851f, 0x3f80_0000],
+];
+
 /// The animation fields the states read.
 pub fn view(anim: &dyn AnimCtl) -> AnimView { anim.view() }

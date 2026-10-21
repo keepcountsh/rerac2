@@ -510,7 +510,7 @@ fn tick(
         p.hero = Hero::spawn(at, rot[2]);
         p.hero.hp = p.game.max_health;
         p.hero.damage.armour = armour;
-        p.anim = RatchetAnim::new(&lv.mobys.anim[p.class]);
+        p.anim = RatchetAnim { curves: &rc_game2::hero::CURVES, ..RatchetAnim::new(&lv.mobys.anim[p.class]) };
         p.camera = FollowCamera::new(&cam_input(&p.hero, lv.collision.as_ref(), [0.0; 2]));
         p.game.show_health = Some(0x168);
     }
@@ -1121,7 +1121,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     let camera = FollowCamera::new(&cam_input(&hero, lv.collision.as_ref(), [0.0; 2]));
     println!("rac2: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
-        anim: RatchetAnim::new(&m.anim[class]),
+        anim: RatchetAnim { curves: &rc_game2::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
         fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9],
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),

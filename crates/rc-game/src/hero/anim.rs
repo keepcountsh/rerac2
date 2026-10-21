@@ -383,12 +383,15 @@ pub struct RatchetAnim {
     /// The class sound [`RatchetAnim::loop_slot`] was started with (the game reads it from the voice entry): the
     /// slot is released when the wanted loop sound changed under it.
     pub loop_index: u8,
+    /// The eased blend curves a negative SetAnim blend picks (`curves[−blend − 1]`): R&C1's [`CURVES`]; Going
+    /// Commando sets its own table (rc_game2), which has a fourth.
+    pub curves: &'static [&'static [u32]],
 }
 
 impl RatchetAnim {
     /// Spawned on sequence 0 frame 0 (what `InitMobyInstance` leaves).
     pub fn new(class: &MobyAnimClass) -> RatchetAnim {
-        RatchetAnim { state: AnimState::spawn(class), snapshot: None, rate: Pf::ONE, flags: 0, curve: -1, curve_pos: 0, frame: Pf::ZERO, frame_step: Pf::ZERO, loop_range: None, mirror: false, loop_end: 0, exit: false, jump: false, layer_joints: Default::default(), hold: Default::default(), loop_sound: NO_LOOP, loop_slot: NO_LOOP, loop_index: NO_LOOP }
+        RatchetAnim { state: AnimState::spawn(class), snapshot: None, rate: Pf::ONE, flags: 0, curve: -1, curve_pos: 0, frame: Pf::ZERO, frame_step: Pf::ZERO, loop_range: None, mirror: false, loop_end: 0, exit: false, jump: false, layer_joints: Default::default(), hold: Default::default(), loop_sound: NO_LOOP, loop_slot: NO_LOOP, loop_index: NO_LOOP, curves: &CURVES }
     }
 
     /// Bind to Ratchet's class for one tick of hero code.
@@ -630,7 +633,7 @@ impl AnimCtl for RatchetAnimCtl<'_> {
         } else if a.state.seq_a == a.state.seq_b {
             t0 + speed * a.rate
         } else if a.curve >= 0 {
-            let c = CURVES.get(a.curve as usize).copied().unwrap_or(&[0x3f80_0000]);
+            let c = a.curves.get(a.curve as usize).copied().unwrap_or(&[0x3f80_0000]);
             let v = Pf(c[a.curve_pos.min(c.len() - 1)]);
             a.curve_pos += 1;
             v
@@ -722,7 +725,7 @@ impl AnimCtl for RatchetAnimCtl<'_> {
     fn curve_step(&mut self) {
         let a = &mut *self.a;
         if a.curve < 0 || a.state.seq_a == a.state.seq_b { return; }
-        let c = CURVES.get(a.curve as usize).copied().unwrap_or(&[0x3f80_0000]);
+        let c = a.curves.get(a.curve as usize).copied().unwrap_or(&[0x3f80_0000]);
         a.state.t = Pf(c[a.curve_pos.min(c.len() - 1)]).to_f32();
         a.curve_pos += 1;
     }
