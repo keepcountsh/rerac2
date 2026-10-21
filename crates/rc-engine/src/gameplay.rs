@@ -2759,7 +2759,7 @@ fn upload_dynamic(
         d.visible[slot] = ci.is_some() as u8;
         d.shown[slot] = ci;
         let model = moby_render::extra_model(rows3(&mo.rows), mo.scale, pos3(mo));
-        let look = pick.map(|(ci, alpha, fading, shine, e)| (&m.classes[ci], moby_render::SlotLook { model, alpha, fading, mode: mo.mode, glow: mo.glow, shine, e, late: deferred.contains(&id) || mo.mode & 0x800 != 0 }));
+        let look = pick.map(|(ci, alpha, fading, shine, e)| (&m.classes[ci], moby_render::SlotLook { model, alpha, fading, mode: mo.mode, glow: mo.glow, shine, e, late: deferred.contains(&id) || mo.mode & 0x800 != 0 , piece: None }));
         d.extra.show_slot(commands, lv, slot as u32, look, meshes, images, materials, buffers);
         let Some(ci) = ci else { continue };
         drawn += 1;

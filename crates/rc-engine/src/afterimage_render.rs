@@ -123,7 +123,7 @@ fn draw(
             let Place { rows, position } = place;
             let r3 = [0, 1, 2].map(|i| [rows[i][0], rows[i][1], rows[i][2]]);
             let model = moby_render::extra_model(r3, owner.scale, [position[0], position[1], position[2]]);
-            let look = SlotLook { model, alpha: ghost.alpha, fading: false, mode: GHOST_MODE, glow: 0, shine: 0, e: [[0.0; 3]; 3], late: true };
+            let look = SlotLook { model, alpha: ghost.alpha, fading: false, mode: GHOST_MODE, glow: 0, shine: 0, e: [[0.0; 3]; 3], late: true , piece: None };
             g.extra.show_slot(&mut commands, lv, slot as u32, Some((&owner.class, look)), &mut meshes, &mut images, &mut materials, &mut buffers);
             let bits = [0, 1, 2].map(|i| rows[i].map(f32::to_bits));
             let lights = lv.mobys.lighting.as_ref().map(|l| light::moby_lights(&bits, &l.bank, light_word, ambient, 0x80));

@@ -8,12 +8,14 @@
 //! 0x10 rests on the floor), +0xb4 the frame of the last settle, +0xc6 the ammo crate's amount, +0xc8 comes back,
 //! +0xc9 its timer, +0xcb the pickup type, +0xcc rests on something, +0xfc / +0x100 counters.
 //!
+//! The break throws the crate's pieces (crate::moby::shards) and plays its sound.
+//!
 //! Not ported: the stack's fall and settle (`0x39dfd8`), the TNT crate 0x1f9 and the class 0x1f6's flag test beyond
-//! the damage, the debris and shards (`0x334528`, `0x327498`), the sounds (`0x360698`, `0x3605f0`), the pickups of the
+//! the damage, the dust puffs (`0x334528`), the other classes' break sounds (`0x360698`), the pickups of the
 //! non-bolt crates (`0x31aa10` / `0x3d2d30`: the ammo and nanotech pickups), the respawn's stacking search
 //! (`0x31c9d8`).
 
-use crate::moby::{bolts, mode, Ctx, MobyWorld};
+use crate::moby::{bolts, mode, shards, Ctx, MobyWorld};
 
 /// `0x5830001`: the hit flags a crate takes.
 const HIT_MASK: u32 = 0x0583_0001;
@@ -105,6 +107,11 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// crates above marked broken-under, the break counter (`$gp+0x3fc` decays with time, + the shard count), then broken:
 /// state 3, timer 15, hidden (mode 1), no collision.
 fn break_crate(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    // Its sound, one crate's a frame (`0x1b2794`): class sound 0 (0x1fa / 0x1ff play another class's, not ported).
+    if 1 < (ctx.game.frame - ctx.game.crate_sound_frame).abs() && !matches!(w.mobys[id].o_class, 0x1fa | 0x1ff) {
+        ctx.host.play_sound(&w.mobys[id], 0, 0);
+        ctx.game.crate_sound_frame = ctx.game.frame;
+    }
     let above = w.mobys[id].pv_link(0xa0);
     let below = w.mobys[id].pv_link(0xa4);
     if let Some(a) = above {
@@ -149,6 +156,14 @@ fn break_crate(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         0
     };
     g.recent_breaks += shards;
+    // The pieces (`0x327498(3, 6, 3, 6, crate, mask, 0, 0xff)`): the bolt crate's 0, 2 and 5 by the count above, the
+    // nanotech crate's first n − 1 (the platform's velocity, `0x3222a8`, not ported).
+    let mask = match w.mobys[id].o_class {
+        500 | 0x1ff => match shards { 0 => 0, 1 => 1, 2 => 5, _ => 0x25 },
+        0x1f5 | 0x200 if 0 < shards => ((1u32 << (shards - 1)) - 1).min(0xf),
+        _ => 0,
+    };
+    if mask != 0 { shards::break_into(w, id, ctx, (3.0, 6.0), (3.0, 6.0), mask, [0.0; 3], 0xff); }
     let m = &mut w.mobys[id];
     m.state = 3;
     m.timer = 0xf;

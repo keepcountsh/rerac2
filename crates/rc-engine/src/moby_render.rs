@@ -1823,7 +1823,13 @@ pub struct SlotLook {
     pub e: [[f32; 3]; 3],
     /// Deferred by `MobyProc` ([`MobyLook::late`]): a caster's draws after the shadow pass.
     pub late: bool,
+    /// Going Commando's piece mask (`+0x7c` = 0x8000 | 1 << k, L00 `0x318fd0`): only break piece k's packets
+    /// (`MobyClass::pieces`), no metal. None: the whole moby (R&C1 always).
+    pub piece: Option<u8>,
 }
+
+/// The part-cache key of a class drawn whole (its o_class) or as one break piece.
+fn piece_key(o_class: i32, piece: Option<u8>) -> i32 { piece.map_or(o_class, |k| o_class | (k as i32 + 1) << 16) }
 
 /// A metal entity of an extra instance: where update_extra_metal reads its placement and writes its shine.
 #[derive(Component, Clone)]
@@ -2084,7 +2090,7 @@ impl ExtraMobys {
         materials: &mut Assets<MobyMaterial>,
         buffers: &mut Assets<ShaderBuffer>,
     ) {
-        let want = view.map(|(c, l)| ((c.o_class, MobyBlend::pick(l.mode, l.fading, l.alpha)), l.model.w_axis.truncate()));
+        let want = view.map(|(c, l)| ((piece_key(c.o_class, l.piece), MobyBlend::pick(l.mode, l.fading, l.alpha)), l.model.w_axis.truncate()));
         let was = self.slot_shown.get(&slot).copied();
         let (want_key, was_key) = (want.map(|w| w.0), was.map(|w| w.0));
         if want_key != was_key {
@@ -2093,7 +2099,7 @@ impl ExtraMobys {
             }
         }
         // The metal pass: MobyProc's shine gate (moby+0x73; crate::moby_lod).
-        let want_metal = view.filter(|(c, l)| l.shine > 0 && c.class.header.metal_count > 0 && moby_lod::metal_enabled()).map(|(c, _)| c.o_class);
+        let want_metal = view.filter(|(c, l)| l.shine > 0 && l.piece.is_none() && c.class.header.metal_count > 0 && moby_lod::metal_enabled()).map(|(c, _)| c.o_class);
         let was_metal = self.slot_metal_shown.get(&slot).copied();
         if want_metal != was_metal {
             if let Some(k) = was_metal {
@@ -2114,7 +2120,14 @@ impl ExtraMobys {
             }
             if want_key != was_key || self.slot_late.get(&slot) != Some(&look.late) { queue_late(commands, ents.clone(), look.late); }
         } else {
-            let parts = self.parts.entry(oc).or_insert_with(|| build_parts(class, &class.class.high_lod, false, glow_from(class, false), meshes).0).clone();
+            let parts = self
+                .parts
+                .entry(oc)
+                .or_insert_with(|| match look.piece {
+                    Some(k) => build_parts(class, class.class.pieces.get(k as usize).and_then(Option::as_ref).map_or(&[][..], |p| &p.packets[..]), false, usize::MAX, meshes).0,
+                    None => build_parts(class, &class.class.high_lod, false, glow_from(class, false), meshes).0,
+                })
+                .clone();
             let name = format!("dynamic moby slot {slot} class {oc} {blend:?}");
             let ents = self.cache.spawn(commands, level, &parts, blend, look.late, t, slot, Visibility::Inherited, &name, images, materials);
             self.slot_ents.insert(key, ents);

@@ -37,6 +37,7 @@ pub mod ai;
 pub mod attach;
 pub mod bolts;
 pub mod hits;
+pub mod shards;
 
 use crate::hero::physics::{add, scale, V3};
 use crate::hero::Hero;
@@ -108,6 +109,8 @@ pub struct ClassInfo {
     pub kind: i16,
     /// Per sequence, its reaction record (sequence `+0x14`, [`ai::Reaction`]).
     pub reactions: Vec<Option<ai::Reaction>>,
+    /// The break pieces' centre and points (1/1024 of the moby's scale; `rc_formats::moby::MobyPiece`), by piece.
+    pub pieces: Vec<Option<(V3, Vec<V3>)>>,
 }
 
 /// One moby.
@@ -165,6 +168,8 @@ pub struct Moby {
     /// `+0x3c` the ambient (r, g, b; 0x80 = 1), as MobyProc lights the moby.
     pub light: u32,
     pub ambient: [u8; 3],
+    /// `+0x7c` as a piece mask (0x8000 | 1 << k): drawn as break piece k only (crate::moby::shards).
+    pub piece: Option<u8>,
 }
 
 /// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
@@ -268,7 +273,7 @@ impl Moby {
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false,
             // `0x311418`: `+0x38` = 0x40404000000000.
-            light: 0, ambient: [0x40; 3],
+            light: 0, ambient: [0x40; 3], piece: None,
         };
         match class {
             Some(c) => {

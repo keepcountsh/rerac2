@@ -62,8 +62,8 @@ fn hit_sound(w: &MobyWorld, m: Option<usize>) -> i32 { health(w, m).is_some_and(
 /// `0x38cc48`: moby `m`'s health block has bit 1 of `+0x1e` set: no hit sound.
 fn silent(w: &MobyWorld, m: Option<usize>) -> bool { health(w, m).is_some_and(|(m, b)| w.mobys[m].pv_s(b + 0x1e) & 2 != 0) }
 
-/// The class of moby `m` is 0x14 (`*(m + 0x24) + 0x46`): no hit sound on it.
-fn is_class(w: &MobyWorld, m: Option<usize>, c: i16) -> bool { m.and_then(|m| w.mobys.get(m)).is_some_and(|x| x.o_class == c) }
+/// The class type of moby `m` (class header +0x46, `*(m + 0x24) + 0x46`) is `c`: 0x14 / 0x12 take no hit sound.
+fn is_class(w: &MobyWorld, m: Option<usize>, c: i16) -> bool { m.and_then(|m| w.mobys.get(m)).and_then(|x| w.class(x.o_class)).is_some_and(|k| k.kind == c) }
 
 /// `0x38d318`.
 pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {

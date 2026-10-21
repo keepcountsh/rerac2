@@ -16,6 +16,8 @@ pub struct GameState {
     /// kept. The level's object loader `0x3012a0` sets 0 (the default here, every level entry); Aranos's arrival
     /// sets 2 once its fly-by is over (`0x3846d0`).
     pub occlusion: i32,
+    /// `0x1b2794`: the frame a crate last played its break sound.
+    pub crate_sound_frame: i32,
     /// `0x1a7a1c`: the bolt bank: value a drop could not put into bolt mobys (the limit per drop, bolts that fell
     /// far from the camera); each later drop takes (bank + 49) / 50 of it.
     pub bolt_bank: i32,
@@ -112,7 +114,7 @@ const HP_LEVELS: [i16; 66] = [
 impl Default for GameState {
     fn default() -> Self {
         GameState {
-            bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
+            bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
             mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None,

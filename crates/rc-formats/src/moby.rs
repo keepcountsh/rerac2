@@ -297,6 +297,58 @@ pub struct MobyClass {
     pub low_lod: Vec<MobySubmesh>,
     pub metal: Vec<MobySubmesh>,
     pub skeleton: MobySkeleton,
+    /// Going Commando's break pieces ([`MobyPiece`]; empty on R&C1), by piece number (None: no such piece).
+    pub pieces: Vec<Option<MobyPiece>>,
+}
+
+/// One break piece of a Going Commando class: the packets a moby drawn as this piece shows (its `+0x7c` mask, L00
+/// `0x318fd0`), and the piece's centre and points for its debris (`0x311cf0`), in 1/1024 of the moby's scale.
+///
+/// * The packets: class byte 0x2c gives a table at `16·byte`; `+4 + 4k` holds piece k's high-LOD range `{first,
+///   count}` and its low-LOD range (the packets follow the class's LOD and metal lists).
+/// * The points: class s16 0x2e gives a table at `16·word`; its byte `k + 1` is piece k's record (in quadwords from
+///   the table, 0xff none): the centre (f32 x, y, z, w), then the points (s16 x, y, z, w; the first's w is their count).
+#[derive(Clone, Debug, Default)]
+pub struct MobyPiece {
+    pub packets: Vec<MobySubmesh>,
+    pub centre: [f32; 3],
+    pub points: Vec<[f32; 3]>,
+}
+
+/// The most pieces a class has (the mask's bits 0..14).
+pub const MAX_PIECES: usize = 15;
+
+/// [`MobyPiece`]s of a Going Commando class blob.
+fn read_pieces(b: Buf, h: &MobyClassHeader) -> Result<Vec<Option<MobyPiece>>> {
+    let ranges = b.u8(0x2c)? as usize * 16;
+    let points = b.i16(0x2e)?;
+    if ranges == 0 || h.packet_table_offset <= 0 { return Ok(Vec::new()); }
+    let mut out = Vec::new();
+    for k in 0..MAX_PIECES {
+        let o = ranges + 4 + 4 * k;
+        let (first, count) = (b.u8(o)? as usize, b.u8(o + 1)? as usize);
+        if count == 0 { out.push(None); continue; }
+        let entries: Vec<MobyPacketEntry> = b.pod_slice(h.packet_table_offset as usize + first * std::mem::size_of::<MobyPacketEntry>(), count, "moby piece packets")?;
+        let mut st = ListState::new();
+        let packets = entries.iter().map(|e| read_packet(crate::Game::Rac2, b, e, false, &mut st)).collect::<Result<Vec<_>>>()?;
+        let mut piece = MobyPiece { packets, ..Default::default() };
+        // The points (a record that does not read leaves the piece without: the classes have such entries for pieces
+        // their breaks never ask for).
+        let read = |k: usize| -> Result<([f32; 3], Vec<[f32; 3]>)> {
+            let table = points as usize * 16;
+            let q = b.u8(table + 1 + k)?;
+            if q == 0xff { return Ok(([0.0; 3], Vec::new())); }
+            let r = table + q as usize * 16;
+            let n = b.i16(r + 0x16)?;
+            if !(0..=64).contains(&n) { return invalid("moby piece point count"); }
+            let pts = (0..n as usize).map(|j| -> Result<[f32; 3]> { let p = r + 0x10 + 8 * j; Ok([b.i16(p)? as f32, b.i16(p + 2)? as f32, b.i16(p + 4)? as f32]) }).collect::<Result<_>>()?;
+            Ok(([b.f32(r)?, b.f32(r + 4)?, b.f32(r + 8)?], pts))
+        };
+        if 0 < points { if let Ok((c, pts)) = read(k) { (piece.centre, piece.points) = (c, pts); } }
+        out.push(Some(piece));
+    }
+    while out.last().is_some_and(Option::is_none) { out.pop(); }
+    Ok(out)
 }
 
 impl MobyClass {
@@ -643,9 +695,11 @@ pub fn parse_moby_class_for(game: crate::Game, blob: &[u8]) -> Result<MobyClass>
     let mut skeleton = MobySkeleton::default();
     if h.skeleton > 0 && jc > 0 { skeleton.matrices = b.pod_slice::<[[f32; 4]; 4]>(h.skeleton as usize, jc, "moby skeleton")?; }
     if h.common_trans > 0 && jc > 0 { skeleton.trans = b.pod_slice(h.common_trans as usize, jc, "moby common trans")?; }
+    // A class whose pieces do not read keeps none (its debris then draws whole).
+    let pieces = if game == crate::Game::Rac2 { read_pieces(b, &h).unwrap_or_default() } else { Vec::new() };
     let mut h = h;
     if game == crate::Game::Rac2 { h.rac1_byte_b = 0; }
-    Ok(MobyClass { header: h, sequence_pointers, high_lod, low_lod, metal, skeleton })
+    Ok(MobyClass { header: h, sequence_pointers, high_lod, low_lod, metal, skeleton, pieces })
 }
 
 /// Gives `class` the packets of a separate mesh blob: `u8 high, low, metal, metal_begin`, `+4` the packet table,
