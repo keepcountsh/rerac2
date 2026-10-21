@@ -42,7 +42,7 @@ impl Plugin for Rac2PlayPlugin {
             .init_resource::<PadFrame>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
-            .add_systems(Update, (draw_created, draw_hud, move_instances))
+            .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created)))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
             .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>));
     }
@@ -850,6 +850,54 @@ fn move_instances(
         }
         sway.flush(&mut buffers);
     }
+}
+
+/// Aranos's arrival: the ship's screen (`rc_game2::scene::Scenes::ship_screen`) through crate::world_screen. The
+/// actor's entities go to the screen's layer while it shows (off the frame's) and back after.
+#[allow(clippy::too_many_arguments)]
+fn ship_screen(
+    mut commands: Commands,
+    play: Option<Res<Play>>,
+    view: Option<Res<PlayView>>,
+    draw: Option<Res<crate::rac2_mobys::CreatedDraw>>,
+    mut screens: ResMut<crate::world_screen::WorldScreens>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut id: Local<Option<crate::world_screen::WorldScreenId>>,
+    mut layered: Local<Vec<Entity>>,
+) {
+    if screens.is_added() { (*id, *layered) = (None, Vec::new()); }
+    let screen = play.as_ref().zip(view.as_ref()).and_then(|(p, v)| {
+        let mobys = p.mobys.as_ref()?;
+        p.game.scenes.ship_screen(p.game.level, &mobys.world, v.view.pos_f32()).map(|s| (s, v.tan_half_fov))
+    });
+    let Some((s, tan)) = screen else {
+        for e in layered.drain(..) { if let Ok(mut c) = commands.get_entity(e) { c.remove::<bevy::camera::visibility::RenderLayers>(); } }
+        if let Some(i) = *id { screens.show(i, None); }
+        return;
+    };
+    let i = *id.get_or_insert_with(|| screens.create(&mut commands, &mut images, &mut meshes, &mut materials, UVec2::splat(256), "ship"));
+    let layer = screens.layer(i);
+    for e in draw.map(|d| d.entities_of(s.actor)).unwrap_or_default() {
+        if !layered.contains(&e) {
+            commands.entity(e).insert(layer.clone());
+            layered.push(e);
+        }
+    }
+    // The frame's projection centred in the 256×256 target: its 512×416 screen's focal lengths over 128 texels.
+    let ty = tan * crate::game_camera::NTSC_Y_RATIO;
+    let v = |a: [f32; 3]| [Pf::f(a[0]), Pf::f(a[1]), Pf::f(a[2]), Pf::ZERO];
+    let f = s.rows[0];
+    let euler = [Pf::ZERO, Pf::f(-f[2].clamp(-1.0, 1.0).asin()), Pf::f(f[1].atan2(f[0])), Pf::ZERO];
+    let eye = play_camera::view_transform(&CameraView { pos: v(s.eye), euler, rows: s.rows.map(v), class: 0, flyby_phase: 0 });
+    screens.show(i, Some(crate::world_screen::WorldScreenView {
+        eye,
+        tan: (tan * 128.0 / (crate::game_camera::SCREEN_W * 0.5), ty * 128.0 / (crate::game_camera::SCREEN_H * 0.5)),
+        corners: s.corners.map(crate::tfrag_render::game_to_bevy),
+        uvs: s.uvs,
+        clear: Color::BLACK,
+    }));
 }
 
 /// The hero at Ratchet's instance (class 0).

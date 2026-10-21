@@ -423,6 +423,9 @@ pub struct CreatedDraw {
 }
 
 impl CreatedDraw {
+    /// The entities created moby `moby` is drawn with (none before its first draw).
+    pub fn entities_of(&self, moby: usize) -> Vec<Entity> { self.slots.get(&moby).map(|&s| self.extra.slot_entities(s)).unwrap_or_default() }
+
     pub fn new(level: &crate::level_load::LoadedLevel, buffers: &mut Assets<ShaderBuffer>) -> CreatedDraw {
         let records = vec![0u8; DRAW_SLOTS * moby_render::EXTRA_RECORD_SIZE];
         let extra = ExtraMobys::new(level, records, crate::moby_anim::identity_palette(DRAW_SLOTS as u32 * SLOT_JOINTS), buffers);

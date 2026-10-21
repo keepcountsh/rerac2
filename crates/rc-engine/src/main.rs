@@ -83,6 +83,7 @@ mod saves;
 mod scene_render;
 mod sea_render;
 mod screen_canvas;
+mod world_screen;
 mod shadow_render;
 mod pre_shadow;
 mod frame_log;
@@ -220,7 +221,7 @@ fn main() -> anyhow::Result<()> {
     // The game tick (hero, pad, follow camera) driving Ratchet and the view; RC_PLAY=0 keeps the fly camera only.
     .add_plugins(gameplay::GameplayPlugin { boot: std::sync::Mutex::new(boot) })
     .add_plugins(menu_render::MenuPlugin)
-    .add_plugins((screen_canvas::CanvasPlugin, vendor_render::VendorRenderPlugin))
+    .add_plugins((screen_canvas::CanvasPlugin, world_screen::WorldScreenPlugin, vendor_render::VendorRenderPlugin))
     // The Gadgets / Weapons pages' 3D Ratchet and item preview (crate::menu_models, on crate::screen_canvas).
     .add_plugins(menu_models::MenuModelsPlugin)
     // In-engine scenes (mode 2) and the Novalis arrival (crate::scene_render; RC_SCENE=0 / RC_SCENE=<k>).

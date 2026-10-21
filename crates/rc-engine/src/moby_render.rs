@@ -2062,6 +2062,12 @@ impl ExtraMobys {
         out
     }
 
+    /// Every entity slot `slot` has spawned (its classes' and blends' parts and metal), shown or not.
+    pub fn slot_entities(&self, slot: u32) -> Vec<Entity> {
+        let parts = self.slot_ents.iter().filter(|(k, _)| k.0 == slot).flat_map(|(_, v)| v.iter().copied());
+        parts.chain(self.slot_metal.iter().filter(|(k, _)| k.0 == slot).flat_map(|(_, v)| v.iter().copied())).collect()
+    }
+
     /// Shows slot `slot` of this record set as `class` (None: nothing) with the blend its [`SlotLook`] asks for
     /// ([`MobyBlend`]): the entities of that (class, blend) are spawned on first use (high LOD) and shown, the slot's
     /// other entities hidden; the class's metal entities are shown while the look's shine alpha is above 0 (spawned on

@@ -357,3 +357,55 @@ impl Scenes {
         }
     }
 }
+
+/// The view on Ratchet's ship's screen in Aranos's arrival ([`Scenes::ship_screen`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShipScreen {
+    /// The moby shown: the scene's actor 1.
+    pub actor: usize,
+    /// The view's eye and its rows (forward, left, up), from `0x27e580` +0 and its angles +0x10..+0x18.
+    pub eye: V3,
+    pub rows: [V3; 3],
+    /// The screen's corners in the world (`0x27e580` +0x20): the bottom and top on the ship's left, then on its right.
+    pub corners: [V3; 4],
+    /// Their texel coordinates in the view's image (`0x2e6350`: `[+0x60, +0x64] · (±0.5) + 0.5`).
+    pub uvs: [[f32; 2]; 4],
+}
+
+/// `0x27e580`: the view's eye and angles (x, y, z), the image's texel scale.
+const SCREEN_EYE: V3 = [5.7, 0.0, 2.4];
+const SCREEN_ANGLES: V3 = [0.0, 0.0, -std::f32::consts::PI];
+const SCREEN_UV_SCALE: [f32; 2] = [0.99, 0.99];
+/// `gp - 0x5c10`: the corners in the ship's frame.
+const SCREEN_CORNERS: [V3; 4] = [[0.510_85, 0.159_62, 1.872_69], [0.554_86, 0.159_62, 2.167_56], [0.510_85, -0.159_62, 1.872_69], [0.554_86, -0.159_62, 2.167_56]];
+/// `gp - 0x64a8` / `gp - 0x6498`: the corners' signs in the image.
+const SCREEN_U: [f32; 4] = [-0.5, -0.5, 0.5, 0.5];
+const SCREEN_V: [f32; 4] = [0.5, -0.5, 0.5, -0.5];
+
+impl Scenes {
+    /// `0x2fd3d8` (Aranos only, `0x1a79f8` = 0): in the level's scene record 0 from tick 0xdc to 0x172, the screen of
+    /// Ratchet's ship (the actor of class 0x0d54) shows the scene's actor 1 as seen from a view of its own: `0x2e6350`
+    /// hides it from the frame and draws it alone into a 256×256 image (cleared to black, every texel's alpha then set
+    /// to 0x80 by `0x2f16f8`, so the screen is opaque) with that view and the frame's projection, then draws the image
+    /// on the screen's corners — the ship's frame through its matrix, then 0.15 of the way to the camera `camera`.
+    pub fn ship_screen(&self, level: i32, world: &crate::moby::MobyWorld, camera: V3) -> Option<ShipScreen> {
+        let p = self.player.as_ref().filter(|_| level == 0 && self.mode == SCENE)?;
+        if rc_formats::rac2::scene::record_of(p.id) != 0 || !(0xdc..=0x172).contains(&p.tick) { return None; }
+        let actor = p.actors.get(1).map(|a| a.0).filter(|&a| a < world.mobys.len())?;
+        let mut corners = [[0.0; 3]; 4];
+        if let Some(ship) = p.actors.iter().filter_map(|a| world.mobys.get(a.0)).find(|m| m.o_class == 0xd54) {
+            for (c, l) in corners.iter_mut().zip(SCREEN_CORNERS) {
+                *c = std::array::from_fn(|k| l[0] * ship.rows[0][k] + l[1] * ship.rows[1][k] + l[2] * ship.rows[2][k] + ship.pos[k]);
+                *c = std::array::from_fn(|k| c[k] + (camera[k] - c[k]) * 0.15);
+            }
+        }
+        // The angles as the camera matrix `0x129178` / `0x1292c0` / `0x129368` / `0x129218` builds it (x, then y, then
+        // z); the roll is 0 here.
+        let [_, b, c] = SCREEN_ANGLES;
+        let forward = [b.cos() * c.cos(), b.cos() * c.sin(), -b.sin()];
+        let left = [-c.sin(), c.cos(), 0.0];
+        let up = [forward[1] * left[2] - forward[2] * left[1], forward[2] * left[0] - forward[0] * left[2], forward[0] * left[1] - forward[1] * left[0]];
+        let uvs = std::array::from_fn(|i| [SCREEN_UV_SCALE[0] * SCREEN_U[i] + 0.5, SCREEN_UV_SCALE[1] * SCREEN_V[i] + 0.5]);
+        Some(ShipScreen { actor, eye: SCREEN_EYE, rows: [forward, left, up], corners, uvs })
+    }
+}
