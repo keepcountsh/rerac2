@@ -33,6 +33,7 @@
 //! pvar pool.
 
 pub mod classes;
+pub mod ai;
 pub mod attach;
 pub mod bolts;
 pub mod hits;
@@ -105,6 +106,8 @@ pub struct ClassInfo {
     pub animated: bool,
     /// Class header +0x46: the class's type (0x16: a target the aims prefer, 0x14 / 0x12: the wrench's exceptions).
     pub kind: i16,
+    /// Per sequence, its reaction record (sequence `+0x14`, [`ai::Reaction`]).
+    pub reactions: Vec<Option<ai::Reaction>>,
 }
 
 /// One moby.
@@ -334,6 +337,9 @@ pub trait MobyHost {
     fn camera_pos(&self) -> V3 { [0.0; 3] }
     /// `+0x48`: the playback speed.
     fn set_anim_speed(&mut self, _m: &Moby, _speed: f32) {}
+    /// `0x311880`: the moby's place in its sequence in the frames' time units (`+0x44` the blend between two keys of one
+    /// sequence; else key A's time plus `t`).
+    fn frame_time(&self, _m: &Moby) -> f32 { 0.0 }
     /// The position of joint `j` of moby `m` in the world (`0x3127c8`: the posed joint's translation · scale / 1024,
     /// turned by the rows, plus the position).
     fn joint(&self, _m: &Moby, _j: usize) -> Option<V3> { None }

@@ -196,6 +196,69 @@ pub fn turn_spring(t: f32, k: f32, d: f32, max: f32, a: &mut f32, v: &mut f32, m
     e
 }
 
+/// `0x31f030(t, step, &v, mode)`: `v` turned toward `t` by at most `step` ([`angle_diff`]).
+pub fn approach_angle(t: f32, step: f32, v: &mut f32, mode: i32) {
+    let d = angle_diff(t, *v, mode).clamp(-step, step);
+    *v = add_rot(*v, d);
+}
+
+/// `0x31f230(t, accel, brake, max, &a, &v, mode)`: the angle `a` eased toward `t` ([`ease`] on the angle: the turn
+/// speed `v` speeds up by `accel` toward `min(√(2·brake·|e|), max)`, brakes by `brake` once the stop distance reaches the
+/// difference, reverses when turning away; `a` lands on `t` when within |v|). Mode 2 picks ±1 as [`turn_spring`].
+/// Returns the step (or the last difference).
+pub fn turn_ease(t: f32, accel: f32, brake: f32, max: f32, a: &mut f32, v: &mut f32, mut mode: i32) -> f32 {
+    if mode == 2 {
+        mode = if (t <= 0.0 || 0.0 <= *a) && (0.0 <= t || *a <= 0.0) { 0 } else if t < 0.0 { -1 } else { 1 };
+    }
+    let e = angle_diff(t, *a, mode);
+    if *v == 0.0 && e == 0.0 { return 0.0; }
+    if 0.0 <= *v * e {
+        let stop = *v * *v / brake * 0.5;
+        if e.abs() < stop {
+            approach(0.0, if stop < e.abs() + v.abs() { brake } else { brake * 1.1 }, v);
+        } else {
+            let s = (2.0 * brake * e).abs().sqrt().min(max);
+            approach_angle(if e < 0.0 { -s } else { s }, accel, v, 0);
+        }
+        if e.abs() <= v.abs() {
+            *a = t;
+            return e;
+        }
+    } else {
+        *v += if 0.0 <= *v { -brake } else { brake };
+    }
+    *a = add_rot(*v, *a);
+    *v
+}
+
+/// `0x31f4b0(t, accel, brake, max, &v)`: the speed `v` eased toward `t` as [`ease`] eases a position, without one:
+/// against `t` (or `t` = 0) it brakes, clamped at `t`; else it speeds up by `accel` toward `min(√(2·brake·|t|), max)`
+/// and brakes by `brake` (1.1·brake when it would overshoot) once `v²/2·brake` reaches `|t|`; within |t| it lands on
+/// `t`.
+pub fn ease_speed(t: f32, accel: f32, brake: f32, max: f32, v: &mut f32) {
+    if t == 0.0 && *v == 0.0 { return; }
+    if *v * t < 0.0 || t == 0.0 {
+        *v += if 0.0 <= *v { -brake } else { brake };
+        if t < 0.0 && *v < t { *v = t; return; }
+        if t <= 0.0 { return; }
+        if *v <= t { return; }
+        *v = t;
+        return;
+    }
+    let stop = *v * *v / brake * 0.5;
+    if t.abs() < stop {
+        if stop < t.abs() + v.abs() {
+            approach(0.0, brake, v);
+        } else {
+            approach(0.0, brake * 1.1, v);
+        }
+    } else {
+        let s = (2.0 * brake * t).abs().sqrt().min(max);
+        approach(if t < 0.0 { -s } else { s }, accel, v);
+    }
+    if t.abs() <= v.abs() { *v = t; }
+}
+
 pub fn add(a: V3, b: V3) -> V3 { [a[0] + b[0], a[1] + b[1], a[2] + b[2]] }
 pub fn sub(a: V3, b: V3) -> V3 { [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }
 pub fn scale(a: V3, s: f32) -> V3 { [a[0] * s, a[1] * s, a[2] * s] }

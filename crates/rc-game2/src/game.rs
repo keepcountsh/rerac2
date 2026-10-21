@@ -82,6 +82,11 @@ pub struct GameState {
     pub quick_select: Vec<i32>,
     /// `0x139768`: the scenes seen (one bit each).
     pub scenes_seen: Vec<bool>,
+    /// The trigger areas' occupants (`0x1b1a7c`, filled by `0x2ae140` for the areas asked about in the last 10
+    /// frames, the area record's `+0x3a`): only Ratchet is kept (the helpers 0xcb / 0xeb0 and the decoys are not on
+    /// Aranos).
+    pub area_ask: Vec<i16>,
+    pub area_hero: Vec<bool>,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -97,7 +102,7 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100],
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100], area_ask: Vec::new(), area_hero: Vec::new(),
         }
     }
 }
@@ -113,6 +118,29 @@ impl GameState {
             let n = self.quick_select.iter().filter(|&&q| q != 0).count();
             if let Some(q) = self.quick_select.get_mut(n) { *q = item; }
         }
+    }
+
+    /// `0x2ae140` (from the hero's update): each area asked about within the last 10 frames lists Ratchet when he is
+    /// in it.
+    pub fn area_tick(&mut self, level: &crate::level::LevelData, hero: [f32; 3]) {
+        let n = level.areas.len();
+        self.area_ask.resize(n, 0);
+        self.area_hero.resize(n, false);
+        for i in 0..n {
+            self.area_hero[i] = false;
+            let mut t = self.area_ask[i] as i32;
+            let done = crate::moby::countdown(&mut t);
+            self.area_ask[i] = t as i16;
+            if !done && level.in_area(i as i32, hero) { self.area_hero[i] = true; }
+        }
+    }
+
+    /// `0x32ab30`'s ask: area `i` is watched for the next 10 frames; whether Ratchet was in it at the last look.
+    pub fn area_has_hero(&mut self, i: i32) -> bool {
+        let Ok(i) = usize::try_from(i) else { return false };
+        if self.frame < 2 { return false; }
+        if i < self.area_ask.len() { self.area_ask[i] = 10; }
+        self.area_hero.get(i).copied().unwrap_or(false)
     }
 
     /// `0x3132a8(mission)`: the level's mission done (bit 7).

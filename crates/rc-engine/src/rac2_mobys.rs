@@ -131,7 +131,24 @@ impl MobyHost for Host<'_> {
     }
 
     fn set_anim_speed(&mut self, m: &Moby, speed: f32) {
-        if let Some(c) = self.created.get_mut(&m.index) { c.state.speed = speed; }
+        if let Some(c) = self.created.get_mut(&m.index) {
+            c.state.speed = speed;
+            return;
+        }
+        let Some(k) = self.placed_index(m) else { return };
+        if let Some(i) = self.anim.as_deref_mut().and_then(|a| a.instances.get_mut(k)) { i.state.speed = speed; }
+    }
+
+    /// `0x311880`: key A's time (key B's without a sequence A) over 16; between two keys of one sequence the lerp of
+    /// theirs by `t`; else key A's plus `t`.
+    fn frame_time(&self, m: &Moby) -> f32 {
+        let Some((class, s, _)) = self.state_of(m) else { return 0.0 };
+        let Some(ac) = self.lv.anim.get(class) else { return 0.0 };
+        let time = |q: u8, f: u8| ac.sequences.get(q as usize).and_then(Option::as_ref).and_then(|q| q.frames.get(f as usize)).map_or(0.0, |f| f.header.time as f32 / 16.0);
+        let a = if s.seq_a == 0xff { time(s.seq_b, s.frame_b) } else { time(s.seq_a, s.frame_a) };
+        if s.t == 0.0 { return a; }
+        if s.seq_a == s.seq_b && s.frame_a <= s.frame_b { return a * (1.0 - s.t) + time(s.seq_b, s.frame_b) * s.t; }
+        a + s.t
     }
 
     /// `0x3127c8`: joint `j`'s posed translation · scale / 1024 through the rows, plus the position.
@@ -192,6 +209,21 @@ impl Rac2Mobys {
                 mode: c.class.header.mode_bits as u16,
                 animated: m.anim.get(ci).and_then(|a| a.sequences.first()).and_then(Option::as_ref).is_some_and(|q| q.header.frame_count >= 2),
                 kind: (c.class.header.ty as u16 | (c.class.header.mode_bits2 as u16) << 8) as i16,
+                reactions: m
+                    .anim
+                    .get(ci)
+                    .map(|a| {
+                        let blob = blobs.blobs.get(&c.o_class);
+                        a.sequences
+                            .iter()
+                            .map(|q| {
+                                let td = q.as_ref()?.header.trigger_data as usize;
+                                if td == 0 { return None; }
+                                rc_game2::moby::ai::Reaction::parse(blob?.get(td..td + 0x20)?)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             })
             .collect();
         let mut world = MobyWorld::new(classes);

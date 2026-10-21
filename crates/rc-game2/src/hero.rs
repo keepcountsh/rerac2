@@ -355,6 +355,9 @@ pub struct Hero {
     pub hits_out: Vec<HeroHit>,
     /// His posture's joint records (`posture`).
     pub posture: posture::Posture,
+    /// `0x189ef0`: the point the enemies aim at — the ground under him raised 0.5 while he is within 4 of it, else
+    /// as it was (`0x2c3330`).
+    pub aim_point: V3,
     /// States the port has not got, reported once each.
     pub unported_seen: Vec<i32>,
 }
@@ -393,7 +396,7 @@ impl Hero {
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
             bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
-            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], slide_speed: 0.0, stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, push: [0.0; 3], swing: Default::default(), swing_cooldown: 0, gear: Default::default(), grind: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), posture: Default::default(), unported_seen: Vec::new(),
+            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], slide_speed: 0.0, stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, push: [0.0; 3], swing: Default::default(), swing_cooldown: 0, gear: Default::default(), grind: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), posture: Default::default(), aim_point: [0.0; 3], unported_seen: Vec::new(),
         }
     }
 
@@ -535,6 +538,7 @@ pub fn hero_update(hero: &mut Hero, env: &Env, anim: &mut dyn AnimCtl) -> HeroTi
     anim.advance(Pf::f(hero.anim_speed));
     hero.anim_frame = anim.view().frame;
     hero.input_physics_move(env, anim);
+    if hero.height < 4.0 { hero.aim_point = [hero.ground_point[0], hero.ground_point[1], hero.ground_point[2] + 0.5]; }
     // `0x2aca80`: the surface under the feet (the lava hop, the slides, the liquids).
     if hero.surface_check(env, anim) { return HeroTick::Ran; }
     // `0x2ad000(pos, rot, 0x18a370)`: the ledge ahead; `0x2adbb8` / `0x2adda8`: a rail and a pole in reach.
