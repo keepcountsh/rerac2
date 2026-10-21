@@ -44,6 +44,9 @@ pub struct Rac2Mobys {
     pub created: HashMap<usize, Created>,
     /// Created mobys posed from another's joints (Ratchet's head item: [`Rac2Mobys::skin_head`]): their palettes.
     pub skinned: HashMap<usize, Vec<moby_anim::Rows>>,
+    /// The ship's canopy (`rc_game2::canopy`, from the level overlay) and this tick's for the draw.
+    pub canopy: Option<rc_game2::canopy::Canopy>,
+    pub canopy_frame: Option<rc_game2::canopy::CanopyFrame>,
     /// Ratchet's joint lists (chains) for his attachment points, and the joint each list's modifiers act on
     /// (`rc_formats::moby_anim::list_target`; 0xff none).
     pub hero_chains: Vec<Vec<u8>>,
@@ -407,7 +410,7 @@ impl Rac2Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, hero_chains, hero_targets, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }

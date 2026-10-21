@@ -42,9 +42,9 @@ impl Plugin for Rac2PlayPlugin {
             .init_resource::<PadFrame>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
-            .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created)))
+            .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created), draw_canopy))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
-            .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>));
+            .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>, crate::level_switch::remove::<CanopyDraw>));
     }
 }
 
@@ -166,6 +166,13 @@ fn tick(
             p.hero.teleport(at, rot);
             p.game.checkpoint = Some((at, rot));
         }
+        let mut m = m;
+        // The tables' addresses are Aranos's overlay's.
+        m.canopy = (crate::level_load::level_index() == 0)
+            .then(|| crate::rac2_level::overlay(&crate::level_load::extracted_root(), 0).ok())
+            .flatten()
+            .and_then(|ov| rc_game2::canopy::CanopyMesh::read(|a, n| crate::sky_stars::overlay_read(&ov, a, n)))
+            .map(rc_game2::canopy::Canopy::new);
         println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
         // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).
@@ -365,6 +372,7 @@ fn tick(
             if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, None, m.state >= 0x80 || m.mode & 1 != 0); }
         }
     }
+    canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), None, p.camera.pos, p.game.scenes.mode);
     {
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut inp = cam_input(&p.hero, Some(coll), [p.pad.rx.to_f32(), p.pad.ry.to_f32()]);
@@ -714,6 +722,8 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         mobys.snap = Some(crate::rac2_mobys::take_snapshot(&mobys.world, &mobys.coll, &host));
         mobys.world.changed = false;
     }
+    let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
+    canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: crate::game_camera::FAR });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }
@@ -929,6 +939,81 @@ fn ship_screen(
         uvs: s.uvs,
         clear: Color::BLACK,
     }));
+}
+
+/// `0x367b68` on the ship being drawn — `ship` (the scene's actor), else the first drawn one of class 0x0d54 — seen
+/// from `camera`: this tick's canopy for [`draw_canopy`].
+fn canopy_tick(mobys: &mut crate::rac2_mobys::Rac2Mobys, lv: &crate::level_load::LoadedLevel, occl: Option<&MobyOcclusion>, anim: Option<&mut MobyAnim>, ship: Option<usize>, camera: [f32; 3], mode: i32) {
+    use rc_game2::moby::MobyHost;
+    mobys.canopy_frame = None;
+    let Some(canopy) = mobys.canopy.as_mut() else { return };
+    let drawn = |m: &rc_game2::moby::Moby| m.o_class == 0xd54 && m.state < 0x80 && m.mode & 0x81 == 0;
+    let Some(s) = ship.filter(|&s| mobys.world.mobys.get(s).is_some_and(drawn)).or_else(|| mobys.world.mobys.iter().position(drawn)) else { return };
+    let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl, anim, created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera, sound: None };
+    let m = &mobys.world.mobys[s];
+    let Some((rows, at)) = host.joint_matrix(m, 0) else { return };
+    mobys.canopy_frame = Some(canopy.draw(rows, at, m.pos, camera, mode));
+}
+
+/// The canopy's mesh (crate::rac2 Aranos): the frame's strips with the effect texture 0x15, tinted and blended.
+#[derive(Resource)]
+struct CanopyDraw {
+    entity: Entity,
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    shown: bool,
+}
+
+fn canopy_mesh(f: &rc_game2::canopy::CanopyFrame) -> Mesh {
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    let idx: Vec<u32> = f.strips.iter().flat_map(|q| [q[0], q[1], q[2], q[2], q[1], q[3]].map(u32::from)).collect();
+    Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, f.verts.iter().map(|v| crate::tfrag_render::game_to_bevy(*v).to_array()).collect::<Vec<_>>())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; f.verts.len()])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, f.uvs.clone())
+        .with_inserted_indices(Indices::U32(idx))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_canopy(
+    mut commands: Commands,
+    level: Res<crate::Level>,
+    play: Option<Res<Play>>,
+    draw: Option<ResMut<CanopyDraw>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
+    let frame = play.as_ref().and_then(|p| p.mobys.as_ref()).and_then(|m| m.canopy_frame.as_ref());
+    let Some(mut d) = draw else {
+        let Some(f) = frame else { return };
+        let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(rc_game2::canopy::TEXTURE)).and_then(|t| t.as_ref()) else { return };
+        use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+        let mut img = Image::new_uninit(Extent3d { width: t.width, height: t.height, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::RENDER_WORLD);
+        // Alpha 0x80 = 1.
+        img.data = Some(t.rgba.chunks(4).flat_map(|c| [c[0], c[1], c[2], (c[3] as u16 * 2).min(255) as u8]).collect());
+        let linear = ImageFilterMode::Linear;
+        img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor { address_mode_u: ImageAddressMode::ClampToEdge, address_mode_v: ImageAddressMode::ClampToEdge, mag_filter: linear, min_filter: linear, ..default() });
+        let image = images.add(img);
+        // The colour modulates the texture (0x80 = 1), in the PS2's gamma space.
+        let c = f.rgba.map(|v| v as f32 / 128.0);
+        let material = mats.add(StandardMaterial { base_color: Color::srgba(c[0], c[1], c[2], c[3]), base_color_texture: Some(image), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, double_sided: true, fog_enabled: false, ..default() });
+        let mesh = meshes.add(canopy_mesh(f));
+        let entity = commands.spawn((Name::new("ship canopy"), Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Inherited, bevy::camera::visibility::NoFrustumCulling)).id();
+        commands.insert_resource(CanopyDraw { entity, mesh, material, shown: true });
+        return;
+    };
+    match frame {
+        Some(f) => {
+            if let Some(mut m) = meshes.get_mut(&d.mesh) { *m = canopy_mesh(f); }
+            let c = f.rgba.map(|v| v as f32 / 128.0);
+            let want = Color::srgba(c[0], c[1], c[2], c[3]);
+            if let Some(mut m) = mats.get_mut(&d.material) { if m.base_color != want { m.base_color = want; } }
+            if !d.shown { commands.entity(d.entity).insert(Visibility::Inherited); d.shown = true; }
+        }
+        None => if std::mem::take(&mut d.shown) { commands.entity(d.entity).insert(Visibility::Hidden); },
+    }
 }
 
 /// The hero at Ratchet's instance (class 0).

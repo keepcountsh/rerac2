@@ -5,6 +5,7 @@
 //! player) are `rc-game`'s, used as they are.
 
 pub mod camera;
+pub mod canopy;
 pub mod cameras;
 pub mod front_end;
 pub mod game;

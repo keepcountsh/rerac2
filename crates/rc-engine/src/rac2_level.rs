@@ -68,6 +68,14 @@ pub struct ClassBlobs {
     pub blobs: std::collections::HashMap<i32, Vec<u8>>,
 }
 
+/// Level `index`'s code overlay (the data lump 0: Insomniac's sectioned executable, `crate::sky_stars::overlay_read`).
+pub fn overlay(root: &Path, index: u32) -> Result<Vec<u8>> {
+    let name = file_name(index);
+    let file = crate::disc_source::read(root, &name)?;
+    let wad = LevelWad::parse(&file).with_context(|| name.clone())?;
+    Ok(wad.lump(Lump::Overlay)?.context("no overlay")?.to_vec())
+}
+
 pub fn class_blobs(root: &Path, index: u32) -> Result<ClassBlobs> {
     let name = file_name(index);
     let file = crate::disc_source::read(root, &name)?;
