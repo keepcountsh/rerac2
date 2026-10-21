@@ -410,3 +410,33 @@ SPU2, the slots, the emitters, the music player) fed with R&C2's data (`crate::r
 Not yet: the env sample points, the boots' footstep variant (`0x18b0b8`), the landing footsteps (`0x2a6180`), the
 hero's other sounds (the states' own `0x3605f0` calls: hurt, the packs, the swing, the grind), the front end's
 sounds and its movies' audio, the help voice.
+
+### 6.9 The intro pass (2026-10-21, checked against the original's frames)
+
+* **Ratchet's items beyond the hand.** `0x2afc68` makes, besides the hand item: slot 2 (`0x18b0e0`) the head item
+  (item `0x1a73a0`, else 0x2f: the pilot's helmet, class 0x50a; not on armour 4 or with the cheat bodies), slot 1
+  (`0x18b090` / `0x18b094`, a pair, item `0x1a739c` else 0x34), slot 3 (`0x18b130`, Clank or a pack, items 2 / 3),
+  `0x18b134` (item 1) and three optional ones (`0x18b180..`). `0x2b09e0` places slot k's mobys at attachment
+  `0x18aa70 + 0x40·row word 0`; the head item, the gloves (0xc / 0x11) and the 0x13 / 0x34 / 0x36 / 0x14 items are
+  instead posed from Ratchet's joints by `0x2aa278(table, buffer, class, 0, ratchet)`: a keyframe of their own,
+  joint 0 at rest, joint i the quaternion of Ratchet's `table[i]` (from `0x3181c0`, his decoded joint data), its
+  scale where it is not 1 and its translation where it differs from the item's rest. Helmet: table `0x1a7d08`
+  (+4: joints 8, 10), attachment 4 (joints 0..7). Ported: the helmet (`rc_game2::hero::items::head_pass`,
+  `Rac2Mobys::skin_head`); his joint modifiers' scale (the head's 0.875, `0x2d51f8` / `0x2ab498`) reaches it, the
+  head look's rotation not yet. Not ported: slots 1 and 3, `0x18b134`, the optional slots, the gloves.
+* **The GS stash.** The classes on the core's `moby_gs_stash_list` (s16 list, negative end: Clank 601, the packs
+  607..609, the helmet 1290, 0xa73, 0xb08) keep their textures resident; their moby texture entries hold offsets
+  from the stash address (the gs_ram table's entry past `gs_ram.count`; word 0x84 is the stash's entry count) into
+  the gs_ram lump. `LevelCore::moby_stash` / `moby_stash_addr`, `texture::parse_textures`.
+* **The ship's screen** (`0x2fd3d8` + `0x2e6350`): crate::world_screen (an offscreen camera onto a world quad).
+* **The canopy** (`0x367b68`): a draw callback, not a moby: `rc_game2::canopy`, drawn through crate::fx_draw like
+  R&C1's ship glass (display-byte blend). The ship's parts ride the scene's ship actor at itself.
+* **Occlusion mode** `0x1b19d0` (`0x2e54a0`): 0 all visible, 2 the grid (`0x2e4d88`), else kept; `0x3012a0` sets 0
+  at every level load, the arrival 2 when its fly-by ends (`GameState::occlusion`). Nothing in level 0 sets 2 when
+  the arrival scene was already seen (state 0 → 4), so then the grid stays off: as found, unverified in the
+  original. R&C2's grid fallback has a fourth mode, 3: a mask by the camera's angle around the core's
+  `occlusion_rad_offset` point (64 sectors), set by a camera mode in `0x2f2af0`; not ported.
+* **Created mobys' metal pass**: through `moby_lod`'s shine gate (`0x305428` gives a class with metal packets +0x63
+  = 0x18).
+* Open from the user's list: the moby / tie lighting (the hull's sheen; milestone D), the background mountains
+  in the arrival (not looked at yet).
