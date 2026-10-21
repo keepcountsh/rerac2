@@ -9,6 +9,7 @@
 //! | 0x17 | [`puff`] `0x335bb8` | `0x335d80` = R&C1's type 23 (`rc_game::particles::type23::update`, the same steps at 60 Hz) | glow puffs |
 //! | 0x2c | [`spark`] `0x339848` | `0x3399c8` ([`update_spark`]) | sparks: alpha down with the life, gravity, drag |
 //! | 0x55 | [`sprite`] `0x33ef78` | `+0x3c` = `0x33f120` ([`update_sprite`]) | sprites: alpha and size tweened over the life |
+//! | 0x59 | [`glow`] `0x33f550` | `0x33f6e8` ([`update_glow`]) | a glow riding a moby (the hand item's), pulled toward the camera |
 //!
 //! Any other type kills itself on its first update. The gravity direction (`0x18a0e0`) is (0, 0, −1): normal gravity.
 //! Not ported: the gravity-boots bend of the positions (`0x380e08`, `+0x1c` = 2).
@@ -162,8 +163,53 @@ pub fn puff(sys: &mut Particles, rng: &mut Rng, jitter: f32, grow_lo: f32, grow_
     Some(i)
 }
 
-/// `UpdateParts` `0x331150`: every live record up to the high water mark at entry, in pool order.
-pub fn update_parts(sys: &mut Particles) {
+/// `0x33f550(size, pull, offset, moby, rgba, joint −1, def 1, life, 0, −1)`: a glow (type 0x59) on moby `moby` at
+/// `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` of the way toward the
+/// camera, for `life` ticks; additive, near 1 / far 128. Starts at the moby's position plus the offset (unturned): its
+/// update places it the same tick.
+#[allow(clippy::too_many_arguments)]
+pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f32; 3], moby: usize, pos: [f32; 3], rgba: u32, life: i16) -> Option<usize> {
+    let i = sys.create_part(0x59)?;
+    let def = sys.def_frame(0x59, 1);
+    let rot = rng.randi(0xff) as u8;
+    let r = &mut sys.pool.recs[i];
+    rec::set_u32(r, 4, rgba);
+    rec::set_ff(r, 0xc, size);
+    r[1] = 0;
+    r[3] = 0x48;
+    r[9] = 0x40 + 4;
+    r[8] = rot;
+    rec::set_i16(r, 0xa, life);
+    r[2] = def;
+    rec::set_u32(r, 0x20, moby as u32 + 1);
+    rec::set_u32(r, 0x24, u32::MAX);
+    rec::set_ff(r, 0x28, pull);
+    rec::set_i16(r, 0x2c, 0);
+    rec::set_i16(r, 0x2e, 0);
+    rec::set_v3(r, 0x30, offset);
+    rec::set_v3(r, 0x10, [pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2]]);
+    Some(i)
+}
+
+/// `0x33f6e8`: the life down (out, or its moby gone: killed); at its moby's position plus its rows × the offset, then
+/// pulled toward the camera at `cam` by its pull.
+pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld, cam: [f32; 3]) {
+    let r = &mut sys.pool.recs[i];
+    let alive = rec::i16(r, 0xa) < 0 || !dec_life(r);
+    let m = rec::u32(r, 0x20).checked_sub(1).and_then(|k| mobys.mobys.get(k as usize));
+    let Some(m) = m.filter(|m| alive && m.state < 0x80) else {
+        sys.kill_part(i);
+        return;
+    };
+    let o = rec::v3(r, 0x30);
+    let p: [f32; 3] = std::array::from_fn(|k| m.pos[k] + (m.rows[0][k] * o[0] + m.rows[1][k] * o[1] + m.rows[2][k] * o[2]));
+    let pull = rec::ff(r, 0x28);
+    rec::set_v3(r, 0x10, std::array::from_fn(|k| p[k] + (cam[k] - p[k]) * pull));
+}
+
+/// `UpdateParts` `0x331150`: every live record up to the high water mark at entry, in pool order (the mobys and the
+/// camera for the glows that ride a moby).
+pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f32; 3]) {
     let end = (sys.pool.hw + 1).max(0) as usize;
     let mut none = rc_game::rng::Rng::new();
     for i in 0..end {
@@ -173,6 +219,7 @@ pub fn update_parts(sys: &mut Particles) {
             0x17 => rc_game::particles::type23::update(sys, i, &mut none),
             0x2c => update_spark(sys, i),
             0x55 if rec::u32(r, 0x3c) == SPRITE_UPDATE => update_sprite(sys, i),
+            0x59 => update_glow(sys, i, mobys, cam),
             _ => sys.kill_part(i),
         }
     }

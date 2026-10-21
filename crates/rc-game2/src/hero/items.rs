@@ -98,6 +98,8 @@ pub struct ItemBlock {
     pub no_use: u8,
     /// `0x18b060`: ticks the item has been in the hand.
     pub item_ticks: i32,
+    /// `0x18b06c`: the hand item's glow phase ([`hand_glow`]).
+    pub glow_phase: f32,
     /// Requests for the item pass: the hand item's sequence `(seq, frame, blend)` (`0x31b5f0`), the throw.
     pub hand_anim: Option<(u8, u8, u8)>,
     pub throw: Option<Throw>,
@@ -269,6 +271,7 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
         // `0x2c3330`: the ticks in use.
         h.items.use_ticks = if h.items.using { h.items.use_ticks + 1 } else { 0 };
     }
+    hand_glow(world, ctx, id);
     // `0x2b2060`: ready (2), the change test then the update; changing (3), the old item goes (`0x2b12a8`).
     match ctx.hero.items.ready {
         2 => {
@@ -290,6 +293,28 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     if world.mobys[id].state < 0xfe {
         if let Some(f) = world.mobys[id].update { f(world, id, ctx); }
     }
+}
+
+/// `0x2a7ed8`: the hand item's glow, once it has been in the hand 0x17 ticks (not while hidden or in state 0x61). By
+/// item: the Lancer (0x1e) eases its glow word (`+0x78`, its glow vertices' colour) 0.15 a tick toward a colour that
+/// pulses with its phase (0.0407 a tick, `sin`) between 0xff0028c8 and 0xff10b4b4 — in use 0.22 toward 0xff0040ff ..
+/// 0xff10bebe, the phase 0.116 a tick — and sheds a glow sprite of that colour on it (`0x33f550`: type 0x59, 50400,
+/// at (0.195, −0.317, 0) in its rows, pulled 0.15 toward the camera, 2 ticks), its alpha the ticks in the hand − 15
+/// (at most 0x38; in use 0x32). Not ported: the other items' cases and the upgraded Lancer's (row `+0x04`).
+fn hand_glow(world: &mut MobyWorld, ctx: &mut Ctx, id: usize) {
+    let it = &mut ctx.hero.items;
+    if ctx.hero.state == 0x61 || world.mobys[id].mode & 1 != 0 || it.item_ticks < 0x17 { return; }
+    let ramp = ((it.item_ticks - 0xf).clamp(0, 0x40) as u32) << 24 | 0xff_ffff;
+    if it.item != LANCER { return; }
+    let lerp = crate::hud::lerp_rgba;
+    let (step, keys, ease, cap) = if it.using { (0.116_352_08, [0xff00_40ff, 0xff10_bebe], 0.22, 0x32ff_ffffu32) } else { (0.040_712_8, [0xff00_28c8, 0xff10_b4b4], 0.15, 0x38ff_ffff) };
+    it.glow_phase = crate::hero::physics::add_rot(it.glow_phase, step);
+    let target = lerp(it.glow_phase.sin() * 0.5 + 0.5, keys[0], keys[1]);
+    let m = &mut world.mobys[id];
+    m.glow = lerp(ease, m.glow, target);
+    let colour = m.glow & if (ramp as i32) < cap as i32 { ramp } else { cap };
+    let pos = m.pos;
+    if let Some(sys) = ctx.parts.as_deref_mut() { crate::particles::glow(sys, &mut ctx.game.rng, 50_400.0, 0.15, [0.195, -0.317, 0.0], id, pos, colour, 2); }
 }
 
 /// `0x2aeb90`'s read of the enemy the head looks at (`0x18c2b0`): its health block's look kind (`+0x2c`).

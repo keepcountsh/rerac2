@@ -391,7 +391,7 @@ fn tick(
     // `0x2afc38`: his pose layers (the holding layers, the face), after the item pass.
     rc_game2::hero::layers::upkeep(&mut p.hero, &p.anim.ctl(class));
     // `UpdateParts` (`0x331150`), after the hero.
-    if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys); }
+    if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game2::fx).
     p.fx_quads = rc_game2::fx::callbacks(&mut mobys.world, &mut p.game, p.camera.pos);
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
@@ -786,7 +786,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
-    if let Some(sys) = parts.as_deref_mut() { rc_game2::particles::update_parts(sys); }
+    if let Some(sys) = parts.as_deref_mut() { rc_game2::particles::update_parts(sys, &mobys.world, frame.camera.eye); }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: crate::game_camera::FAR });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }

@@ -36,7 +36,7 @@ const RETICLE: u16 = 0x26;
 /// `t[3]` of a shot's template.
 pub const NO_KNOCK_LIMIT: f32 = 5627.987;
 
-/// `0x3a8f20`: the lock cleared, the cooldown 0.1 s (the equip before the first shot).
+/// `0x3a8f20`: the lock cleared, the cooldown 0.1 s (the equip before the first shot), the glow word 0xff0020ff.
 fn start(w: &mut MobyWorld, id: usize) {
     let m = &mut w.mobys[id];
     m.pvars.resize(crate::moby::PVAR_BYTES, 0);
@@ -52,6 +52,8 @@ fn start(w: &mut MobyWorld, id: usize) {
     m.set_pv_i(0x28, 0);
     m.set_pv_i(0x2c, 0);
     m.set_pv_i(0x30, 0);
+    // Its glow word, which the hand item's glow (crate::hero::items::hand_glow) then pulses.
+    m.glow = 0xff00_20ff;
 }
 
 /// `0x3a8060`.

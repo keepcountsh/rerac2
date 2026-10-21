@@ -100,11 +100,14 @@ pub fn hermite(t: f32, p0: f32, m0: f32, m1: f32, p1: f32) -> f32 {
 
 /// `0x2f0000(t, a, b)`: the colour bytes lerped.
 pub fn lerp_rgba(t: f32, a: u32, b: u32) -> u32 {
+    // VU0: vf1.w = 1 − t; ACC = a·(1 − t) (MULA.w); b·t + ACC (MADD.x); FTOI0; the low bytes (PPACH, PPACB).
+    use rc_formats::tfrag_light::ps2;
+    let (t, u) = (t.to_bits(), ps2::sub(ps2::ONE, t.to_bits()));
     let mut out = 0u32;
     for k in 0..4 {
-        let (x, y) = (((a >> (8 * k)) & 0xff) as f32, ((b >> (8 * k)) & 0xff) as f32);
-        let v = (x * (1.0 - t) + y * t) as i32;
-        out |= (v.clamp(0, 255) as u32) << (8 * k);
+        let (x, y) = ((((a >> (8 * k)) & 0xff) as f32).to_bits(), (((b >> (8 * k)) & 0xff) as f32).to_bits());
+        let v = f32::from_bits(ps2::add(ps2::mul(x, u), ps2::mul(y, t))) as i32;
+        out |= (v as u32 & 0xff) << (8 * k);
     }
     out
 }
