@@ -60,6 +60,10 @@ fn main() -> anyhow::Result<()> {
     let index = w.lump(rc_formats::rac2::level::Lump::CoreIndex)?.expect("core index");
     let data = rc_formats::wad::decompress(w.lump(rc_formats::rac2::level::Lump::CoreData)?.expect("core data"))?;
     let core = rc_formats::level::parse_level_core_for(rc_formats::Game::Rac2, index, data.len())?;
+    if std::env::var("RSEQS").is_ok() {
+        let z: Vec<usize> = core.ratchet_seqs.iter().enumerate().filter(|(_, &v)| v == 0).map(|(i, _)| i).collect();
+        println!("ratchet_seqs: {} entries, zero at {:x?}", core.ratchet_seqs.len(), z);
+    }
     println!("sound_remap_offset {:#x} moby_sound_remap_offset {:#x}", core.header.sound_remap_offset, core.header.moby_sound_remap_offset);
     match rc_formats::sound_bank::parse_level_sounds(index, &core, &data) {
         Ok(s) => {

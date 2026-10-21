@@ -426,6 +426,15 @@ impl Hero {
 
     /// `SetAnim(blend, seq, frame)` (`0x2d2508`) through the shared player.
     pub fn set_anim(&mut self, anim: &mut dyn AnimCtl, blend: f32, seq: u8, frame: i32) {
+        // A sequence the level does not hold (its `ratchet_seqs` entry is empty): the game would read a null
+        // sequence; the port keeps the current one (reported once a sequence) rather than show the bind pose.
+        if anim.frame_count(seq) == 0 {
+            if !self.unported_seen.contains(&(0x1000 + seq as i32)) {
+                self.unported_seen.push(0x1000 + seq as i32);
+                eprintln!("rc_game2::hero: sequence {seq:#x} (state {:#x}) is not in this level's Ratchet sequences: kept the current one", self.state);
+            }
+            return;
+        }
         anim.set_anim(Pf::f(blend), seq, frame);
         self.anim_speed = 1.0;
     }

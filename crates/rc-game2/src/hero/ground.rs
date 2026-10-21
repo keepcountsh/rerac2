@@ -126,7 +126,7 @@ impl Hero {
                 // L1: the look stance (`0x4287b0`, a level's veto, is not ported).
                 if held & button::L1 != 0 { return Some(1); }
                 if self.gear.floating { return Some(0x82); }
-                self.idle_fidget(anim);
+                self.idle_fidget(anim, env);
                 self.stick_target(env, 1.0, 0);
                 if self.surf.mud && self.f16c == 0 { return Some(0x76); }
                 if 5 <= self.air_ticks && 0.4 < self.height {

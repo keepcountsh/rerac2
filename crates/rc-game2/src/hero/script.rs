@@ -51,13 +51,18 @@ impl Hero {
     }
 
     /// `0x2ca788`: a fidget to play now (module docs).
-    pub fn fidget_pick(&mut self) -> Option<usize> {
+    pub fn fidget_pick(&mut self, env: &Env) -> Option<usize> {
         if self.fidget_gap != 0 { return None; }
         if self.hp == 1 {
             return None;
         }
+        // The fidget 2 (sequence 0x50, which only those levels hold) only on levels 7 and 0x13, with nothing within 8
+        // above him (the line from 8 up to him finds nothing; its `0x18c0db` ≠ 2 test is not ported).
+        let pos = self.pos;
+        let fidget2 = (env.level == 7 || env.level == 0x13) && env.line([pos[0], pos[1], pos[2] + 8.0], pos, 2).is_none();
         let ok: Vec<usize> = (0..4)
             .filter(|&i| self.fidget_rest[i] == 0 && FIDGETS[i].1 != 0.0)
+            .filter(|&i| i != 2 || fidget2)
             .filter(|&i| i != 3 || (self.prev_group == 1 && self.timer <= 0x32 && self.hp <= 1))
             .collect();
         if ok.is_empty() { return None; }
@@ -74,12 +79,12 @@ impl Hero {
     }
 
     /// The idle's fidget (`0x2cb650` case 0): picked while the idle sequence plays (not on ice), played on the idle.
-    pub(super) fn idle_fidget(&mut self, anim: &mut dyn AnimCtl) {
+    pub(super) fn idle_fidget(&mut self, anim: &mut dyn AnimCtl, env: &Env) {
         let v = anim.view();
         if v.seq_b == self.idle_seq() && !self.surf.ice {
             if self.hp == 1 {
                 if self.fidget_rest[3] == 0 && v.flags & 2 != 0 && self.rng.randf(0.0, 1.0) < 0.33 { self.play_fidget(anim, 3); }
-            } else if let Some(i) = self.fidget_pick() {
+            } else if let Some(i) = self.fidget_pick(env) {
                 self.play_fidget(anim, i);
             }
         } else if v.flags & 2 != 0 {

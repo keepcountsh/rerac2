@@ -70,6 +70,8 @@ pub struct HeroPose<'a> {
     pub pos: V3,
     pub rows: [V3; 3],
     pub scale: f32,
+    /// His posture's joint modifiers (rc_game2::hero::posture), as his drawn pose has them.
+    pub mods: &'a [rc_formats::moby_anim::JointModifier],
 }
 
 /// The loop's view of the engine.
@@ -195,9 +197,19 @@ impl MobyHost for Host<'_> {
         };
         let ac = self.lv.anim.get(class)?;
         let chain = self.chain(m.o_class, j)?;
-        let t = moby_anim::joint_translations(ac, &state, snap.as_ref(), &[chain]);
-        let t = t.first()?;
-        let p = [f32::from_bits(t[0]), f32::from_bits(t[1]), f32::from_bits(t[2])];
+        let p = match (self.hero, m.o_class) {
+            // Ratchet with his posture's modifiers, as he is drawn.
+            (Some(h), 0) => {
+                let r = moby_anim::evaluate_chains_posed(ac, &state, snap.as_ref(), &[chain], &[], h.mods);
+                let r = r.first()?;
+                [r[3][0], r[3][1], r[3][2]]
+            }
+            _ => {
+                let t = moby_anim::joint_translations(ac, &state, snap.as_ref(), &[chain]);
+                let t = t.first()?;
+                [f32::from_bits(t[0]), f32::from_bits(t[1]), f32::from_bits(t[2])]
+            }
+        };
         let s = m.scale / 1024.0;
         let r = m.rows;
         Some(std::array::from_fn(|k| m.pos[k] + (r[0][k] * p[0] + r[1][k] * p[1] + r[2][k] * p[2]) * s))
@@ -219,7 +231,7 @@ impl MobyHost for Host<'_> {
         let h = self.hero?;
         let chain = self.hero_chains.get(*HERO_LISTS.get(k)?)?;
         let ac: &MobyAnimClass = self.lv.anim.get(h.class)?;
-        let p = moby_anim::evaluate_chains(ac, h.state, h.snapshot, &[chain.as_slice()]);
+        let p = moby_anim::evaluate_chains_posed(ac, h.state, h.snapshot, &[chain.as_slice()], &[], h.mods);
         let p = p.first()?;
         let rows = h.rows.map(|r| [r[0].to_bits(), r[1].to_bits(), r[2].to_bits(), 0]);
         Some(rows_f(moby_anim::attach_matrix(p, &rows, h.pos, h.scale)))

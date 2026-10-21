@@ -238,7 +238,8 @@ fn tick(
     // The frame's order (`0x364260`): the moby loop `0x32e398`, then the hero `0x2a6dd0` (with its item pass), then
     // the camera `0x2d9f38`.
     {
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
+        let mods = p.hero.posture.modifiers(&mobys.hero_targets);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
         // The class sounds play during the loop (`0x3605f0`), heard from the camera as the last tick left it.
         let sound = audio.as_deref_mut().map(|o| crate::rac2_mobys::HostSound { system: o.system(), listener: listener(&p.camera), tick: p.ticks });
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound };
@@ -339,7 +340,8 @@ fn tick(
     // The item pass (`0x2b21f0`): the hand item placed at Ratchet's new pose and updated.
     {
         let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
+        let mods = p.hero.posture.modifiers(&mobys.hero_targets);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         // The write-back's `0x313dc0`: his moby's sphere and grid cells follow him (the hits find him there).
         if let Some(i) = mobys.hero_moby { mobys.world.rebuild(i, &host); }
@@ -392,6 +394,15 @@ fn tick(
         sys.rng = rng;
         sys.render(rc_game::audio::SAMPLES_PER_FRAME, buf);
         out.push_frame();
+    }
+    // A pose with nothing to show (a dev check): the snapshot blend without its snapshot, or a sequence the class
+    // has not got.
+    {
+        let st = p.anim.state;
+        let missing = |q: u8| q != rc_formats::moby_anim::SNAPSHOT_SEQ && class.sequence(q).is_none();
+        if (st.seq_a == rc_formats::moby_anim::SNAPSHOT_SEQ && p.anim.snapshot.is_none()) || missing(st.seq_a) || missing(st.seq_b) {
+            println!("rac2 tick {}: Ratchet's pose has nothing to show: state {:#x} seq {}/{} snapshot {}", p.ticks, p.hero.state, st.seq_a, st.seq_b, p.anim.snapshot.is_some());
+        }
     }
     if p.trace {
         let v = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
@@ -614,7 +625,8 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     {
         let class = &lv.mobys.anim[p.class];
         let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(class));
-        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale };
+        let mods = p.hero.posture.modifiers(&mobys.hero_targets);
+        let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods };
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };

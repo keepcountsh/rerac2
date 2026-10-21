@@ -66,6 +66,16 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
         }
         world.sphere_hit(ctx.scene, c, h.r, 0, ctx.hero_moby, Some(&t));
     }
+    // `0x2b21f0`'s head: in water (`0x2adff8`: the swim groups 0x11 / 0x12, the states 0x67 / 0x7f / 0x72 / 0x73),
+    // the groups 0x15 / 0x16 / 0x1f keep the items away and the △ menu shut (`0x18c0dc`, `0x18c0d7`); the wrench
+    // is put away (`0x18c0de`) in water, on a ledge (group 3) and in the states 0x31 / 0x12 / 0x82.
+    let h = &mut *ctx.hero;
+    let in_water = (0x11..=0x12).contains(&h.group) || matches!(h.state, 0x67 | 0x7f | 0x72 | 0x73);
+    if matches!(h.group, 0x15 | 0x16 | 0x1f) || in_water {
+        h.items.no_use = 1;
+        h.no_menu = 1;
+    }
+    let away = in_water || h.group == 3 || matches!(h.state, 0x31 | 0x12 | 0x82);
     let it = &mut ctx.hero.items;
     if it.hand.is_none() && world.class(WRENCH_CLASS).is_some() {
         let id = world.create(WRENCH_CLASS);
@@ -103,6 +113,12 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
             }
             world.rebuild(id, &*ctx.host);
         }
+    }
+    // `0x2d3408` (from Ratchet's update): the hand item shown, the wrench hidden while put away.
+    {
+        let m = &mut world.mobys[id];
+        m.mode &= !1;
+        if away && ctx.hero.items.item == WRENCH { m.mode |= 0x41; }
     }
     ctx.hero.items.item_ticks += 1;
     if world.mobys[id].state < 0xfe {
