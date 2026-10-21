@@ -243,6 +243,11 @@ pub struct MobySubmesh {
     pub duplicates: Vec<u16>,
     /// The vertex records as stored: in-file + epilogue (regular) or the metal records.
     pub raw_vertices: Vec<u8>,
+    /// Going Commando: the vertex table header's word 7, the glow vertices: the driver (L00 `0x2dd410` → `0x2de438`)
+    /// writes the moby's glow word (job `+0xac`, MobyProc's for mode 0x10) over the packet's last that many output
+    /// colours (in-file vertices, then duplicates). 0 for R&C1 (class byte 0xa picks whole glow packets) and for an
+    /// old-format R&C2 class (its loader zeroes the word).
+    pub glow_vertices: u32,
     /// The RAC1 `unknown_e` blob as stored: RGBA lighting multiplier per transfer vertex
     /// (0x80 = 1.0), zero-padded to 16 bytes. Every multiplier on the disc is 0x80. Empty for metal.
     pub rgba_multipliers: Vec<u8>,
@@ -514,6 +519,7 @@ fn read_packet(game: crate::Game, blob: Buf, e: &MobyPacketEntry, metal: bool, s
         transfers: Vec::new(),
         duplicates: Vec::new(),
         raw_vertices: Vec::new(),
+        glow_vertices: 0,
         rgba_multipliers: Vec::new(),
         vertices: Vec::new(),
         st: Vec::new(),
@@ -584,6 +590,7 @@ fn read_packet(game: crate::Game, blob: Buf, e: &MobyPacketEntry, metal: bool, s
             }
         };
         sub.vertex_table = h;
+        if game == crate::Game::Rac2 { sub.glow_vertices = h.unknown_e; }
         let (n2, n3) = (h.two_way_blend_vertex_count as usize, h.three_way_blend_vertex_count as usize);
         let in_file = n2 + n3 + h.main_vertex_count as usize;
         if h.transfer_vertex_count as usize != in_file + h.duplicate_vertex_count as usize { return invalid("moby packet: transfer count mismatch"); }
@@ -698,7 +705,9 @@ pub fn parse_moby_class_for(game: crate::Game, blob: &[u8]) -> Result<MobyClass>
     // A class whose pieces do not read keeps none (its debris then draws whole).
     let pieces = if game == crate::Game::Rac2 { read_pieces(b, &h).unwrap_or_default() } else { Vec::new() };
     let mut h = h;
-    if game == crate::Game::Rac2 { h.rac1_byte_b = 0; }
+    // Going Commando's MobyProc reads neither byte (its glow is per packet, MobySubmesh::glow_vertices): no class-wide
+    // glow packets, and byte 0xb's old-format flag is spent.
+    if game == crate::Game::Rac2 { (h.rac1_byte_a, h.rac1_byte_b) = (0xff, 0xff); }
     Ok(MobyClass { header: h, sequence_pointers, high_lod, low_lod, metal, skeleton, pieces })
 }
 
@@ -825,7 +834,7 @@ mod tests {
         let v = MobyVertex { raw: [0; 8], normal_azimuth: 0, normal_elevation: 0, x: 0, y: 0, z: 0, id: 0, kind: MobyVertexKind::Single, duplicate: false, skin: MobySkin::default(), st: [0, 0] };
         MobySubmesh {
             entry: Default::default(), vertex_table: Default::default(), metal_header: Default::default(),
-            transfers: vec![], duplicates: vec![], raw_vertices: vec![], rgba_multipliers: vec![],
+            transfers: vec![], duplicates: vec![], raw_vertices: vec![], glow_vertices: 0, rgba_multipliers: vec![],
             vertices: vec![v; nverts], st: vec![], index_bytes: indices.to_vec(), secret_indices: secrets.to_vec(),
             texture_indices: textures.to_vec(), initial_texture: 7, unresolved_duplicates: 0, triangles: vec![], is_metal: false,
         }

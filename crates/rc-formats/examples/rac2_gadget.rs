@@ -28,6 +28,21 @@ fn main() -> anyhow::Result<()> {
             Ok(m) => println!("  glow rgba {:#x} first glow high {} low {}, mode {:#x}\n  parsed: high {} low {} metal {} joints {} seqs {} pieces {}", m.header.glow_rgba, m.header.rac1_byte_a, m.header.rac1_byte_b, m.header.mode_bits, m.high_lod.len(), m.low_lod.len(), m.metal.len(), m.header.joint_count, m.sequence_pointers.len(), m.pieces.len()),
             Err(e) => println!("  parse: {e}"),
         }
+        if std::env::var("PACKETS").is_ok() {
+            let pt = u32::from_le_bytes(class[0..4].try_into().unwrap()) as usize;
+            let n = class[4] as usize + class[5] as usize + class[6] as usize;
+            for k in 0..n {
+                let e = &class[pt + 16 * k..pt + 16 * k + 16];
+                println!("  packet {k:2}: {:02x?}", e);
+            }
+            if let Ok(m) = moby::parse_moby_class_for(Game::Rac2, &class) {
+                for (k, sm) in m.high_lod.iter().enumerate() {
+                    let (mut lo, mut hi) = ([i16::MAX; 3], [i16::MIN; 3]);
+                    for v in &sm.vertices { for (a, x) in [v.x, v.y, v.z].into_iter().enumerate() { lo[a] = lo[a].min(x); hi[a] = hi[a].max(x); } }
+                    println!("  high {k:2}: {} verts tex {:?} hdr {:?} range {:?}..{:?}", sm.vertices.len(), sm.texture_indices, sm.vertex_table, lo, hi);
+                }
+            }
+        }
         if ts != 0 {
             let t = wad::decompress(&wad_file[to..to + ts])?;
             let v = |k: usize| u32::from_le_bytes(t[4 * k..4 * k + 4].try_into().unwrap());

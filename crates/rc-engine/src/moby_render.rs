@@ -830,9 +830,12 @@ fn build_parts(class: &LevelMobyClass, lod: &[MobySubmesh], identity: bool, glow
     let mut max_joint = 0u8;
     let mut by_tex: BTreeMap<(usize, bool), B> = BTreeMap::new();
     for (si, sub) in lod.iter().enumerate() {
-        let glow = si >= glow_from;
+        // R&C1: the packets from class byte 0xa on; R&C2: the packet's last `glow_vertices` output vertices.
+        let first_glow = sub.vertex_table.transfer_vertex_count.saturating_sub(sub.glow_vertices);
+        let is_glow = |vi: u32| si >= glow_from || (sub.glow_vertices != 0 && first_glow <= vi);
         for t in &sub.triangles {
             let Some(tex) = part_texture(class, t.texture) else { continue };
+            let glow = [t.a, t.b, t.c].into_iter().any(is_glow);
             let b = by_tex.entry((tex, glow)).or_default();
             b.tris += 1;
             for vi in [t.a, t.b, t.c] {
@@ -848,7 +851,7 @@ fn build_parts(class: &LevelMobyClass, lod: &[MobySubmesh], identity: bool, glow
                     b.alpha = Some(b.alpha.map_or(AlphaRange::of([m[3]]), |r| r.union(AlphaRange::of([m[3]]))));
                     let count = if identity { 0 } else { sk.count as u32 };
                     b.skin.push([
-                        vx.normal_azimuth as u32 | (vx.normal_elevation as u32) << 8 | count << 16 | if glow { SKIN_GLOW } else { 0 },
+                        vx.normal_azimuth as u32 | (vx.normal_elevation as u32) << 8 | count << 16 | if is_glow(vi) { SKIN_GLOW } else { 0 },
                         sk.joints[0] as u32 | (sk.joints[1] as u32) << 8 | (sk.joints[2] as u32) << 16,
                         sk.weights[0] as u32 | (sk.weights[1] as u32) << 10 | (sk.weights[2] as u32) << 20,
                         u32::from_le_bytes(m),

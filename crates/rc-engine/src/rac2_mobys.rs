@@ -448,6 +448,7 @@ impl Rac2Mobys {
                 scale: c.class.header.scale,
                 has_collision: c.class.header.collision != 0,
                 mode: c.class.header.mode_bits as u16,
+                glow: c.class.header.glow_rgba as u32,
                 animated: m.anim.get(ci).and_then(|a| a.sequences.first()).and_then(Option::as_ref).is_some_and(|q| q.header.frame_count >= 2),
                 kind: (c.class.header.ty as u16 | (c.class.header.mode_bits2 as u16) << 8) as i16,
                 pieces: c.class.pieces.iter().map(|p| p.as_ref().map(|p| (p.centre, p.points.clone()))).collect(),
@@ -648,7 +649,7 @@ impl CreatedDraw {
                     _ => (0, [[0.0; 3]; 3]),
                 }
             });
-            let look = moby_render::SlotLook { model, alpha: m.alpha, fading: false, mode: m.mode, glow: 0, shine, e, late: false, piece: m.piece };
+            let look = moby_render::SlotLook { model, alpha: m.alpha, fading: false, mode: m.mode, glow: m.glow, shine, e, late: false, piece: m.piece };
             self.extra.show_slot(commands, level, slot, Some((class, look)), meshes, images, materials, buffers);
             shown.push(slot);
             if let Some(f) = mobys.skinned.get(&id).cloned().or_else(|| lv.anim.get(c.class).map(|ac| moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref()))) {

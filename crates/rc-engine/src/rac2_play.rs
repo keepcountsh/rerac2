@@ -393,7 +393,7 @@ fn tick(
     // `UpdateParts` (`0x331150`), after the hero.
     if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game2::fx).
-    p.fx_quads = rc_game2::fx::callbacks(&mobys.world, &mut p.game, p.camera.pos);
+    p.fx_quads = rc_game2::fx::callbacks(&mut mobys.world, &mut p.game, p.camera.pos);
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
         for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {

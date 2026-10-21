@@ -55,6 +55,8 @@ pub mod mode {
     pub const NO_MATRIX: u16 = 0x4;
     /// Keep the rows (not rebuilt from the Euler angles).
     pub const KEEP_ROWS: u16 = 0x100;
+    /// The glow list (`0x311418` with a class glow word; MobyProc `0x319778`).
+    pub const GLOW: u16 = 0x10;
     /// No animation advance before the update.
     pub const NO_ADVANCE: u16 = 0x40;
     /// In the target list (`0x1fac60`).
@@ -108,6 +110,8 @@ pub struct ClassInfo {
     pub mode: u16,
     /// Sequence 0 has 2 frames or more (`0x3116e0`'s test): the moby animates, so it stays in the run list.
     pub animated: bool,
+    /// Class header +0x40: the glow word (0: none).
+    pub glow: u32,
     /// Class header +0x46: the class's type (0x16: a target the aims prefer, 0x14 / 0x12: the wrench's exceptions).
     pub kind: i16,
     /// Per sequence, its reaction record (sequence `+0x14`, [`ai::Reaction`]).
@@ -171,6 +175,9 @@ pub struct Moby {
     /// `+0x3c` the ambient (r, g, b; 0x80 = 1), as MobyProc lights the moby.
     pub light: u32,
     pub ambient: [u8; 3],
+    /// `+0x78`: the glow word (with mode 0x10, `0x311418`: the class's `+0x40`), the colour MobyProc gives the
+    /// packets' glow vertices (rc_formats::moby::MobySubmesh::glow_vertices).
+    pub glow: u32,
     /// `+0x7c` as a piece mask (0x8000 | 1 << k): drawn as break piece k only (crate::moby::shards).
     pub piece: Option<u8>,
     /// The port's: which creation this slot holds (MobyWorld's count at `CreateMoby`; 0 for the placed ones), so the
@@ -279,7 +286,7 @@ impl Moby {
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0,
             // `0x311418`: `+0x38` = 0x40404000000000.
-            light: 0, ambient: [0x40; 3], piece: None,
+            light: 0, ambient: [0x40; 3], glow: 0, piece: None,
         };
         match class {
             Some(c) => {
@@ -290,6 +297,10 @@ impl Moby {
                 m.has_collision = c.has_collision;
                 m.scale = c.scale;
                 if c.animated { m.mode &= !mode::NO_UPDATE; }
+                if c.glow != 0 {
+                    m.mode |= mode::GLOW;
+                    m.glow = c.glow;
+                }
             }
             None => m.mode |= mode::NO_UPDATE | 5,
         }

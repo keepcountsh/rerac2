@@ -10,7 +10,7 @@
 //! ([`impact`] `0x3e46d8`): twenty grey smoke puffs rising and twenty white sparks thrown toward the camera; a moby hit
 //! adds two big orange glows. The end of its time ([`fizzle`] `0x3e4ae8`): twenty small sparks. Its **trail** (the draw
 //! callback `0x3e4050`, [`trail`]): the last 40 positions (newest first), drawn as two additive ribbons by `0x3e4300`
-//! — FX 0x17 white, 0.05 wide, and FX 0xe orange (`0x204080` at alpha 0x40), four times as wide — fading along their
+//! — FX 0x17 white, 0.025 wide, and FX 0xe orange (`0x204080` at alpha 0x40), four times as wide — fading along their
 //! length, over the first 20 points and again over all of them; hidden (state 1) it fades out over its last 6 ticks.
 //!
 //! **pvars**: +0x04..+0x0c the scale phases, +0x10 the trail's points, +0x1c the lock, +0x20 the velocity (per tick),
@@ -154,7 +154,6 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 }
             }
             if let Some(sys) = ctx.parts.as_deref_mut() { flight_fx(sys, &mut ctx.game.rng, from, to, ctx.game.frame); }
-            trail_step(w, id);
             w.rebuild(id, &*ctx.host);
         }
         1 => {
@@ -263,10 +262,10 @@ pub fn fizzle(sys: &mut rc_game::particles::Particles, g: &mut crate::rng::Rng, 
     }
 }
 
-/// `0x3e4050`'s step (in flight): the trail keeps one point more (at most 40), the older ones shift back, the
-/// newest is the shot (width 0.05).
-fn trail_step(w: &mut MobyWorld, id: usize) {
-    let m = &mut w.mobys[id];
+/// `0x3e4050`'s push, in flight (state 0): the trail's points move down one (40 at most) and its position, 0.025 wide,
+/// becomes the newest.
+fn trail_step(m: &mut crate::moby::Moby) {
+    if m.state != 0 { return; }
     let n = (m.pv_i(0x10) + 1).min(TRAIL_POINTS as i32);
     m.set_pv_i(0x10, n);
     for k in (1..n as usize).rev() {
@@ -277,7 +276,7 @@ fn trail_step(w: &mut MobyWorld, id: usize) {
     }
     let p = m.pos;
     m.set_pv_v(TRAIL, p);
-    m.set_pv_f(TRAIL + 0xc, 0.05);
+    m.set_pv_f(TRAIL + 0xc, 0.025);
 }
 
 /// A shot's trail to draw (`0x3e4050` → `0x3e4300`): its points (x, y, z, width), newest first, and the two ribbons'
@@ -331,9 +330,11 @@ pub fn ribbon_quads(pts: &[[f32; 4]], n: usize, inner: u32, outer: u32, cam: V3,
     }
 }
 
-/// `0x3e4050` (the draw callback): the phase (`$gp+0x1574`) down 0.1 (wrapping at −7), then the ribbons over the first
-/// 20 points and, with more, over all of them.
-pub fn draw_trail(m: &crate::moby::Moby, cam: V3, phase: &mut f32, out: &mut Vec<crate::fx::FxQuad>) {
+/// `0x3e4050` (the draw callback, registered by the spawn, so the first point is the muzzle): in flight its position
+/// pushed onto the trail ([`trail_step`]), the phase (`$gp+0x1574`) down 0.1 (wrapping at −7), then the ribbons over
+/// the first 20 points and, with more, over all of them.
+pub fn draw_trail(m: &mut crate::moby::Moby, cam: V3, phase: &mut f32, out: &mut Vec<crate::fx::FxQuad>) {
+    trail_step(m);
     *phase -= 0.1;
     if *phase <= -7.0 { *phase += 7.0; }
     let Some((pts, inner, outer)) = trail(m) else { return };
