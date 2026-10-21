@@ -391,6 +391,8 @@ pub trait MobyHost {
 /// The level's mobys (`0x1b1e1c`, 0x100 bytes each) with the class table and the collision grid.
 #[derive(Clone, Default)]
 pub struct MobyWorld {
+    /// The level load's pass ([`MobyWorld::load_pass`]) has run.
+    pub loaded: bool,
     pub mobys: Vec<Moby>,
     pub classes: Vec<ClassInfo>,
     pub grid: MobyGrid,
@@ -573,7 +575,25 @@ impl MobyWorld {
     /// reached: the animation advance (unless mode 0x40), its update (if it has one), the matrix rebuild (unless
     /// mode 4). Mobys created during the loop wait a tick.
     pub fn tick(&mut self, cam: V3, ctx: &mut Ctx) {
+        if !self.loaded {
+            self.loaded = true;
+            self.load_pass(ctx);
+        }
         for id in self.run_list(cam) {
+            if self.mobys[id].state >= 0x80 { continue; }
+            if self.mobys[id].mode & mode::NO_ADVANCE == 0 { ctx.host.advance(&self.mobys[id]); }
+            if let Some(f) = self.mobys[id].update { f(self, id, ctx); }
+            if self.mobys[id].mode & mode::NO_MATRIX == 0 { self.rebuild(id, &*ctx.host); }
+        }
+    }
+
+    /// `0x32e290` (the level load, `0x30534c`): every moby to the end of the table, alive and not mode 2, once in table
+    /// order — its animation advance (unless mode 0x40), its update, its matrix rebuild (unless mode 4) — whatever its
+    /// distance: the first updates of the mobys the run list would never reach (Aranos's mountains 0x0c4c, a group
+    /// out of sight, wake here and stay awake). Run before the first tick's loop.
+    pub fn load_pass(&mut self, ctx: &mut Ctx) {
+        let list: Vec<usize> = self.mobys.iter().take_while(|m| m.state != 0xff).filter(|m| m.state < 0x80 && m.mode & mode::NO_UPDATE == 0).map(|m| m.index).collect();
+        for id in list {
             if self.mobys[id].state >= 0x80 { continue; }
             if self.mobys[id].mode & mode::NO_ADVANCE == 0 { ctx.host.advance(&self.mobys[id]); }
             if let Some(f) = self.mobys[id].update { f(self, id, ctx); }

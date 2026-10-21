@@ -36,6 +36,15 @@ fn main() -> anyhow::Result<()> {
             println!("  tex {k:#x}: {}x{} mean alpha {a}", t.width, t.height);
         }
     }
+    if let Ok(list) = std::env::var("INSTANCES") {
+        // The instances of the given classes (hex, comma-separated) with their placement and pvar words.
+        let want: Vec<i32> = list.split(',').filter_map(|x| i32::from_str_radix(x.trim_start_matches("0x"), 16).ok()).collect();
+        let pv = rac2::gameplay::pvar_blocks(&g)?;
+        for (k, m) in mobys.iter().enumerate().filter(|(_, m)| want.contains(&m.base.o_class)) {
+            let words: Vec<i32> = usize::try_from(m.base.pvar_index).ok().and_then(|i| pv.get(i)).map(|b| b.chunks(4).take(16).map(|c| i32::from_le_bytes(c.try_into().unwrap_or([0; 4]))).collect()).unwrap_or_default();
+            println!("moby {k} class {:#x}: {m:?}\n  pvars {words:?}", m.base.o_class);
+        }
+    }
     if std::env::var("GLOWS").is_ok() {
         // Class byte 0xa (R&C1: the first glow packet of the high LOD) against the glow word (+0x40).
         for e in &core.moby_classes {

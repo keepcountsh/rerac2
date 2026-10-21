@@ -2229,6 +2229,18 @@ impl MobyOcclusion {
         if let (Some(b), Some(w)) = (self.bits.get_mut(ii), w) { *b = w; }
     }
 
+    /// Going Commando's moby fields MobyProc reads of static instance `ii` this tick: its alpha (`+0x23`), the glow list
+    /// (mode bit 0x10 and the word `+0x78`) and its draw distance (`+0x32`). Its other mode bits do not mean R&C1's
+    /// blends, so the instance keeps its own; the shine distance stays its class's.
+    pub fn game_look(&mut self, ii: usize, alpha: u8, mode: u16, glow: u32, draw_dist: i16) {
+        if let Some(l) = self.look.get_mut(ii) {
+            l.alpha = alpha;
+            l.mode = l.mode & !0x10 | mode & 0x10;
+            l.glow = glow;
+            l.draw_dist = Some(draw_dist);
+        }
+    }
+
     /// What MobyProc reads from static instance `ii` this tick ([`MobyLook`]): its vertex alpha, blend mode, glow and
     /// shine distance.
     pub fn look(&mut self, ii: usize, look: MobyLook) {

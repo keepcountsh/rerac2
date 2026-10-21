@@ -148,7 +148,7 @@ fn tick(
             p.hero.hp = game.max_health;
             p.game = game;
             commands.remove_resource::<Carry>();
-            commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR });
+            commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: p.game.view_far * 1024.0 });
             commands.insert_resource(p);
         }
         return;
@@ -418,7 +418,10 @@ fn tick(
     }
     if let Some(o) = occl.as_mut() {
         for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, crate::rac2_mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0); }
+            if let Some(ii) = m.instance {
+                o.drive(ii, m.pos, m.rows, m.scale, crate::rac2_mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0);
+                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+            }
         }
     }
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), None, p.camera.pos, p.game.scenes.mode);
@@ -494,11 +497,17 @@ fn tick(
             if let (Some(l), Some(m)) = (a.layers.get_mut(k), p.mobys.as_ref()) { *l = m.hero_layers(&p.hero.layers); }
         }
     }
-    let view = match cam.view {
-        Some((pos, rows)) => PlayView { view: scene_view(&rc_game::scene_player::SceneCamera { eye: pos, rows, tan_half_fov: p.game.cameras.tan, cut: false }), tan_half_fov: p.game.cameras.tan, far: crate::game_camera::FAR },
-        None => PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR },
+    // `0x2e5df8`'s view distance: the far plane and the mobys' cap.
+    let far = p.game.view_far * 1024.0;
+    crate::moby_lod::set_draw_cap(p.game.moby_draw_cap());
+    let (view, fwd) = match cam.view {
+        Some((pos, rows)) => (PlayView { view: scene_view(&rc_game::scene_player::SceneCamera { eye: pos, rows, tan_half_fov: p.game.cameras.tan, cut: false }), tan_half_fov: p.game.cameras.tan, far }, rows[0]),
+        None => (PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far }, p.camera.rows[0]),
     };
     commands.insert_resource(view);
+    // The frame's sky draw `0x2fd348`: the shells turn by the view's forward (rc_game2::sky).
+    p.game.sky.frame(fwd);
+    commands.insert_resource(crate::sky_render::GameSkyRotations(p.game.sky.angles.iter().map(|&a| crate::sky_render::euler_rotation(a)).collect()));
     p.ticks += 1;
     // `0x2b31f0`'s respawn request: Ratchet back at his start with full health (the checkpoints and the fade are not
     // ported); the world keeps its state.
@@ -761,7 +770,10 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     if let Some(o) = occl.as_mut() {
         for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, crate::rac2_mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0); }
+            if let Some(ii) = m.instance {
+                o.drive(ii, m.pos, m.rows, m.scale, crate::rac2_mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0);
+                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+            }
         }
         // Ratchet: at his track with the scene's sequence and his head's scale (`0x2d51f8`), else as he stands.
         let (pos, rows, state) = match hero_pose {
@@ -791,7 +803,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
     if let Some(sys) = parts.as_deref_mut() { rc_game2::particles::update_parts(sys, &mobys.world, frame.camera.eye); }
-    commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: crate::game_camera::FAR });
+    commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: p.game.view_far * 1024.0 });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }
 

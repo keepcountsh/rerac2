@@ -76,6 +76,9 @@ pub const ORDER_SPACING: f32 = 1.0e6;
 /// The parsed sky and its decoded textures.
 pub struct LevelSky {
     pub level: u32,
+    /// The shells turn by R&C1's per-level dispatch ([`level_rotations`]); false: by the game's rotations each frame
+    /// ([`GameSkyRotations`], Going Commando's `0x35dfa0`).
+    pub dispatch: bool,
     pub sky: Sky,
     pub textures: Vec<SkyTexture>,
     /// The star records' memory as loaded: `maximum_sprite_count` × 0x20 bytes at header +0x1c (empty when
@@ -94,7 +97,7 @@ pub fn load(core: &LevelCore, core_data: &[u8], level: u32) -> Result<Option<Lev
         Ok(o) if o > 0 => block.get(o..o + scratch_len).map(<[u8]>::to_vec).unwrap_or_default(),
         _ => Vec::new(),
     };
-    Ok(Some(LevelSky { level, sky, textures, sprite_scratch }))
+    Ok(Some(LevelSky { level, dispatch: true, sky, textures, sprite_scratch }))
 }
 
 /// Whether the level's sky dispatch zeroes header +4 (`clear_screen`) every frame, i.e. the frame is cleared
@@ -222,6 +225,17 @@ struct SkyShellEntity {
     shell: usize,
 }
 
+/// The shells' rotations a game computes itself (Going Commando's `0x35dfa0`: Euler angles stepped each frame), by
+/// shell index; shells past the list are unturned. Inserted every frame by its play.
+#[derive(Resource, Default)]
+pub struct GameSkyRotations(pub Vec<Quat>);
+
+/// SkyM of Euler angles `a` (x, y, z; `0x2ef6f8` = R&C1's builder 0x1fa070: v' = v·Rz·Ry·Rx) as a Bevy rotation.
+pub fn euler_rotation(a: [f32; 3]) -> Quat {
+    let axis = |v: [f32; 3]| game_to_bevy(v);
+    Quat::from_axis_angle(axis([1.0, 0.0, 0.0]), a[0]) * Quat::from_axis_angle(axis([0.0, 1.0, 0.0]), a[1]) * Quat::from_axis_angle(axis([0.0, 0.0, 1.0]), a[2])
+}
+
 /// Rotating shells of this level and whether the rotation runs (`RC_SKY_ROT`).
 #[derive(Resource)]
 struct SkyAnim {
@@ -264,7 +278,7 @@ fn spawn_sky(
         println!("sky: none in this level; the frame is cleared to the level background");
         return;
     };
-    let rotations = level_rotations(ls.level);
+    let rotations = if ls.dispatch { level_rotations(ls.level) } else { Vec::new() };
     let speed = match std::env::var("RC_SKY_ROT") { Ok(v) => v.trim().parse().unwrap_or(1.0), Err(_) => 1.0 };
     let counter = tick_counter(0, speed);
     // The star step runs after shells 0..before_shell (SkyDrawShell skips shells ≥ the header count, so a
@@ -457,9 +471,17 @@ fn stop_clearing(anim: Option<Res<SkyAnim>>, mut cams: Query<&mut Camera, With<S
 /// SkyM per shell from the 60 Hz tick counter.
 fn animate_shells(
     anim: Option<Res<SkyAnim>>,
+    game: Option<Res<GameSkyRotations>>,
     ticks: Res<crate::determinism::GameTicks>,
     mut shells: Query<(&SkyShellEntity, &mut Transform)>,
 ) {
+    if let Some(g) = game {
+        for (s, mut t) in &mut shells {
+            let r = g.0.get(s.shell).copied().unwrap_or(Quat::IDENTITY);
+            if t.rotation != r { t.rotation = r; }
+        }
+        return;
+    }
     let Some(anim) = anim else { return };
     if anim.rotations.is_empty() || anim.speed == 0.0 { return; }
     let counter = tick_counter(ticks.0, anim.speed);

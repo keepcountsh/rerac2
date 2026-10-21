@@ -72,8 +72,9 @@ fn slide(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, turn: f32) {
     }
 }
 
-/// 0x0c4c (`0x3eb888`, the ships crossing the sky): drawn up to 2800, they fly 1.667 a tick down y from 3000 to −3000
-/// and start over, the scale growing in from the ends (1 − (|y| − 2250) / 750, clamped 0..3) of the class's.
+/// 0x0c4c (`0x3eb888`, the mountains passing below the ship): drawn up to 2800 with the view's distance raised to 3000
+/// (`0x2e5df8`), they slide 1.667 a tick down y from 3000 to −3000 and start over, the scale growing in from the ends
+/// (1 − (|y| − 2250) / 750, clamped 0..3) of the class's.
 pub fn update_0c4c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let base = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
     let m = &mut w.mobys[id];
@@ -81,8 +82,8 @@ pub fn update_0c4c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         m.draw_dist = 0xaf0;
         m.update_dist = 0xff;
         m.state = 1;
+        ctx.game.set_view_far(3000.0);
     }
-    let _ = ctx;
     if m.state == 1 {
         m.pos[1] -= 1.666_666_7;
         let f = (1.0 - (750.0 - (3000.0 - m.pos[1].abs())) * 0.001_333_333_3).clamp(0.0, 3.0);

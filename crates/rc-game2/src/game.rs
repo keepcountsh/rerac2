@@ -93,6 +93,11 @@ pub struct GameState {
     pub wrench_out: bool,
     /// `$gp+0x1574`: the shot trails' texture phase (crate::moby::classes::shot::draw_trail).
     pub trail_phase: f32,
+    /// `0x2e5df8`'s view distance (units; 1024 from the level load, 1024..4096): the projection's far plane (`0x1bd2e4`
+    /// = it × 1024) and the mobys' draw cap (`0x1b1e34` = it − 64). The mountains 0x0c4c ask for 3000.
+    pub view_far: f32,
+    /// The sky's turning shells (crate::sky).
+    pub sky: crate::sky::SkySpin,
     /// `0x1bb000` (count `0x1bb120`): the screen markers of the tick (crate::hud::marker), drawn and cleared by the HUD.
     pub markers: Vec<crate::hud::Marker>,
     /// `0x139768`: the scenes seen (one bit each).
@@ -126,12 +131,18 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None,
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None,
         }
     }
 }
 
 impl GameState {
+    /// `0x2e5df8(far)`: the view distance, clamped to 1024..4096.
+    pub fn set_view_far(&mut self, far: f32) { self.view_far = far.clamp(1024.0, 4096.0); }
+
+    /// `0x1b1e34`: the mobys' draw-distance cap (the view distance − 64).
+    pub fn moby_draw_cap(&self) -> i32 { self.view_far as i32 - 0x40 }
+
     /// `0x2f50f8(level, save)`: leave for `level` (−1: the front end). Not ported: the autosave `0x30d658(0, level)`
     /// a `save` asks for.
     pub fn go_to_level(&mut self, level: i32, _save: bool) { self.next_level = Some(level); }

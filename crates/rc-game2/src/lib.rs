@@ -21,3 +21,4 @@ pub mod particles;
 pub mod paths;
 pub mod rng;
 pub mod scene;
+pub mod sky;

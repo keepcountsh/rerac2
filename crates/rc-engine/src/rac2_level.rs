@@ -180,7 +180,8 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
         .ok();
     let ties = crate::tie_render::load_ties(&core, &core_data, gs_ram, &gameplay, &textures).context("loading ties")?;
     let shrubs = crate::shrub_render::load_shrubs(&core, &core_data, gs_ram, &gameplay, &textures).context("loading shrubs")?;
-    let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?;
+    // Going Commando's shells turn by its own rotations (rc_game2::sky), not R&C1's per-level dispatch.
+    let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?.map(|s| crate::sky_render::LevelSky { dispatch: false, ..s });
     let mut textures = textures;
     let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
     if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("rac2: Ratchet's armour not attached ({e:#}); he has no mesh"); }
