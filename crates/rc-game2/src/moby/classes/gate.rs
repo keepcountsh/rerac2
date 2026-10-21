@@ -1,8 +1,9 @@
 //! The gates (class 0xac7, L00 `0x3d0a60`): closed until the enemies of their group (`+0x68`[0]) are gone, then
 //! open — turning 1° a tick for 135 ticks (sound 0 at the start, 1 at the end). The first time (the mission's flag
-//! clear) with `[2]` set the opening is a scene: the scene camera `[4]` (`0x42a4e0`; the scene cameras are not
-//! ported: done at once), the mission's flag, the checkpoint at the cuboid `[3]` and Ratchet placed there. With no
-//! group and `[5]` it starts open and closes behind Ratchet (state 4: he is put 2.5 back and walks in).
+//! clear) with `[2]` set the opening is shown: the fly-by camera `[4]` armed (`0x42a4e0`, crate::cameras), the
+//! mission's flag, the checkpoint at the cuboid `[3]`, and once the fly-by is over (`0x42a508`) Ratchet placed
+//! there. With no group and `[5]` it starts open and closes behind Ratchet (state 4: he is put 2.5 back and walks
+//! in).
 
 use crate::moby::{Ctx, MobyWorld};
 
@@ -31,6 +32,7 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 w.mobys[id].state = 1;
                 let m = &w.mobys[id];
                 if m.pv_i(8) == 0 { return; }
+                ctx.game.cameras.arm(m.pv_i(0x10));
                 if let Some(b) = ctx.game.missions.get_mut(lv + mission as usize) { *b |= 0x80; }
                 if let Some((p, r)) = ctx.level.cuboid_place(m.pv_i(0xc)) { ctx.game.save_checkpoint(p, r); }
                 return;
@@ -40,8 +42,8 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             w.mobys[id].state = 3;
         }
     }
-    if w.mobys[id].state == 1 && w.mobys[id].pv_i(0x10) != 0 {
-        // The scene ended (at once here): Ratchet at the cuboid.
+    if w.mobys[id].state == 1 && w.mobys[id].pv_i(0x10) != 0 && ctx.game.cameras.flyby_over(ctx.game.scenes.fade) {
+        // `0x42a508`: the fly-by is over (or black in its flight): Ratchet at the cuboid.
         if let Some((p, r)) = ctx.level.cuboid_place(w.mobys[id].pv_i(0xc)) { ctx.hero.teleport(p, r); }
         let m = &mut w.mobys[id];
         m.state = 3;

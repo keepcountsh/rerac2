@@ -156,9 +156,14 @@ pub struct Scenes {
     pub arg: (i32, i32),
     /// `0x1b2010`: the modes to go back to.
     stack: Vec<i32>,
-    /// `0x1a8fcc`: the blackout into a scene; `0x1b1860`: the fade (1 black).
+    /// `0x1a8fcc`: the blackout into a scene; `0x1b1860`: the fade (1 black); `0x1b8e68`: its fade back in per tick
+    /// (`0x2d9d68(n)`: 1/n, 0 none; the camera update steps it, [`Scenes::fade_step`]).
     pub zoom: f32,
     pub fade: f32,
+    pub fade_in: f32,
+    /// `0x1b1868`: the letterbox wanted; `0x1b186c`: its bars' height (pixels, at most 0x34; `0x2e82c0`).
+    pub letterbox: bool,
+    pub bars: i32,
     pub player: Option<Player>,
     /// The movie playing (mode 1).
     pub movie: Option<i32>,
@@ -166,11 +171,24 @@ pub struct Scenes {
 
 impl Default for Scenes {
     fn default() -> Self {
-        Scenes { queue: Queue::default(), mode: PLAY, pending: NONE, arg: (0, 0), stack: Vec::new(), zoom: 0.0, fade: 0.0, player: None, movie: None }
+        Scenes { queue: Queue::default(), mode: PLAY, pending: NONE, arg: (0, 0), stack: Vec::new(), zoom: 0.0, fade: 0.0, fade_in: 0.0, letterbox: false, bars: 0, player: None, movie: None }
     }
 }
 
 impl Scenes {
+    /// `0x2d9d98` (in the camera update): the fade back in; `0x2e82c0` (each drawn frame): the letterbox's bars.
+    pub fn fade_step(&mut self) {
+        if self.fade_in != 0.0 {
+            approach(0.0, self.fade_in, &mut self.fade);
+            if self.fade <= 0.0 { self.fade_in = 0.0; }
+        }
+    }
+
+    /// `0x2e82c0`: the bars grow a pixel a frame to 0x34 while the letterbox is wanted, else shrink.
+    pub fn bars_step(&mut self) {
+        if self.letterbox { if self.bars < 0x34 { self.bars += 1; } } else if 0 < self.bars { self.bars -= 1; }
+    }
+
     /// `0x371ba8`: a scene asked for or playing.
     pub fn in_scene(&self) -> bool { self.pending == SCENE || self.mode == SCENE }
 
@@ -253,6 +271,8 @@ impl Scenes {
         self.fade = 1.0;
         self.zoom = 0.0;
         self.mode = SCENE;
+        self.letterbox = true;
+        self.bars = 0x34;
         self.player = Some(Player { id, scene, tick: 0, chunk_tick: 0, chunk: 0, done: false, actors });
     }
 
@@ -326,8 +346,11 @@ impl Scenes {
     /// engine deletes the actors it made and gives their class slots back.
     pub fn end_scene(&mut self, hero: &mut crate::hero::Hero, ground: Option<f32>) {
         self.player = None;
-        self.fade = 0.0;
         self.zoom = 0.0;
+        (self.letterbox, self.bars) = (false, 0);
+        // `0x2d9d68(6)`: back in from black over 6 ticks.
+        self.fade = 1.0;
+        self.fade_in = 1.0 / 6.0;
         hero.request_state(0, true);
         if let Some(g) = ground {
             if 2.0 < g && (hero.pos[2] - g).abs() < 4.5 { hero.pos[2] = g; }

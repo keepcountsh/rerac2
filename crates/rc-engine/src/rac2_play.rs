@@ -127,6 +127,13 @@ fn tick(
         p.loaded = true;
         println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
+        // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).
+        use rc_formats::rac2::gameplay as g2;
+        let pvars = g2::pvar_blocks(&lv.gameplay).unwrap_or_default();
+        let records = g2::cameras(&lv.gameplay).map_err(|e| eprintln!("rac2: cameras: {e}")).unwrap_or_default();
+        p.game.cameras = rc_game2::cameras::Cameras::load(
+            records.iter().map(|r| (r.class as i16, r.pos, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
+        );
     }
     // `0x32c858`: a scene or a movie starting or ending.
     mode_changes(p, &mut level.0);
@@ -227,6 +234,15 @@ fn tick(
         inp.strafe_held = p.pad.held & (rc_game::pad::button::L2 | rc_game::pad::button::R2) != 0;
         p.camera.update(&inp, &mut p.game.cam_tweaks);
     }
+    // The rest of the camera update `0x2d9f38`: the fade back in (`0x2d9d98`), the level cameras' choice and the
+    // current one's update (`0x2d8618`: the fly-bys).
+    p.game.scenes.fade_step();
+    let g = &mut p.game;
+    let cam = g.cameras.tick(&p.hero, &mobys.level, (p.camera.pos, p.camera.rows), &mut g.scenes.fade, &mut g.scenes.fade_in);
+    if let Some(st) = cam.hero_state { p.hero.request_state(st, true); }
+    if let Some(on) = cam.letterbox { p.game.scenes.letterbox = on; }
+    if cam.follow_reset { p.camera = FollowCamera::new(&cam_input(&p.hero, Some(coll), [0.0; 2])); }
+    p.game.scenes.bars_step();
     // The HUD (`0x443c08`) with this tick's requests.
     let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh);
@@ -253,7 +269,11 @@ fn tick(
             if let (Some(mods), Some(m)) = (a.mods.get_mut(k), p.mobys.as_ref()) { *mods = p.hero.posture.modifiers(&m.hero_targets); }
         }
     }
-    commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR });
+    let view = match cam.view {
+        Some((pos, rows)) => PlayView { view: scene_view(&rc_game::scene_player::SceneCamera { eye: pos, rows, tan_half_fov: p.game.cameras.tan, cut: false }), tan_half_fov: p.game.cameras.tan, far: crate::game_camera::FAR },
+        None => PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR },
+    };
+    commands.insert_resource(view);
     p.ticks += 1;
     // `0x2b31f0`'s respawn request: Ratchet back at his start with full health (the checkpoints and the fade are not
     // ported); the world keeps its state.
@@ -420,6 +440,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     let hp = p.hero.hp;
     let level = p.game.level;
+    p.game.scenes.bars_step();
     let g = &mut p.game;
     let Some(frame) = g.scenes.tick(&p.pad, level, false, hp, &mut g.scenes_seen) else { return };
     let player = g.scenes.player.as_ref().expect("a scene");
@@ -542,6 +563,14 @@ fn draw_hud(
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
         quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
         quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs, &hud.data.assets().sprites));
+    }
+    // The letterbox (`0x2e82c0`: black bars of `0x1b186c` pixels at the top and the bottom).
+    let bars = p.game.scenes.bars as f32;
+    if 0.0 < bars {
+        let (w, h) = (rc_game2::gui::SCREEN_W, rc_game2::gui::SCREEN_H);
+        for (y0, y1) in [(0.0, bars), (h - bars, h)] {
+            quads.push(rc_game2::gui::Quad { pos: [[0.0, y0], [w, y0], [0.0, y1], [w, y1]], uv: [[0.0; 2]; 4], tex: rc_game2::gui::Tex::None, rgba: [0, 0, 0, 0x80] });
+        }
     }
     // The fade into and out of a scene (`0x1b1860`, 1 black).
     let fade = p.game.scenes.fade.clamp(0.0, 1.0);

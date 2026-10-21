@@ -310,6 +310,27 @@ pub fn volumes(gameplay: &[u8], name: &str) -> Result<Vec<Volume>> {
         .collect()
 }
 
+/// The level cameras (section 2 `cameras`, `0x1b17c4`): `s32 count, pad[3]`, then `count` × 0x20-byte records
+/// `{s32 class, f32 pos[3], f32 rot[3], s32 pvar}` (R&C1's layout, `rc_formats::cameras`). Their pvar blocks are in
+/// the moby pvar table ([`pvar_blocks`]).
+pub fn cameras(gameplay: &[u8]) -> Result<Vec<crate::cameras::CameraRecord>> {
+    let Some(s) = section(gameplay, "cameras")? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let n = b.i32(0)?;
+    if !(0..=48).contains(&n) { return invalid(format!("cameras: count {n} (the runtime has 48 slots)")); }
+    (0..n as usize)
+        .map(|i| {
+            let o = 0x10 + 0x20 * i;
+            Ok(crate::cameras::CameraRecord {
+                class: b.i32(o)?,
+                pos: [b.f32(o + 4)?, b.f32(o + 8)?, b.f32(o + 0xc)?],
+                rot: [b.f32(o + 0x10)?, b.f32(o + 0x14)?, b.f32(o + 0x18)?],
+                pvar_index: b.i32(o + 0x1c)?,
+            })
+        })
+        .collect()
+}
+
 /// The paths (section 30 `paths`): `s32 count, s32 data offset, s32 data bytes, pad`, `count` offsets into the data,
 /// each at a spline `{s32 n, pad[3], n × vec4}` (L00 `0x3012a0`: the table `0x1fda00`). The `w` of the points is
 /// what the file holds (objects that walk a path fill in the segment lengths).

@@ -9,6 +9,7 @@
 //! * 0x0ac5 / 0x0ac6 (`0x3d0888` / `0x3d0980`): when Ratchet enters the cuboid `+0x68`[0] (sound 0), slides 0.417 a
 //!   tick backward / forward along its yaw for 100 ticks, then is deleted.
 
+use crate::hero::physics::{add, atan2, dist2, scale, set_len, sub};
 use crate::moby::{Ctx, MobyWorld};
 
 /// The seq the moby's animation shows (`+0x43`), 0xff without one.
@@ -495,17 +496,21 @@ pub fn update_0f13(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 
 /// 0x1330 (`0x3846d0`, the level's arrival): at the start Ratchet is put at the cuboid `+0x68`[1] (`0x2b9e68`: its
-/// place and angles, the idle). The arrival scene — Ratchet's ship (0x0d54, created at the path [5]'s start) flown
-/// along the path at [7]/60 a tick under the scene camera [2], the level's name shown, then the ship hidden and
-/// Ratchet walked 2 out of the cuboid along its yaw — plays only on a first visit (the save's flag, the scene
-/// system: not ported), so the port takes the visit's other branch: state 4, then 5 once no walk is scripted (the
-/// mobys of the list `0x220d50`, the ships, hidden in 4 and 5). Not on a restart from a checkpoint (the port's
-/// restart keeps the checkpoint's place).
+/// place and angles, the idle; not on a restart from a checkpoint, the port's restart keeps the checkpoint's place),
+/// Ratchet's ship (0x0d54, [6]) made at the start of the path [5] facing its second point, with its parts
+/// (`0x360d28`). On a first visit (the scene 0x21 not seen; Ratchet alive, not in the ship, in play, in the cuboid
+/// [0] when set) the scene 0x21 plays (state 1); after it Ratchet is put at [1] again, the parts made again, the
+/// fly-by camera [2] armed and the screen black (1.5): the ship flies the path [5] at [7] a second (the next point
+/// within 0.75), its parts on it (`0x384d28`), until after 10 ticks the fly-by is over (`0x42a508`): the ship hidden,
+/// Ratchet walked 2 out of [1] along its yaw (state 4); once he is not walking, state 5. Else state 4 at once. In
+/// the states 4 and 5 the parts are hidden. Not ported: the item 0x18 (`0x2f51a0`), the ship's engine glow and
+/// draw callback, the music (`0x3607e8(0x17)`), the placed view's timer [4] (`0x42b9f0`), the level name (`0x30d658`).
 pub fn update_1330(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
-    let m = &mut w.mobys[id];
-    match m.state {
+    let ship = |w: &MobyWorld| ai_link(w, id, 0x18);
+    let state = w.mobys[id].state;
+    match state {
         0 => {
-            m.update_dist = 0xff;
+            let m = &mut w.mobys[id];
             m.set_pv_i(0x20, 0);
             let at = m.pv_i(4);
             if ctx.game.checkpoint.is_none() {
@@ -514,13 +519,159 @@ pub fn update_1330(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                     ctx.hero.request_state(0, true);
                 }
             }
-            m.set_state(4, -1);
+            // The ship at the path's start (`0x32a748`), facing its second point from here.
+            let path = usize::try_from(w.mobys[id].pv_i(0x14)).ok().and_then(|p| ctx.level.paths.get(p)).cloned().unwrap_or_default();
+            let (pos, dd) = (w.mobys[id].pos, w.mobys[id].draw_dist);
+            let s = w.create(SHIP);
+            let sm = &mut w.mobys[s];
+            (sm.drawn, sm.update_dist, sm.parent) = (1, 0xff, Some(id));
+            sm.draw_dist = dd;
+            sm.pos = path.first().map_or(pos, |q| [q[0], q[1], q[2]]);
+            if let Some(q) = path.get(1) { sm.rot[2] = atan2(q[0] - pos[0], q[1] - pos[1]); }
+            sm.draw_dist = 0x28f;
+            w.rebuild(s, &*ctx.host);
+            crate::moby::ai::set_link(&mut w.mobys[id], 0x18, Some(s));
+            ship_parts(w, s, ctx);
+            let m = &mut w.mobys[id];
+            m.update_dist = 0xff;
+            let g = &*ctx.game;
+            let first = !g.scenes_seen.get(0x21).copied().unwrap_or(true);
+            let inside = m.pv_i(0) == -1 || ctx.level.in_cuboid(m.pv_i(0), ctx.hero.pos);
+            if first && ctx.hero.state != 0x1c && 0 < ctx.hero.hp && g.scenes.mode == crate::scene::PLAY && inside {
+                let g = &mut *ctx.game;
+                g.scenes.queue.push(0x21);
+                g.scenes.start_queue(ctx.hero.hp);
+                // `0x371b60`: in the level's first frames straight in.
+                if g.frame < 5 { g.scenes.zoom = 1.2; }
+                w.mobys[id].set_state(1, -1);
+            } else {
+                w.mobys[id].set_state(4, -1);
+            }
+        }
+        1 => {
+            if !ctx.game.scenes.in_scene() {
+                let m = &w.mobys[id];
+                if let Some((p, r)) = ctx.level.cuboid_place(m.pv_i(4)) { ctx.hero.teleport(p, r); }
+                if let Some(s) = ship(w) { ship_parts(w, s, ctx); }
+                let cam = w.mobys[id].pv_i(8);
+                ctx.game.cameras.arm(cam);
+                ctx.game.scenes.fade = 1.5;
+                w.mobys[id].set_state(2, -1);
+            }
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            m.state_ticks = m.state_ticks.wrapping_add(1);
+            if 10 < m.state_ticks && ctx.game.cameras.flyby_over(ctx.game.scenes.fade) {
+                if let Some(s) = ship(w) {
+                    let sm = &mut w.mobys[s];
+                    sm.mode = (sm.mode | 0x41) & !crate::moby::mode::TARGET;
+                    sm.has_collision = false;
+                }
+                let at = w.mobys[id].pv_i(4);
+                if let Some((p, r)) = ctx.level.cuboid_place(at) {
+                    let yaw = r[2];
+                    let to = [p[0] + yaw.cos() * 2.0, p[1] + yaw.sin() * 2.0, p[2]];
+                    ctx.hero.script_walk_to(yaw, to, true);
+                }
+                w.mobys[id].set_state(4, -1);
+            }
+            // The ship along the path.
+            if let Some(s) = ship(w) {
+                let path = usize::try_from(w.mobys[id].pv_i(0x14)).ok().and_then(|p| ctx.level.paths.get(p)).cloned().unwrap_or_default();
+                if !path.is_empty() {
+                    let m = &w.mobys[id];
+                    let mut k = m.pv_i(0x20).max(0) as usize;
+                    let speed = m.pv_f(0x1c) * 0.016_666_668;
+                    let q = |k: usize| { let q = path[k.min(path.len() - 1)]; [q[0], q[1], q[2]] };
+                    if dist2(w.mobys[s].pos, q(k)) < 0.75 { k += 1; }
+                    k = k.min(path.len() - 1);
+                    w.mobys[id].set_pv_i(0x20, k as i32);
+                    let sm = &mut w.mobys[s];
+                    sm.pos = add(sm.pos, set_len(sub(q(k), sm.pos), speed));
+                }
+            }
         }
         4 => {
+            let m = &mut w.mobys[id];
             m.first();
             if !(0x62..=0x64).contains(&ctx.hero.state) { m.set_state(5, -1); }
         }
         _ => {}
+    }
+    let state = w.mobys[id].state;
+    if state == 4 || state == 5 {
+        for &p in &ctx.game.ship_parts {
+            if let Some(pm) = w.mobys.get_mut(p) {
+                pm.mode = (pm.mode | 0x41) & !crate::moby::mode::TARGET;
+                pm.has_collision = false;
+            }
+        }
+    } else if let Some(s) = ship(w) {
+        let path = usize::try_from(w.mobys[id].pv_i(0x14)).ok().and_then(|p| ctx.level.paths.get(p)).cloned().unwrap_or_default();
+        place_ship_parts(w, s, ctx);
+        if let Some(q) = path.get(1) {
+            let sm = &mut w.mobys[s];
+            sm.rot[2] = atan2(q[0] - sm.pos[0], q[1] - sm.pos[1]);
+        }
+        w.rebuild(s, &*ctx.host);
+        w.changed = true;
+    }
+}
+
+/// The arrival's ship.
+const SHIP: i16 = 0x0d54;
+
+/// `0x360d28` with no upgrades (`0x1a7af8` = 0): the ship's parts by the tables `0x1a8f78..` (the second of each pair
+/// mirrored), out of the moby loop with their own rows, drawn far.
+const SHIP_PARTS: [(i16, bool); 9] = [(0x10d4, false), (0x10d4, true), (0x10d7, false), (0x10da, false), (0x10da, true), (0x10de, false), (0x10de, true), (0x10e5, false), (0x10e5, true)];
+
+fn ai_link(w: &MobyWorld, id: usize, off: usize) -> Option<usize> {
+    crate::moby::ai::link(&w.mobys[id], off).filter(|&s| w.mobys.get(s).is_some_and(|m| m.state < 0x80))
+}
+
+/// `0x360d28(ship)`: the old parts deleted (`0x360cd0`), the new ones made.
+fn ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
+    for p in std::mem::take(&mut ctx.game.ship_parts) {
+        if w.mobys.get(p).is_some_and(|m| m.state < 0x80) { w.delete(p); }
+    }
+    for (class, mirror) in SHIP_PARTS {
+        if w.class(class).is_none() { continue; }
+        let p = w.create(class);
+        let pm = &mut w.mobys[p];
+        pm.mode |= crate::moby::mode::NO_UPDATE | crate::moby::mode::NO_MATRIX | crate::moby::mode::KEEP_ROWS;
+        if mirror { pm.mode |= crate::moby::mode::MIRROR; }
+        (pm.draw_dist, pm.drawn, pm.update_dist) = (0x1ff, 1, 0xff);
+        ctx.game.ship_parts.push(p);
+    }
+    w.mobys[ship].mode |= 0x20;
+    place_ship_parts(w, ship, ctx);
+}
+
+/// `0x384d28(ship)`: each part shown, at the ship with the rows of its joint 0 (in a scene at its joint 1 less
+/// (4.192, 0, 1.355) through them); with the ship's collision in play.
+fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
+    let (rows, _) = ctx.host.joint_matrix(&w.mobys[ship], 0).unwrap_or((w.mobys[ship].rows, w.mobys[ship].pos));
+    let rows = rows.map(|r| set_len(r, 1.0));
+    let mut pos = w.mobys[ship].pos;
+    let in_scene = ctx.game.scenes.mode == crate::scene::SCENE;
+    if in_scene {
+        if let Some(j) = ctx.host.joint(&w.mobys[ship], 1) {
+            let o = [-4.192_877, 0.0, -1.355];
+            pos = add(j, add(add(scale(rows[0], o[0]), scale(rows[1], o[1])), scale(rows[2], o[2])));
+        }
+    }
+    let ship_coll = w.mobys[ship].has_collision;
+    for &p in &ctx.game.ship_parts {
+        let Some(class) = w.mobys.get(p).map(|m| m.o_class) else { continue };
+        let coll = !in_scene && ship_coll && w.class(class).is_some_and(|c| c.has_collision);
+        let pm = &mut w.mobys[p];
+        pm.mode = (pm.mode & 0xffbe) | crate::moby::mode::TARGET;
+        pm.pos = pos;
+        pm.rows = rows;
+        if pm.mode & crate::moby::mode::MIRROR != 0 { pm.rows[1] = scale(pm.rows[1], -1.0); }
+        pm.has_collision = coll;
+        w.rebuild(p, &*ctx.host);
     }
 }
 
@@ -1060,7 +1211,11 @@ pub fn update_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                     played = true;
                 }
             }
-            if played { g.scenes.start_queue(ctx.hero.hp); }
+            if played {
+                g.scenes.start_queue(ctx.hero.hp);
+                // `0x371b60`: in the level's first frames straight in.
+                if g.frame < 5 { g.scenes.zoom = 1.2; }
+            }
             let m = &mut w.mobys[id];
             m.set_pv_b(0xf, played as u8);
             m.set_state(if played { 3 } else { 4 }, -1);

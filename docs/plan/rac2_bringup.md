@@ -331,9 +331,19 @@ layer's 512×416 slot.
 
 Users: the scene trigger 0x0f6e (queues its list: Aranos's triggers play 0x22, 0x23 and the movie 0x16), 0x0f13
 (scene props: spinning parts 0x0aa2 on the actors 2 and 3 of scenes 1 and 2), the arrival 0x1330 (scene 0x21 on a
-first visit, then the ship's fly-in under a level camera of type 0x13: **not yet**, see below).
+first visit, then Ratchet's ship 0x0d54 with its nine parts flown along its path under the fly-by camera 2, then
+Ratchet walked out).
+
+**The level cameras** (`rc_game2::cameras`, R&C1's level camera system evolved): the records of the gameplay's
+cameras section with their pvar blocks (in the moby pvar table) as slots, the choice `0x2d8618` / `0x2d8408` (hooks,
+activation kinds, priorities), the switch `0x2d8168` (cuts only: Aranos's cameras have blend kind 0), and the fly-by
+(class 0x13: `0x42b0d8` / `0x42a660` / `0x42aa28`, armed by the gate 0x0ac7 and the arrival; the fade, the letterbox
+`0x2e82c0`, the FOV keys, Ratchet held in state 0x6f). Aranos's nine cameras: 0x17 (the placed view at the start,
+cuboid 0x1d), two fly-bys, the follow camera (class 0), 4 / 5 / 6 / 7 (first person, script, …, the Swingshot's) and
+0x1b.
 
 Not yet: the speech and music (milestone E), the subtitles (they show only with the subtitle option, off by default;
-`0x2e7f80` draws them in a rounded box, `*` lines as captions), the arrival's first visit (it needs the camera
-manager `0x2d8618` / `0x2d8ab0` with the level cameras `0x1b17c4` and the fly-by type 4 / class 0x13 `0x42a3c0` /
-`0x42a660` / `0x42b0d8`), the level's end after the movie 0x16 (to Oozla).
+`0x2e7f80` draws them in a rounded box, `*` lines as captions), the placed view 0x17 (`0x42b950` / `0x42b428`: it
+frames Ratchet from its record's place through the follow camera's setters `0x425e50..0x426110` while he is still
+in its cuboid), first person (class 4), the blends `0x2d8ab0` / `0x2d9488`, the level's end after the movie 0x16
+(to Oozla).
