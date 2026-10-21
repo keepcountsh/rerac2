@@ -19,8 +19,15 @@
 //! ten); the back 0x11 and outline 0x12 sprites sized by the pill count (`0x441238`); a raised limit blinks the new
 //! pills (180 ticks). Shown by `0x441d58(n)`.
 //!
-//! Not ported: the ammo half of the panel (the wrench has none), the quick select ring, the XP bar (`+0xf4`), the
-//! vendor and the other screens of the GUI object, PAL's sizes.
+//! **Weapon** (the panel's left half, `+0x0..+0x194`, [`WeaponPanel`]): the back and outline sprites 1 and 2 at (10,
+//! 10) (their frame = the ammo text's length − 3, 0..5), the item's icon (its row's `+0x2c`) 32 × 32 at (20, 15), the
+//! ammo `"%d/%d"` (`0x1ae2b0`: ammo, most) at (64, 15) in scale 0.9. Each tick a held item has ammo (`0x2fa770`),
+//! `0x443840(icon, 10)` keeps it up for 10 more ticks; its blends run forward from hidden and back once the timer runs
+//! out (the wrench: 10 ticks after it comes out).
+//!
+//! Not ported: the weapon's experience bar (sprite 5 at (10, 18.5), `0x139868`), the low-ammo red pulse (the faders
+//! `0x70202080` / `0x70242335` under a tenth of the most), the quick select ring, the XP bar (`+0xf4`), the vendor and
+//! the other screens of the GUI object, PAL's sizes.
 
 use crate::gui::{self, Quad, Tex};
 use rc_formats::rac2::boot::Glyph;
@@ -209,6 +216,76 @@ impl BoltCounter {
     }
 }
 
+/// The weapon half of the panel.
+#[derive(Clone, Debug)]
+pub struct WeaponPanel {
+    /// `+0x1584`: the show timer; `+0x1588`: hidden.
+    pub timer: i32,
+    pub hidden: bool,
+    /// `+0x157c` / `+0x1580`: the ammo and the most shown; the icon (`+0x158`).
+    pub ammo: i32,
+    pub max: i32,
+    pub icon_id: u16,
+    pub back: Blend,
+    pub outline: Blend,
+    pub text: Blend,
+    pub icon: Blend,
+}
+
+impl Default for WeaponPanel {
+    fn default() -> Self {
+        WeaponPanel {
+            timer: 0,
+            hidden: true,
+            ammo: 0,
+            max: 0,
+            icon_id: 0,
+            back: Blend::new([0x0044_2d00, 0x6044_2d00], [[0.0, 0.0], [1.0, 1.0]], [[50.0, 25.0], [10.0, 10.0]], [1.0, 1.0, 0.0, 2.0]),
+            outline: Blend::new([0x00f0_c070, 0x55f0_c070], [[1.2, 1.2], [1.0, 1.0]], [[0.0, 0.0], [10.0, 10.0]], [1.0, 1.0, 0.0, 3.0]),
+            text: Blend::new([0x00f0_f0f0, 0x80f0_f0f0], [[0.9, 0.0], [0.9, 0.0]], [[64.0, 15.0], [64.0, 15.0]], [1.0, 1.0, 0.0, 3.0]),
+            icon: Blend::new([0x00f0_f0b0, 0x60f0_f0b0], [[32.0, 32.0], [32.0, 32.0]], [[20.0, 15.0], [20.0, 15.0]], [1.0, 1.0, 0.0, 3.0]),
+        }
+    }
+}
+
+impl WeaponPanel {
+    /// `0x443840(icon, n)`.
+    pub fn show(&mut self, icon: u16, n: i32) {
+        self.timer = n;
+        if self.hidden {
+            self.hidden = false;
+            for b in [&mut self.back, &mut self.outline, &mut self.text, &mut self.icon] { b.forward(); }
+        }
+        self.icon_id = icon;
+    }
+
+    /// `0x443c08`'s part: the item with ammo held (icon, ammo, most) keeps it up; the blends; the timer.
+    pub fn tick(&mut self, held: Option<(u16, i32, i32)>) {
+        if let Some((icon, ammo, max)) = held {
+            self.show(icon, 10);
+            (self.ammo, self.max) = (ammo, max);
+        }
+        for b in [&mut self.back, &mut self.outline, &mut self.text, &mut self.icon] { b.step(); }
+        if self.timer != 0 {
+            self.timer -= 1;
+            if self.timer == 0 && !self.back.active {
+                for b in [&mut self.back, &mut self.outline, &mut self.text, &mut self.icon] { b.back(); }
+                self.hidden = true;
+            }
+        }
+    }
+
+    /// `0x444900`'s part: the back, the outline, the icon, the text.
+    pub fn draw(&self, out: &mut Vec<Draw>) {
+        let text = format!("{}/{}", self.ammo, self.max);
+        let frame = (text.len() as f32 - 3.0).clamp(0.0, 5.0);
+        out.push(Draw::Sprite { id: 1, pos: self.back.pos(), scale: self.back.size(), frame, colour: self.back.colour() });
+        out.push(Draw::Sprite { id: 2, pos: self.outline.pos(), scale: self.outline.size(), frame, colour: self.outline.colour() });
+        if self.icon_id != 0 { out.push(Draw::Icon { id: self.icon_id, frame: 0, pos: self.icon.pos(), size: self.icon.size(), colour: self.icon.colour() }); }
+        out.push(Draw::Text { text, pos: self.text.pos(), scale: self.text.size()[0], colour: self.text.colour(), right: false });
+    }
+}
+
 /// Ratchet's health.
 #[derive(Clone, Debug)]
 pub struct Health {
@@ -332,20 +409,22 @@ impl Health {
     }
 }
 
-/// The two counters.
+/// The weapon panel and the two counters.
 #[derive(Clone, Debug)]
 pub struct Hud {
+    pub weapon: WeaponPanel,
     pub bolts: BoltCounter,
     pub health: Health,
     pub frame: i32,
 }
 
 impl Hud {
-    pub fn new(max_health: i32) -> Hud { Hud { bolts: BoltCounter::default(), health: Health::new(max_health), frame: 0 } }
+    pub fn new(max_health: i32) -> Hud { Hud { weapon: WeaponPanel::default(), bolts: BoltCounter::default(), health: Health::new(max_health), frame: 0 } }
 
     /// One tick (`0x443c08`): the requests of the tick (`0x30d910` / `0x30d9f8`), the values, the animators.
-    pub fn tick(&mut self, health: i32, max_health: i32, show_bolts: Option<i32>, show_health: Option<i32>) {
+    pub fn tick(&mut self, health: i32, max_health: i32, show_bolts: Option<i32>, show_health: Option<i32>, weapon: Option<(u16, i32, i32)>) {
         self.frame += 1;
+        self.weapon.tick(weapon);
         if let Some(n) = show_bolts { self.bolts.show(n); }
         if let Some(n) = show_health { self.health.show(n); }
         self.health.health = health;
@@ -357,6 +436,7 @@ impl Hud {
 
     pub fn draw(&self, bolts: u32) -> Vec<Draw> {
         let mut out = Vec::new();
+        self.weapon.draw(&mut out);
         self.bolts.draw(bolts, '\'', &mut out);
         self.health.draw(self.frame, &mut out);
         out

@@ -51,7 +51,7 @@ fn main() -> anyhow::Result<()> {
         match hud::parse_hud(hh, [&banks[0], &banks[1], &banks[2], &banks[3], &banks[4]]) {
             Ok(h) => {
                 println!("hud: {} icons, {} frames, {} textures", h.icons.len(), h.frames.len(), h.textures.len());
-                for id in [0x7567u16, 0xeaa2, 0xeaa8, 0x301e] { let i = h.icon_index(id); println!("  icon {id:#x}: index {i} frame {:?}", h.frame_size(h.icon_frame(id, 0))); }
+                for id in [0x7567u16, 0xeaa2, 0xeaa8, 0x301e, 0xea64] { let i = h.icon_index(id); println!("  icon {id:#x}: index {i} frame {:?}", h.frame_size(h.icon_frame(id, 0))); }
             }
             Err(e) => println!("hud parse: {e}"),
         }

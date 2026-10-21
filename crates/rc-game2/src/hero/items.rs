@@ -34,6 +34,8 @@ pub struct ItemRow {
     pub class: i16,
     /// `+0x0c`: its stance type (`0x18c0db`; 0 the wrench's).
     pub stance: u8,
+    /// `+0x2c`: its HUD icon (the weapon panel, crate::hud::WeaponPanel).
+    pub icon: u16,
     /// `+0x18`: Ratchet's sequence while it is used standing; `+0x24`: the use keeps his stance (`0x18c0da`).
     pub use_seq: i32,
     pub keep: bool,
@@ -49,8 +51,8 @@ pub struct ItemRow {
 
 /// The rows the port has (L00 `0x262dc0`, `0x263f40`).
 pub const ROWS: [ItemRow; 2] = [
-    ItemRow { item: WRENCH, attach: 0, class: WRENCH_CLASS, stance: 0, use_seq: 0, keep: false, speed: 0.0, rate: 0.0, damage: 1.0, ammo: false, max_ammo: 0, start_ammo: 0 },
-    ItemRow { item: LANCER, attach: 0, class: LANCER_CLASS, stance: 1, use_seq: 0x38, keep: true, speed: 60.0, rate: 7.0, damage: 0.5, ammo: true, max_ammo: 200, start_ammo: 200 },
+    ItemRow { item: WRENCH, attach: 0, class: WRENCH_CLASS, stance: 0, icon: 0, use_seq: 0, keep: false, speed: 0.0, rate: 0.0, damage: 1.0, ammo: false, max_ammo: 0, start_ammo: 0 },
+    ItemRow { item: LANCER, attach: 0, class: LANCER_CLASS, stance: 1, icon: 0xea64, use_seq: 0x38, keep: true, speed: 60.0, rate: 7.0, damage: 0.5, ammo: true, max_ammo: 200, start_ammo: 200 },
 ];
 
 /// Item `item`'s row.

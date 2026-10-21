@@ -428,7 +428,10 @@ fn tick(
     p.game.scenes.bars_step();
     // The HUD (`0x443c08`) with this tick's requests.
     let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
-    p.hud.tick(p.hero.hp, p.game.max_health, sb, sh);
+    // `0x2fa770`: the held item when it has ammo (not with the items off, `0x18c0d4`).
+    let it = &p.hero.items;
+    let weapon = rc_game2::hero::items::row(it.item).filter(|r| r.ammo && it.ready == 2 && p.hero.mode == 0).map(|r| (r.icon, p.game.ammo.get(it.item.max(0) as usize).copied().unwrap_or(0), r.max_ammo));
+    p.hud.tick(p.hero.hp, p.game.max_health, sb, sh, weapon);
     // The help panel (`0x2f5680`).
     p.help.tick(&mut p.game, p.pad.pressed & rc_game::pad::button::TRIANGLE != 0, &p.texts);
     // The sound step (`sound_update` after the camera): the slots follow their owners (the mobys' positions; a
@@ -813,7 +816,8 @@ fn draw_hud(
         let mut icons = std::collections::HashMap::new();
         match crate::rac2_level::hud(&root, crate::level_load::level_index()) {
             Ok(h) => {
-                for id in [0x7567u16] {
+                // The bolt icon and the items' (the weapon panel, `ItemRow::icon`).
+                for id in std::iter::once(0x7567u16).chain(rc_game2::hero::items::ROWS.iter().map(|r| r.icon).filter(|&i| i != 0)) {
                     let f = h.icon_frame(id, 0);
                     if let Ok(t) = h.decode_frame_raw(f) {
                         icons.insert((id, 0), (textures.len(), [t.width as f32, t.height as f32]));
