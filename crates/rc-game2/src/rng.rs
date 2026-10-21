@@ -33,6 +33,13 @@ impl Rng {
     /// `0x31ba38(a, b)`: `a + r·(b − a)·2⁻¹⁵`.
     pub fn randf(&mut self, a: f32, b: f32) -> f32 { a + self.r15() as f32 * (b - a) * 3.051_757_8e-5 }
 
+    /// `0x31ba98(a, b)`: `a + r·(b − a)·2⁻¹²` with r the low 12 bits, negated when r is odd.
+    pub fn randf_signed(&mut self, a: f32, b: f32) -> f32 {
+        let r = (self.rand() >> 16) & 0x7fff;
+        let v = a + (r & 0xfff) as f32 * (b - a) * 0.000_244_140_62;
+        if r & 1 != 0 { -v } else { v }
+    }
+
     /// `0x31bb00`: an angle in [−π, π): `((rand >> 16) & 0xfff) − 0x800` steps of π / 2048.
     pub fn rand_angle(&mut self) -> f32 { (((self.rand() >> 16) & 0xfff) as i32 - 0x800) as f32 * 0.001_533_980_8 }
 

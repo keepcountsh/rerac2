@@ -42,8 +42,10 @@ pub struct Rac2Mobys {
     pub snap: Option<(Snapshot, Arc<MobyGrid>)>,
     /// Created mobys by moby index.
     pub created: HashMap<usize, Created>,
-    /// Ratchet's joint lists (chains) for his attachment points.
+    /// Ratchet's joint lists (chains) for his attachment points, and the joint each list's modifiers act on
+    /// (`rc_formats::moby_anim::list_target`; 0xff none).
     pub hero_chains: Vec<Vec<u8>>,
+    pub hero_targets: Vec<u8>,
     /// The level's grind paths (the gameplay's section 31).
     pub rails: Vec<rc_game2::paths::GrindPath>,
     /// The level's volumes and paths.
@@ -213,17 +215,19 @@ impl Rac2Mobys {
         let mut rules = rc_game2::moby::SpawnRules { game, fresh, ground: &ground };
         world.spawn_static(&records, &data, host, &mut rules);
         let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
-        let hero_chains = m
+        let lists: Vec<(Vec<u8>, Vec<u8>)> = m
             .classes
             .iter()
             .find(|c| c.o_class == 0)
             .and_then(|c| blobs.blobs.get(&0).map(|b| (c, b)))
-            .map(|(c, b)| (0..31).map(|l| rc_formats::gadget::joint_list(b, &c.class.header, l).map(|x| x.0).unwrap_or_default()).collect())
+            .map(|(c, b)| (0..31).map(|l| rc_formats::gadget::joint_list(b, &c.class.header, l).unwrap_or_default()).collect())
             .unwrap_or_default();
+        let hero_targets = lists.iter().map(|(_, second)| rc_formats::moby_anim::list_target(second).unwrap_or(0xff)).collect();
+        let hero_chains = lists.into_iter().map(|(chain, _)| chain).collect();
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), hero_chains, hero_targets, rails, level: rc_game2::level::LevelData::load(&lv.gameplay) }
     }
 
 }

@@ -578,6 +578,7 @@ impl Hero {
         } else {
             self.grounded_ticks = 0;
         }
+        self.foot_probe(env);
     }
 
     /// `0x2b5358` (gravity mode 0): grounded and below the ground z: snap to it when within |vel.z| + 0.01 (and the

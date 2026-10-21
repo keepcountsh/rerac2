@@ -50,7 +50,9 @@ impl Hero {
             if 1.0 < self.height { self.substate = 1; }
         }
         self.run_target(env);
-        self.air_control();
+        // `0x18a000`: the air control waits out the landing lag.
+        if self.land_lag == 0 { self.air_control(env); }
+        self.lean();
         self.drag(0.7, 0.0);
         self.vel[2] -= self.fall_g;
         if self.vel[2] < -50.0 * DT { self.vel[2] = -50.0 * DT; }
@@ -105,12 +107,23 @@ impl Hero {
         None
     }
 
-    /// `0x2b6cd0`'s default path (the jumps 7 / 9 and the fall): turn toward the stick (0.04, 0.2, `0x18a2b4`), the
-    /// drag (0.7, 0) carried as momentum, then the air acceleration `0x2b62a0` — 1/180 when the stick asks for more
-    /// than a fifth of the run speed, else (fall group 2) the horizontal speed falls toward 0 by `0x18a8a4`, or
-    /// 1/450 (1/1800 when blocked ahead; 11/3600 on a moby).
-    pub(super) fn air_control(&mut self) {
+    /// `0x2b6cd0`'s default path (the jumps 7 / 9 and the fall): turn toward the stick (0.04, 0.2, `0x18a2b4`) —
+    /// strafing (`0x18b274`), toward the camera's yaw and forward row instead, the stick's yaw and direction then put
+    /// back and kept as the strafe's (`0x18b278` / `0x18b260`), so he moves along the stick facing ahead — the drag
+    /// (0.7, 0) carried as momentum, then the air acceleration `0x2b62a0` — 1/180 when the stick asks for more than a
+    /// fifth of the run speed, else (fall group 2) the horizontal speed falls toward 0 by `0x18a8a4`, or 1/450 (1/1800
+    /// when blocked ahead; 11/3600 on a moby).
+    pub(super) fn air_control(&mut self, env: &Env) {
+        let (yaw, dir) = (self.target_yaw, self.stick_dir);
+        if self.strafe != 0 {
+            self.target_yaw = env.cam_yaw;
+            self.stick_dir = env.cam_rows[0];
+        }
         self.turn_to(0.04, 0.2, self.jump.air_turn, 0);
+        if self.strafe != 0 {
+            (self.target_yaw, self.stick_dir) = (yaw, dir);
+            (self.strafe_yaw, self.strafe_dir) = (yaw, dir);
+        }
         self.drag(0.7, 0.0);
         self.momentum = self.drag;
         let mut a = 0.005_555_556;

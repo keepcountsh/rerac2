@@ -309,7 +309,7 @@ impl Hero {
         if self.timer == self.jump.takeoff { self.jump.takeoff_pos = self.pos; }
         let early = matches!(self.state, 0xb | 0x10 | 0xc | 0x11 | 0x1b | 0x89 | 0x48);
         if self.jump.landed == 0 && (self.jump.takeoff <= self.timer || early) {
-            self.jump_air(anim);
+            self.jump_air(env, anim);
             if self.state == 0x12 && 0.061_666_67 < len(self.vel) { self.vel = set_len(self.vel, 0.061_666_67); }
         } else if self.jump.keep_speed == 0 {
             self.turn_to(0.015, 0.2, 0.250_011_4, 0);
@@ -357,7 +357,7 @@ impl Hero {
     }
 
     /// `0x2b6cd0`: the jumps' air control by state.
-    fn jump_air(&mut self, anim: &mut dyn AnimCtl) {
+    fn jump_air(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
         match self.state {
             10 => {
                 self.drag(0.7, 0.0);
@@ -410,7 +410,7 @@ impl Hero {
                 self.turn_to(0.04, 0.2, self.jump.air_turn, 0);
                 self.speed = 0.0;
             }
-            _ => self.air_control(),
+            _ => self.air_control(env),
         }
     }
 

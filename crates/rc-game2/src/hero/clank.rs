@@ -163,7 +163,7 @@ impl Hero {
             }
             0x41 => {
                 self.stick_target(env, 0.05, 0);
-                if self.land_lag == 0 { self.air_control(); }
+                if self.land_lag == 0 { self.air_control(env); }
                 self.vel[2] = (self.vel[2] - 0.003_333_333_4).max(-1.0 / 6.0);
             }
             0x42 => {

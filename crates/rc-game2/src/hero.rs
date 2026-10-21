@@ -31,6 +31,7 @@ pub mod melee;
 pub mod misc;
 pub mod pack;
 pub mod physics;
+pub mod posture;
 pub mod registry;
 pub mod script;
 pub mod states;
@@ -352,6 +353,8 @@ pub struct Hero {
     pub no_update: bool,
     /// Hits Ratchet's body deals this tick (the Thruster-Pack's ram), delivered by the item pass.
     pub hits_out: Vec<HeroHit>,
+    /// His posture's joint records (`posture`).
+    pub posture: posture::Posture,
     /// States the port has not got, reported once each.
     pub unported_seen: Vec<i32>,
 }
@@ -390,7 +393,7 @@ impl Hero {
             yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
             bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
-            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], slide_speed: 0.0, stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, push: [0.0; 3], swing: Default::default(), swing_cooldown: 0, gear: Default::default(), grind: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), unported_seen: Vec::new(),
+            ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], slide_speed: 0.0, stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, push: [0.0; 3], swing: Default::default(), swing_cooldown: 0, gear: Default::default(), grind: Default::default(), water: Default::default(), show_bolts: None, no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), posture: Default::default(), unported_seen: Vec::new(),
         }
     }
 
@@ -435,6 +438,8 @@ impl Hero {
             self.strafe = 1;
         }
         if self.state == 0x10 { self.strafe = 0; }
+        // `0x2c3330`: the ticks since the last strafe (the head's idle look waits 20).
+        if self.strafe == 0 { self.posture.not_strafing += 1 } else { self.posture.not_strafing = 0 }
         self.stick_mag_prev = self.stick_magnitude();
         self.stick = [env.pad.lx.to_f32(), env.pad.ly.to_f32()];
         if (self.stick[0] * self.stick[0] + self.stick[1] * self.stick[1]).sqrt() < 0.25 {
@@ -537,6 +542,7 @@ pub fn hero_update(hero: &mut Hero, env: &Env, anim: &mut dyn AnimCtl) -> HeroTi
     hero.rail_probe(env);
     hero.pole_probe(env);
     hero.transitions(env, anim);
+    hero.posture_tick(anim);
     HeroTick::Ran
 }
 

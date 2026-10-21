@@ -220,6 +220,8 @@ fn tick(
             s.skip_advance = true;
             if let Some(i) = a.instances.get_mut(k) { i.state = s; }
             if let Some(slot) = a.snapshots.get_mut(k) { *slot = p.anim.snapshot.clone(); }
+            // His posture's joint modifiers (rc_game2::hero::posture).
+            if let (Some(mods), Some(m)) = (a.mods.get_mut(k), p.mobys.as_ref()) { *mods = p.hero.posture.modifiers(&m.hero_targets); }
         }
     }
     commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR });

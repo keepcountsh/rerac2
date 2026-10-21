@@ -118,6 +118,7 @@ impl Hero {
         } else {
             self.strafe_turn(env);
         }
+        self.lean();
         if self.quick_turn != 0 {
             let v = (0.099_166_67 - self.yaw_residual.abs() * 0.029_178_405).max(0.0);
             self.target_speed = self.target_speed.min(v);
@@ -286,9 +287,21 @@ impl Hero {
         }
     }
 
-    /// `0x2ca358`: the walk / run sequence and its playback speed.
+    /// `0x2ca358`: the walk / run sequence and its playback speed (Clank's body; the back-pedal while strafing
+    /// backwards; else the walk 3 / run 4 by the speed, swapped in phase).
     pub(super) fn walk_anim(&mut self, anim: &mut dyn AnimCtl) {
         let v = anim.view();
+        if self.mode == 1 {
+            // Clank's body: its own walk, at |eff| × 90.
+            self.anim_speed = (self.eff_len * 90.0).max(0.5);
+            return;
+        }
+        if self.strafe != 0 && self.strafe_back {
+            // Strafing backwards: the back-pedal 0x14 at the speed × 25 (0.7..2.2).
+            if v.seq_b != 0x14 { self.set_anim(anim, 11.0, 0x14, 0); }
+            self.anim_speed = (self.speed * 25.0).clamp(0.7, 2.2);
+            return;
+        }
         if v.seq_b == 0x14 {
             self.set_anim(anim, 7.0, (self.substate + 3) as u8, 0);
         } else if 4 < self.substate_timer && self.walk_gate == 0 {

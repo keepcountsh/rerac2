@@ -48,6 +48,8 @@ impl Hero {
         self.substate = 0;
         self.state = id;
         self.cam_mode = 0;
+        // `0x18afa8`: the blink's interval (`posture`).
+        self.posture.blink_every = if super::posture::BLINK_STATES.contains(&id) { 0x68 } else { 0 };
         // `0x18c0dc` (the items kept away) and `0x18c0d7` (no △ menu) clear on every change; the entries set them.
         self.items.no_use = 0;
         if self.mode == 0 {
