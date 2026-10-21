@@ -52,7 +52,8 @@ pub const SECTIONS: [(&str, &str); HEADER_WORDS] = [
     ("paths", "content"),
     ("grind_paths", "order"),
     ("unknown_32", "order"),
-    ("unknown_33", "order"),
+    // The light regions (L00 `0x3012a0` → `0x1c58c0` / `0x1c5ac0`, [`light_regions`]).
+    ("light_regions", "content"),
     ("unknown_34", "order"),
     ("unknown_35", "order"),
     ("occlusion_mappings", "content"),
@@ -380,6 +381,42 @@ pub fn areas(gameplay: &[u8]) -> Result<Vec<Area>> {
                 lists[k] = (0..c as usize).map(|j| b.i32(o + 4 * j)).collect::<Result<_>>()?;
             }
             Ok(Area { sphere, lists })
+        })
+        .collect()
+}
+
+/// A light region (`0x1c58c0` / `0x1c5ac0`): a bounding sphere (centre, radius²) and a box (the inverse matrix that
+/// takes a point into the unit cube) with two ambients and two directional light sets, cross-faded along the box's
+/// x (`0x31a7a8`, `0x31a8e4`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightRegion {
+    pub sphere: [f32; 4],
+    pub to_box: [[f32; 4]; 4],
+    pub ambient: [[u8; 4]; 2],
+    pub lights: [i32; 2],
+    pub flags: u32,
+}
+
+/// The light regions: `s32 count`, 12 bytes, `count` spheres (16 bytes), then `count` records (0x80 bytes: the
+/// inverse matrix, the ambients `+0x40` / `+0x44`, the light sets `+0x48` / `+0x4c` (negative: 0xb), the flags
+/// `+0x50`, bit 0 = used).
+pub fn light_regions(gameplay: &[u8]) -> Result<Vec<LightRegion>> {
+    let Some(s) = section(gameplay, "light_regions")? else { return Ok(Vec::new()) };
+    let b = Buf(s);
+    let n = b.i32(0)?;
+    if !(0..=24).contains(&n) { return invalid(format!("{n} light regions")); }
+    let n = n as usize;
+    let f = |o: usize| -> Result<f32> { Ok(f32::from_bits(b.u32(o)?)) };
+    (0..n)
+        .map(|k| {
+            let so = 0x10 + 16 * k;
+            let ro = 0x10 + 16 * n + 0x80 * k;
+            let sphere = [f(so)?, f(so + 4)?, f(so + 8)?, f(so + 12)?];
+            let mut to_box = [[0.0; 4]; 4];
+            for (r, row) in to_box.iter_mut().enumerate() { for (c, v) in row.iter_mut().enumerate() { *v = f(ro + 16 * r + 4 * c)?; } }
+            let rgba = |o: usize| -> Result<[u8; 4]> { Ok(b.u32(o)?.to_le_bytes()) };
+            let set = |o: usize| -> Result<i32> { let v = b.i32(o)?; Ok(if v < 0 { 0xb } else { v }) };
+            Ok(LightRegion { sphere, to_box, ambient: [rgba(ro + 0x40)?, rgba(ro + 0x44)?], lights: [set(ro + 0x48)?, set(ro + 0x4c)?], flags: b.u32(ro + 0x50)? })
         })
         .collect()
 }

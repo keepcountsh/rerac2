@@ -14,6 +14,7 @@ pub mod help;
 pub mod hero;
 pub mod hud;
 pub mod level;
+pub mod light;
 pub mod moby;
 pub mod paths;
 pub mod rng;

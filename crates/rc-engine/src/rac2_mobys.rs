@@ -79,6 +79,14 @@ pub struct HeroPose<'a> {
     pub mods: &'a [rc_formats::moby_anim::JointModifier],
 }
 
+/// MobyProc's light block for a moby with rows `rows`, light word `light` (`+0x38`) and ambient (`+0x3c`), on the
+/// level's bank (crate::moby_light); None unlit.
+pub fn moby_lights(lv: &LevelMobys, rows: [V3; 3], light: u32, ambient: [u8; 3]) -> Option<rc_formats::moby_light::MobyLights> {
+    let l = lv.lighting.as_ref()?;
+    let bits = rows.map(|r| [r[0].to_bits(), r[1].to_bits(), r[2].to_bits(), 0]);
+    Some(rc_formats::moby_light::moby_lights(&bits, &l.bank, light, ambient, 0x80))
+}
+
 /// The loop's view of the engine.
 pub struct Host<'a> {
     pub lv: &'a LevelMobys,
@@ -479,7 +487,7 @@ impl CreatedDraw {
 
     /// Draws every live created moby with a class of the level (state < 0x80, not hidden): its slot shown with its
     /// class (`show_slot`: the entities, the slot's look), its record from its rows, scale and position, its pose from
-    /// its own animation (unlit for now: the moby lighting is milestone D). Slots whose moby went away are hidden.
+    /// its own animation, lit by its light word and ambient. Slots whose moby went away are hidden.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -539,7 +547,8 @@ impl CreatedDraw {
                     if let Some(p) = palette.get_mut(at + k) { *p = b; }
                 }
             }
-            let rec = moby_render::extra_record(&model, None, slot * SLOT_JOINTS);
+            let lights = moby_lights(lv, m.rows, m.light, m.ambient);
+            let rec = moby_render::extra_record(&model, lights.as_ref(), slot * SLOT_JOINTS);
             let at = slot as usize * moby_render::EXTRA_RECORD_SIZE;
             records[at..at + rec.len()].copy_from_slice(&rec);
         }

@@ -161,6 +161,10 @@ pub struct Moby {
     /// The port's: another moby moves or hides this one (a carrier, a group shown or hidden), so the engine keeps
     /// its draw following it even without an update of its own.
     pub drive: bool,
+    /// `+0x38`: the light word (byte 0 the directional light set, byte 1 the second, byte 2 their cross-fade) and
+    /// `+0x3c` the ambient (r, g, b; 0x80 = 1), as MobyProc lights the moby.
+    pub light: u32,
+    pub ambient: [u8; 3],
 }
 
 /// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
@@ -263,6 +267,8 @@ impl Moby {
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false,
+            // `0x311418`: `+0x38` = 0x40404000000000.
+            light: 0, ambient: [0x40; 3],
         };
         match class {
             Some(c) => {
@@ -453,6 +459,7 @@ impl MobyWorld {
             m.rot = b.rotation;
             m.group = b.group as i8;
             m.mode |= b.mode_bits as u16;
+            (m.light, m.ambient) = (b.light_word(), b.ambient_rgb());
             m.instance = Some(i);
             // `+0x68`: the record's pvar block (word 0x1a), its moby links made runtime indices.
             if b.o_class != 0 {

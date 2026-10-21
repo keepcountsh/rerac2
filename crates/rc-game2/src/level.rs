@@ -15,6 +15,8 @@ pub struct LevelData {
     pub paths: Vec<Vec<[f32; 4]>>,
     /// The trigger areas (`0x1b1a80`).
     pub areas: Vec<rc_formats::rac2::gameplay::Area>,
+    /// The light regions (`0x1c58c0`, crate::light).
+    pub light_regions: Vec<rc_formats::rac2::gameplay::LightRegion>,
 }
 
 impl LevelData {
@@ -28,6 +30,7 @@ impl LevelData {
             cylinders: v("cylinders"),
             paths: g::paths(gameplay).unwrap_or_default(),
             areas: g::areas(gameplay).map_err(|e| eprintln!("rac2: areas: {e}")).unwrap_or_default(),
+            light_regions: g::light_regions(gameplay).map_err(|e| eprintln!("rac2: light regions: {e}")).unwrap_or_default(),
         }
     }
 

@@ -191,8 +191,7 @@ pub fn load_mobys_with_gs(root: &Path, core: &LevelCore, core_data: &[u8], gamep
     let parse_time = t0.elapsed();
 
     let t0 = Instant::now();
-    // Going Commando's moby lighting is milestone D (docs/plan/rac2_bringup.md §6.3): none yet.
-    let lighting: Option<MobyLighting> = if rac2 { None } else { moby_light::load(root, gameplay_file)? };
+    let lighting: Option<MobyLighting> = if rac2 { moby_light::load_rac2(root, gameplay_file)? } else { moby_light::load(root, gameplay_file)? };
     let cpu_light = env_on("RC_MOBY_CPU_LIGHT");
     let check = env_on("RC_MOBY_LIGHT_CHECK");
     let by_class: HashMap<i32, usize> = classes.iter().enumerate().map(|(i, c)| (c.o_class, i)).collect();

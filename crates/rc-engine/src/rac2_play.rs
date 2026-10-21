@@ -346,6 +346,8 @@ fn tick(
     if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
         (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
         h.mode |= rc_game2::moby::mode::KEEP_ROWS;
+        // `0x2b2b48` → `0x31a8e4`: his light from the level's light regions where he is.
+        if let Some((light, ambient)) = rc_game2::light::region_light(&mobys.level.light_regions, h.pos) { (h.light, h.ambient) = (light, ambient); }
     }
     // The item pass (`0x2b21f0`): the hand item placed at Ratchet's new pose and updated.
     {
@@ -358,6 +360,12 @@ fn tick(
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
         rc_game2::hero::items::item_pass(&mut mobys.world, &mut ctx);
+    }
+    // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
+    if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
+        for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {
+            if let Some(m) = mobys.world.mobys.get_mut(id) { (m.light, m.ambient) = (light, ambient); }
+        }
     }
     // The head item's pose (slot 2, placed by the item pass): from his head.
     {
@@ -372,7 +380,7 @@ fn tick(
     }
     if let Some(o) = occl.as_mut() {
         for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, None, m.state >= 0x80 || m.mode & 1 != 0); }
+            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, crate::rac2_mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0); }
         }
     }
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), None, p.camera.pos, p.game.scenes.mode);
@@ -432,7 +440,8 @@ fn tick(
         );
     }
     if let Some(o) = occl.as_mut() {
-        o.drive(p.instance, p.hero.pos, p.hero.rows, p.scale, None, false);
+        let lights = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).and_then(|h| crate::rac2_mobys::moby_lights(&lv.mobys, p.hero.rows, h.light, h.ambient));
+        o.drive(p.instance, p.hero.pos, p.hero.rows, p.scale, lights.as_ref(), false);
         if let (Some(a), Some(k)) = (anim.as_mut(), o.anim_index(p.instance)) {
             let mut s = p.anim.state;
             s.skip_advance = true;
@@ -576,7 +585,10 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
             }
         } else {
             let m = mobys.world.create(o_class);
+            // `0x305428`: Ratchet's light word and ambient (none: ambient 0x38).
+            let lit = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map_or((0, [0x38; 3]), |h| (h.light, h.ambient));
             let a = &mut mobys.world.mobys[m];
+            (a.light, a.ambient) = lit;
             (a.draw_dist, a.drawn, a.update_dist, a.has_collision) = (0x1ff, 1, 0xff, false);
             a.mode |= mode::NO_UPDATE | mode::NO_MATRIX | mode::KEEP_ROWS;
             m
@@ -702,14 +714,15 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     if let Some(o) = occl.as_mut() {
         for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, None, m.state >= 0x80 || m.mode & 1 != 0); }
+            if let Some(ii) = m.instance { o.drive(ii, m.pos, m.rows, m.scale, crate::rac2_mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0); }
         }
         // Ratchet: at his track with the scene's sequence and his head's scale (`0x2d51f8`), else as he stands.
         let (pos, rows, state) = match hero_pose {
             Some((pos, state)) => (pos, identity, state),
             None => (p.hero.pos, p.hero.rows, p.anim.state),
         };
-        o.drive(p.instance, pos, rows, p.scale, None, false);
+        let lights = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).and_then(|h| crate::rac2_mobys::moby_lights(&lv.mobys, rows, h.light, h.ambient));
+        o.drive(p.instance, pos, rows, p.scale, lights.as_ref(), false);
         if let (Some(a), Some(k)) = (anim.as_mut(), o.anim_index(p.instance)) {
             let mut s = state;
             s.skip_advance = true;

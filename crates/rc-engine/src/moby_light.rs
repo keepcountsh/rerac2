@@ -36,6 +36,18 @@ pub fn load(root: &Path, gameplay: &[u8]) -> Result<Option<MobyLighting>> {
     Ok(Some(MobyLighting { bank, table }))
 }
 
+/// Going Commando's normal table: the boot ELF `SCUS_972.68` holds the same 256 entries at this address.
+pub const RAC2_NORMAL_TABLE_VADDR: u32 = 0x0023_8e80;
+
+/// [`load`] for a Going Commando level: the same light bank (gameplay word 0x04), the normal table from its boot ELF.
+pub fn load_rac2(root: &Path, gameplay: &[u8]) -> Result<Option<MobyLighting>> {
+    if std::env::var("RC_NO_LIGHT").is_ok_and(|v| v != "0") { return Ok(None); }
+    let bank = tfrag_light::parse_light_bank(gameplay).context("parsing directional lights")?;
+    let elf = crate::disc_source::read(root, "SCUS_972.68")?;
+    let table = NormalTable::from_elf(&elf, RAC2_NORMAL_TABLE_VADDR).context("reading the normal table from the boot ELF")?;
+    Ok(Some(MobyLighting { bank, table }))
+}
+
 /// Rotation rows of an instance as `fun_0020def8` stores them (moby+0xc0..0xef).
 pub fn instance_rows(m: &MobyInstance) -> [V4; 3] { moby_light::instance_rows(m.rotation, m.mode()) }
 
