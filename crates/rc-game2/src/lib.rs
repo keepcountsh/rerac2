@@ -8,6 +8,7 @@ pub mod camera;
 pub mod canopy;
 pub mod cameras;
 pub mod front_end;
+pub mod fx;
 pub mod game;
 pub mod gui;
 pub mod help;

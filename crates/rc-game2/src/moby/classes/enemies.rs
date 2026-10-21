@@ -339,7 +339,8 @@ pub fn update_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 //
 // Not ported: its sounds but the two, the debris and the burst (`0x3d8d90`, `0x3210a8`, `0x3f8348`), the shadow, the
 // colour flash, the head's and tail's aims (`0x324208` / `0x327308`, the joint records `+0x3d0` / `+0x450`), the
-// draw callbacks, the gravity frames.
+// emerge flash (`0x3d8920`), the gravity frames. Its glows and wire are draw callbacks (crate::fx); its flame jet is
+// particles ([`bite`]).
 
 /// `0x3d82c0`: the moby's group's burrowers (not dead) are woken (`+0x276` = 1).
 fn wake_burrowers(w: &mut MobyWorld, id: usize) {
@@ -484,15 +485,45 @@ fn checks_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
     false
 }
 
-/// `0x3d89f0(damage, m, 0, joint)`: three spheres of 0.3 along the joint's first row (at it, 0.85 and 1.6 out, the
-/// last two 0.1 lower).
-fn bite(w: &mut MobyWorld, id: usize, ctx: &Ctx, damage: f32, joint: usize) {
+/// `0x3d89f0(damage, m, 0, joint)`: the flame jet along the joint's second row. Three spheres of 0.3 (at it, 0.85 and
+/// 1.6 out, the last two 0.1 lower); each tick three flame sprites from the joint (jittered 0.1 more each, 0.2..0.4
+/// growing to 1..1.5 of 210000 over 7 ticks, 0.25 a tick along the jet, alpha 0x7f down to 0x20, `def[0x55]`) and a
+/// smoke puff at 0.85 out (type 0x2c with the frames of 0x17: 105000 growing 21000 a tick, rising 0.1 a tick, 15
+/// ticks, grey 0x606060 at 0x3c; half the time bright and additive).
+fn bite(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, damage: f32, joint: usize) {
     let Some((r, t)) = ctx.host.joint_matrix(&w.mobys[id], joint) else { return };
     let mut b = add(t, set_len(r[1], 0.85));
     let mut c = add(t, set_len(r[1], 1.6));
     b[2] -= 0.1;
     c[2] -= 0.1;
     for p in [t, b, c] { ai::attack_sphere(w, id, ctx, 0.3, damage, 1.0, p, 1, 0, 1, 0); }
+    let Some(sys) = ctx.parts.as_deref_mut() else { return };
+    let g = &mut ctx.game.rng;
+    let vel = set_len(r[1], 0.25);
+    let mut p = t;
+    for _ in 0..3 {
+        // `0x3217d8(0.1, p)`.
+        for k in 0..3 { p[k] += g.randf(-0.1, 0.1); }
+        let s0 = g.randf(0.2, 0.4) * 210_000.0;
+        let s1 = g.randf(1.0, 1.5) * 210_000.0;
+        let fall = g.randf_signed(0.0, 0.01);
+        crate::particles::sprite(sys, g, s0, s1, fall, p, vel, 7, 0x80_8080, 0x1e, 0x7f, 0x20, 0);
+    }
+    let def = sys.def_first(0x17);
+    if let Some(i) = crate::particles::spark(sys, g, 105_000.0, 21_000.0, 1.0, -0.0002, 0.0, b, [0.0, 0.0, 0.1], 0xf, 0x3c, 0x60_6060, 3) {
+        use rc_game::particles::rec;
+        let rc = &mut sys.pool.recs[i];
+        rc[3] = 0x44;
+        rc[2] = def;
+        if g.rand_range(0, 1) != 0 {
+            rc[3] = 0x48;
+            rec::set_u32(rc, 4, 0x0070_707f);
+            rec::set_i16(rc, 0x3e, 0x7f);
+            rc[0x31] = 0x70;
+            rc[0x32] = 0x70;
+            rc[0x33] = 0x70;
+        }
+    }
 }
 
 /// 0x0b0a (above).

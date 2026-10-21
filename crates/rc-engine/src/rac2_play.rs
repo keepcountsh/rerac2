@@ -93,6 +93,8 @@ struct Play {
     /// The level's objects spawned once (later spawns are respawns).
     loaded: bool,
     /// The level's scene file (`G/SCENEn.WAD`) and its table, read at the first scene.
+    /// This tick's draw-callback quads (rc_game2::fx), drawn by [`draw_shots`].
+    fx_quads: Vec<rc_game2::fx::FxQuad>,
     scene_wad: Option<(Vec<u8>, rc_formats::rac2::scene::SceneWad)>,
     /// The class sequence slots a scene's actors took (class, slot) and what the slots held before.
     scene_slots: Vec<(usize, usize, Option<rc_formats::moby_anim::MobySequence>)>,
@@ -386,6 +388,8 @@ fn tick(
     }
     // `UpdateParts` (`0x331150`), after the hero.
     if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys); }
+    // The draw callbacks the updates registered, called by the frame's draw (rc_game2::fx).
+    p.fx_quads = rc_game2::fx::callbacks(&mobys.world, &mut p.game.rng, p.camera.pos);
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
         for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {
@@ -1041,8 +1045,9 @@ fn draw_canopy(
     draw.slots.show(&mut commands, &mut vis, &mut a, groups, crate::fx_draw::LIST1_BIAS, "ship canopy");
 }
 
-/// The weapons' shot trails: the draw callback `0x3e4050` of every live Lancer shot (rc_game2's `shot::trail`), two
-/// additive ribbons through crate::fx_draw (FX 0x17 and 0xe; over the first 20 points, then again over all of them).
+/// The mobys' draw callbacks through crate::fx_draw: every live Lancer shot's trail (`0x3e4050`, rc_game2's
+/// `shot::trail`: two additive ribbons, FX 0x17 and 0xe, over the first 20 points, then again over all of them), then
+/// the quads the tick's callbacks made (rc_game2::fx).
 #[derive(Resource, Default)]
 struct ShotDraw {
     slots: crate::fx_draw::FxSlots,
@@ -1077,6 +1082,16 @@ fn draw_shots(
     }
     let [inner, outer] = bufs;
     let mut groups = Vec::new();
+    // The callbacks' quads, one group per texture and blend in the order they came.
+    if let Some(p) = play.as_ref() {
+        let mut keyed: Vec<((usize, bool), crate::fx_draw::PrimBuf)> = Vec::new();
+        for q in &p.fx_quads {
+            let k = (q.fx, q.additive);
+            let i = keyed.iter().position(|(kk, _)| *kk == k).unwrap_or_else(|| { keyed.push((k, crate::fx_draw::PrimBuf::default())); keyed.len() - 1 });
+            keyed[i].1.quad(q.corners, q.st, q.rgba);
+        }
+        for ((fx, additive), prims) in keyed { if !prims.is_empty() { groups.push(crate::fx_draw::FxGroup { fx, additive, subtract: false, prims }); } }
+    }
     if !inner.is_empty() { groups.push(crate::fx_draw::FxGroup { fx: 0x17, additive: true, subtract: false, prims: inner }); }
     if !outer.is_empty() { groups.push(crate::fx_draw::FxGroup { fx: 0xe, additive: true, subtract: false, prims: outer }); }
     let fog = fog.map(|f| f.uniform).unwrap_or_else(|| crate::game_camera::TfragFog::new(&level.0.fog));
@@ -1116,7 +1131,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
-        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9],
+        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9],
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
