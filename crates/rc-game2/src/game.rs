@@ -93,6 +93,9 @@ pub struct GameState {
     /// Aranos).
     pub area_ask: Vec<i16>,
     pub area_hero: Vec<bool>,
+    /// `0x2f50f8`'s request: the level to go to (`0x1b1940`; −1 the front end), the level's main loop ending
+    /// (`$gp − 0x611c`).
+    pub next_level: Option<i32>,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -108,12 +111,46 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(),
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None,
         }
     }
 }
 
 impl GameState {
+    /// `0x2f50f8(level, save)`: leave for `level` (−1: the front end). Not ported: the autosave `0x30d658(0, level)`
+    /// a `save` asks for.
+    pub fn go_to_level(&mut self, level: i32, _save: bool) { self.next_level = Some(level); }
+
+    /// The level start (`0x2a3b88`, `0x304660`): level `level` with this level's state fresh and the game's kept (the
+    /// bolts, the health and the XP, the items, the missions, the scenes seen, the help slots' counts). The per-level
+    /// save bytes (`0x19b4a8 + level·0x400`) are one level's here: a level visited again starts as new.
+    pub fn enter_level(&mut self, level: i32) {
+        let old = std::mem::take(self);
+        *self = GameState {
+            level,
+            bolts: old.bolts,
+            raritanium: old.raritanium,
+            max_health: old.max_health,
+            bolt_bank: old.bolt_bank,
+            xp_bank: old.xp_bank,
+            xp: old.xp,
+            rng: old.rng,
+            clank: old.clank,
+            thruster: old.thruster,
+            boots: old.boots,
+            charge_boots: old.charge_boots,
+            grind_boots: old.grind_boots,
+            nanotech: old.nanotech,
+            level_xp: old.level_xp,
+            missions: old.missions,
+            help_counts: old.help_counts,
+            items: old.items,
+            quick_select: old.quick_select,
+            scenes_seen: old.scenes_seen,
+            ..Default::default()
+        };
+    }
+
     /// `0x322730(item)`: the item had; a weapon or gadget (below 0x15, or 0x18) goes in the first free
     /// quick-select slot.
     pub fn give_item(&mut self, item: i32) {

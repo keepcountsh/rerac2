@@ -65,12 +65,23 @@ fn main() -> anyhow::Result<()> {
         println!("class {c:#06x} ({c:4}): {:3} × first at ({:.1}, {:.1}, {:.1}) pvars {pv} group {} upd {} flags {:#x}/{:#x} extra {:x?}",
             v.len(), m.position[0], m.position[1], m.position[2], m.group, m.update_distance, m.spawn_flags, m.mode_bits, v[0].extra);
     }
+    if let Ok(list) = std::env::var("CUBOIDS") {
+        let c = rac2::gameplay::volumes(&g, "cuboids")?;
+        for i in list.split(',').filter_map(|x| usize::from_str_radix(x.trim_start_matches("0x"), 16).ok()) {
+            if let Some(v) = c.get(i) { println!("cuboid {i:#x}: at {:?} extra {:?} rows {:?}", &v.matrix[3][..3], v.extra, &v.matrix[..3]); }
+        }
+    }
+    if std::env::var("SETTINGS").is_ok() {
+        if let Some(s) = rac2::gameplay::level_settings(&g)? {
+            for (i, c) in s.chunks(4).take(0x20).enumerate() { let b: [u8; 4] = c.try_into().unwrap(); println!("settings[{i:#x}] {:#010x} {}", u32::from_le_bytes(b), f32::from_le_bytes(b)); }
+        }
+    }
     let pv = rac2::gameplay::pvar_blocks(&g)?;
     if let Ok(k) = std::env::var("PVAR_CLASS") {
         let k: i32 = k.parse()?;
         for m in mobys.iter().filter(|m| m.base.o_class == k).take(std::env::var("PVAR_TAKE").ok().and_then(|s| s.parse().ok()).unwrap_or(3)) {
             let Some(b) = usize::try_from(m.base.pvar_index).ok().and_then(|i| pv.get(i)) else { continue };
-            println!("class {k} pvar {} ({:#x} bytes):", m.base.pvar_index, b.len());
+            println!("class {k} pvar {} ({:#x} bytes) at {:?}:", m.base.pvar_index, b.len(), m.base.position);
             for (r, c) in b.chunks(16).enumerate() {
                 let w: Vec<String> = c.chunks(4).map(|x| format!("{:08x}", u32::from_le_bytes(x.try_into().unwrap_or([0; 4])))).collect();
                 println!("  +{:03x}: {}", r * 16, w.join(" "));

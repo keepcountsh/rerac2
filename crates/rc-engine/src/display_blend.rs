@@ -125,11 +125,20 @@ impl Plugin for DisplayBlendPlugin {
 // ---------------------------------------------------------------------------------------------------
 // Render world
 
-/// The main-world entities that are effects (this frame).
+/// The main-world entities that are effects: this frame's, and the last frame's (an effect despawned this frame,
+/// as a level change despawns the old level's, can still have an item in the retained phase; an entity's
+/// generation keeps a reused id from matching).
 #[derive(Resource, Default)]
-struct EffectEntities(HashSet<MainEntity>);
+struct EffectEntities(HashSet<MainEntity>, HashSet<MainEntity>);
+
+impl EffectEntities {
+    fn contains(&self, e: &MainEntity) -> bool { self.0.contains(e) || self.1.contains(e) }
+    fn is_empty(&self) -> bool { self.0.is_empty() && self.1.is_empty() }
+}
 
 fn extract_effects(mut set: ResMut<EffectEntities>, q: Extract<Query<Entity, With<DisplayEffect>>>) {
+    let set = &mut *set;
+    std::mem::swap(&mut set.0, &mut set.1);
     set.0.clear();
     set.0.extend(q.iter().map(MainEntity::from));
 }
@@ -199,7 +208,7 @@ fn prepare_targets(
 ) {
     let Some(pipes) = pipes else { return };
     for (e, cam, view, target) in &views {
-        let has = phases.get(&view.retained_view_entity).is_some_and(|p| p.items.keys().any(|k| set.0.contains(&k.1)));
+        let has = phases.get(&view.retained_view_entity).is_some_and(|p| p.items.keys().any(|k| set.contains(&k.1)));
         let (Some(size), true) = (cam.physical_target_size, has) else {
             commands.entity(e).remove::<EffectTargets>();
             continue;
@@ -238,9 +247,9 @@ fn split_effects(
 ) {
     let view_entity = view.entity();
     let ev = view.into_inner();
-    if set.0.is_empty() { return; }
+    if set.is_empty() { return; }
     let Some(phase) = phases.get_mut(&ev.retained_view_entity) else { return };
-    let keys: Vec<_> = phase.items.keys().filter(|k| set.0.contains(&k.1)).copied().collect();
+    let keys: Vec<_> = phase.items.keys().filter(|k| set.contains(&k.1)).copied().collect();
     if keys.is_empty() { return; }
     let mut out = SortedRenderPhase::<Transparent3d>::default();
     for k in keys {

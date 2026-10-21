@@ -1164,14 +1164,36 @@ pub fn update_stub(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
 /// `0x29fc20[level]`: the scene lists of the level's scene triggers (0x0f6e's `+0x68`[8]); level 0's.
 const SCENES_L0: [&[i32]; 4] = [&[0x21], &[0x23], &[0x22], &[0x16]];
 
+/// 0x0f6e's reward (`0x40ffa0`, states 3 and 4): the item [9] (`0x322730`; equipping it, `0x325270`, is not ported),
+/// the mission done (`0x3132a8`), with [0xb] set (≥ 1; in the scenes' tick ≠ 0) and the word [0xc]'s top half the
+/// checkpoint at the cuboid [4] (else where Ratchet is; in the scenes' tick where it is), then with [0xc]'s low byte
+/// ≠ −1 the level change to it (`0x2f50f8(level, 1)`: Aranos's last trigger sends Ratchet to Oozla, level 1). Not
+/// ported: the autosave `0x30d658` it asks for otherwise.
+fn reward_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, in_scene_tick: bool) {
+    let m = &w.mobys[id];
+    let item = m.pv_b(9) as i8 as i32;
+    let g = &mut *ctx.game;
+    if item != -1 { g.give_item(item); }
+    if m.mission != 0xff && g.missions.get(g.level.max(0) as usize * 0x10 + m.mission as usize).is_some_and(|b| b & 0x80 == 0) { g.mission_done(m.mission); }
+    let b = m.pv_b(0xb) as i8;
+    let set = if in_scene_tick { b != 0 } else { 1 <= b };
+    if set && m.pv_i(0xc) as u32 & 0xffff_0000 != 0 {
+        match ctx.level.cuboid_place(m.pv_i(4)) {
+            Some((p, r)) => g.save_checkpoint(p, r),
+            None if in_scene_tick => g.save_checkpoint(m.pos, m.rot),
+            None => g.save_checkpoint(ctx.hero.pos, ctx.hero.rot),
+        }
+    }
+    let to = m.pv_i(0xc) as u8 as i8;
+    if to != -1 { g.go_to_level(to as i32, true); }
+}
+
 /// 0x0f6e (`0x40ffa0`, a scene trigger with a reward): gone at the start when its item `+0x68`[9] is had or its
 /// mission (`+0xb0`) done. Set off ([0xa], once-flag 2 `0x32a838`, or the timer byte `+0xbc`) with Ratchet in its
 /// cuboid [0] (and not in the ship, alive, the game not paused), it queues its scenes ([8] into `0x29fc20`; one not
 /// seen yet, or any with [0xd]; the first refused, it tries again) and starts them (crate::scene); after the scenes
-/// Ratchet is put at the cuboid [4] (`0x2b9e68`) —
-/// then gives the item (`0x322730`; equipping it, `0x325270`, is not ported), marks the mission done (`0x3132a8`),
-/// saves the checkpoint with [0xb] ≥ 1 and the word [0xc]'s top half (at [4], else where Ratchet is) and is
-/// deleted. Its message [0xc] (`0x2f50f8`) and the HUD's flash `0x30d658` are not ported.
+/// Ratchet is put at the cuboid [4] (`0x2b9e68`) and it gives its reward ([`reward_0f6e`]; on level 0 with an item,
+/// in the tick the scenes end too), then is deleted.
 pub fn update_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &w.mobys[id];
     let item = m.pv_b(9) as i8 as i32;
@@ -1222,22 +1244,18 @@ pub fn update_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         }
         3 => {
             // `0x371ba8`: until the scenes are over.
-            if g.scenes.in_scene() { return; }
-            if let Some((p, r)) = ctx.level.cuboid_place(m.pv_i(4)) {
-                ctx.hero.teleport(p, r);
-                ctx.hero.request_state(0, true);
+            if !g.scenes.in_scene() {
+                if let Some((p, r)) = ctx.level.cuboid_place(m.pv_i(4)) {
+                    ctx.hero.teleport(p, r);
+                    ctx.hero.request_state(0, true);
+                }
+                w.mobys[id].set_state(4, -1);
             }
-            w.mobys[id].set_state(4, -1);
+            if ctx.game.level != 0 || item == -1 || ctx.game.scenes.in_scene() { return; }
+            reward_0f6e(w, id, ctx, true);
         }
         4 => {
-            if item != -1 { g.give_item(item); }
-            if !done(g, m.mission) { g.mission_done(m.mission); }
-            if 1 <= m.pv_b(0xb) as i8 && m.pv_i(0xc) as u32 & 0xffff_0000 != 0 {
-                match ctx.level.cuboid_place(m.pv_i(4)) {
-                    Some((p, r)) => g.save_checkpoint(p, r),
-                    None => g.save_checkpoint(ctx.hero.pos, ctx.hero.rot),
-                }
-            }
+            reward_0f6e(w, id, ctx, false);
             w.delete(id);
         }
         _ => {}

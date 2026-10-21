@@ -43,8 +43,21 @@ impl Plugin for Rac2PlayPlugin {
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
             .add_systems(Update, (draw_created, draw_hud))
-            .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop));
+            .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
+            .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>));
     }
+}
+
+/// The game state a level change keeps (`GameState::enter_level` keeps its game-wide part), for the next level's
+/// [`start`].
+#[derive(Resource)]
+struct Carry(rc_game2::game::GameState);
+
+/// [`crate::level_switch::LevelUnload`]: the running game ends with its level; its game state is carried over.
+fn unload(mut commands: Commands, play: Option<Res<Play>>) {
+    let Some(p) = play else { return };
+    commands.insert_resource(Carry(p.game.clone()));
+    commands.remove_resource::<Play>();
 }
 
 #[derive(Resource)]
@@ -81,6 +94,8 @@ struct Play {
     /// The movie playing (mode 1) and its picture for the next draw.
     movie: Option<crate::rac2::Playing>,
     movie_picture: Option<Vec<u8>>,
+    /// The level being left (`0x2f50f8`): the game waits while the next one loads (crate::level_switch).
+    leaving: Option<i32>,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -101,6 +116,8 @@ fn tick(
     source: Res<CameraSource>,
     mut occl: Option<ResMut<MobyOcclusion>>,
     mut anim: Option<ResMut<MobyAnim>>,
+    carry: Option<Res<Carry>>,
+    mut change: ResMut<crate::level_switch::LevelChange>,
 ) {
     // The front end's layer is up: the game waits (as R&C1's tick does under its front end).
     if front.is_some_and(|f| !f.done()) { return; }
@@ -108,7 +125,12 @@ fn tick(
     // systems that watch the level for a new one.
     let level = level.bypass_change_detection();
     let Some(mut p) = play else {
-        if let Some(p) = start(&level.0) {
+        if let Some(mut p) = start(&level.0) {
+            let mut game = carry.map(|c| c.0.clone()).unwrap_or_default();
+            game.enter_level(crate::level_load::level_index() as i32);
+            p.hero.hp = game.max_health;
+            p.game = game;
+            commands.remove_resource::<Carry>();
             commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: crate::game_camera::FAR });
             commands.insert_resource(p);
         }
@@ -126,10 +148,13 @@ fn tick(
         let fresh = !p.loaded;
         let m = crate::rac2_mobys::Rac2Mobys::load(lv, blobs, &host, &mut p.game, fresh);
         p.loaded = true;
+        // The dev start switches, on the first level only.
+        static DEV_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let dev = fresh && !DEV_START.swap(true, std::sync::atomic::Ordering::Relaxed);
         // `RC_SCENES=0`: every scene counts as seen (no opening, no scene triggers' scenes).
-        if fresh && std::env::var("RC_SCENES").is_ok_and(|v| v.trim() == "0") { p.game.scenes_seen.iter_mut().for_each(|s| *s = true); }
+        if dev && std::env::var("RC_SCENES").is_ok_and(|v| v.trim() == "0") { p.game.scenes_seen.iter_mut().for_each(|s| *s = true); }
         // `RC_HERO_AT=x,y,z,yaw`: Ratchet starts there (as the checkpoint, so the arrival leaves him).
-        if let Some(v) = std::env::var("RC_HERO_AT").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|v| v.len() == 4) {
+        if let Some(v) = std::env::var("RC_HERO_AT").ok().filter(|_| dev).map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|v| v.len() == 4) {
             let (at, rot) = ([v[0], v[1], v[2]], [0.0, 0.0, v[3]]);
             p.hero.teleport(at, rot);
             p.game.checkpoint = Some((at, rot));
@@ -143,6 +168,20 @@ fn tick(
         p.game.cameras = rc_game2::cameras::Cameras::load(
             records.iter().map(|r| (r.class as i16, r.pos, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
         );
+    }
+    // `0x2f50f8`: the level's main loop ends; the next level loads (crate::level_switch) and replaces this one.
+    if let Some(to) = p.game.next_level.take() {
+        if to < 0 {
+            eprintln!("rac2: the game asks for the front end (level {to}): not ported, the level goes on");
+        } else if p.leaving.is_none() {
+            println!("rac2: leaving level {} for level {to}", p.game.level);
+            change.start_load(to as u32, Default::default());
+            p.leaving = Some(to);
+        }
+    }
+    if p.leaving.is_some() {
+        if change.loaded() { change.swap(); }
+        return;
     }
     // `0x32c858`: a scene or a movie starting or ending.
     mode_changes(p, &mut level.0);
@@ -644,7 +683,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim::new(&m.anim[class]),
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
-        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None,
+        scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None,
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })

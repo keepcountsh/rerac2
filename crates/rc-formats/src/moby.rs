@@ -621,10 +621,18 @@ pub fn parse_moby_class_for(game: crate::Game, blob: &[u8]) -> Result<MobyClass>
         let total = h.high_lod_count as usize + h.low_lod_count as usize + h.metal_count as usize;
         if h.metal_count > 0 && h.metal_begin as usize + h.metal_count as usize > total { return invalid("moby class: metal packets past the packet table"); }
         let entries: Vec<MobyPacketEntry> = b.pod_slice(h.packet_table_offset as usize, total, "moby packet table")?;
+        // Going Commando reads a class with byte 0xb set as one "in an old format" (L00 `0x2ffe70`): its high and low
+        // packets have R&C1's vertex table header, converted at load with the multiplier offset zeroed (no RGBA
+        // multipliers), and the byte cleared.
+        let old = game == crate::Game::Rac2 && h.rac1_byte_b != 0;
         // Vertex cache, VU0 slots and GS texture state carry across the packets of one list.
         let list = |first: usize, count: usize, is_metal: bool, out: &mut Vec<MobySubmesh>| -> Result<()> {
             let mut st = ListState::new();
-            for e in &entries[first..first + count] { out.push(read_packet(game, b, e, is_metal, &mut st)?); }
+            for e in &entries[first..first + count] {
+                let mut sub = read_packet(if old && !is_metal { crate::Game::Rac1 } else { game }, b, e, is_metal, &mut st)?;
+                if old { sub.rgba_multipliers.clear(); }
+                out.push(sub);
+            }
             Ok(())
         };
         list(0, h.high_lod_count as usize, false, &mut high_lod)?;
@@ -635,6 +643,8 @@ pub fn parse_moby_class_for(game: crate::Game, blob: &[u8]) -> Result<MobyClass>
     let mut skeleton = MobySkeleton::default();
     if h.skeleton > 0 && jc > 0 { skeleton.matrices = b.pod_slice::<[[f32; 4]; 4]>(h.skeleton as usize, jc, "moby skeleton")?; }
     if h.common_trans > 0 && jc > 0 { skeleton.trans = b.pod_slice(h.common_trans as usize, jc, "moby common trans")?; }
+    let mut h = h;
+    if game == crate::Game::Rac2 { h.rac1_byte_b = 0; }
     Ok(MobyClass { header: h, sequence_pointers, high_lod, low_lod, metal, skeleton })
 }
 

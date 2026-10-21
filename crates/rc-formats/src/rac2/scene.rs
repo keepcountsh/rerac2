@@ -91,16 +91,23 @@ impl SceneWad {
         Ok(SceneWad { records })
     }
 
-    /// Record `k`'s scene: its chunks decompressed and parsed (NTSC); `None` for an unused record.
+    /// Record `k`'s scene: its chunks decompressed and parsed (NTSC); `None` for an unused record. Its length (the
+    /// first chunk's end tick, 96 ticks a chunk) says how many chunks it has: a record may list the 1-sector sentinel
+    /// as one more (Aranos's record 2).
     pub fn scene(&self, wad: &[u8], k: usize) -> Result<Option<Scene>> {
         let Some(r) = self.records.get(k) else { return Ok(None) };
         if r.chunk_count() == 0 { return Ok(None); }
         let mut chunks = Vec::with_capacity(r.chunk_count());
-        for i in 0..r.chunk_count() {
+        let mut count = r.chunk_count();
+        let mut i = 0;
+        while i < count {
             let range = r.chunk_bytes(i).expect("chunk");
             let Some(bytes) = wad.get(range.clone()) else { return invalid(format!("SCENE.WAD record {k} chunk {i}: {range:?} past the end")) };
             let dec = crate::wad::decompress(bytes)?;
-            chunks.push(parse_scene_chunk(&dec, i, Region::Ntsc)?);
+            let c = parse_scene_chunk(&dec, i, Region::Ntsc)?;
+            if i == 0 { count = count.min((c.header.end_tick.max(0) as usize).div_ceil(Region::Ntsc.ticks_per_chunk() as usize).max(1)); }
+            chunks.push(c);
+            i += 1;
         }
         Ok(Some(Scene::from_chunks(k, Region::Ntsc, chunks)?))
     }
