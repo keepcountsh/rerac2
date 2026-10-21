@@ -492,7 +492,7 @@ pub fn update_0ac4(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let m = &w.mobys[id];
         let (a, b, group) = (m.pv_i(0x14), m.pv_i(0x18), m.pv_i(0x1c));
         show_group(w, group, false);
-        let near = crate::hero::physics::dist(w.mobys[id].pos, p) < 6.0;
+        let near = crate::hero::physics::dist2(w.mobys[id].pos, p) < 6.0;
         if near && !ctx.level.in_cuboid(a, p) && !ctx.level.in_cuboid(b, p) {
             w.mobys[id].state = 1;
             set_seq(w, id, ctx, 1, 0, 0);
@@ -602,7 +602,7 @@ pub fn update_0ac2(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { lift(w, id, ct
 pub fn update_0aca(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { lift(w, id, ctx, Lift { aca: true }) }
 
 fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
-    use crate::hero::physics::{dist, spring};
+    use crate::hero::physics::{dist, dist2, spring};
     let (old, old_yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
     let hp = ctx.hero.pos;
     let (vel, vol) = if l.aca { (0xa8, 0xa4) } else { (0xa4, 0xa8) };
@@ -629,7 +629,7 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
     // There: waits while Ratchet is near, then the pad back at the end `at`.
     let arrive = |w: &mut MobyWorld, ctx: &mut Ctx, at: i32| {
         let h = w.mobys[id].pv_i(0x88);
-        let d = dist(w.mobys[id].pos, hp);
+        let d = dist2(w.mobys[id].pos, hp);
         let wait = if l.aca { on_pad(w, ctx) || (d <= 2.0 && w.mobys[id].pos[2] <= hp[2]) } else { d <= 1.2 };
         if h != -1 { ctx.host.stop_sound(h); }
         w.mobys[id].set_pv_i(0x88, -1);
@@ -682,14 +682,14 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
         1 => {
             let m = &mut w.mobys[id];
             m.set_pv_f(0xa0, crate::hero::physics::add_rot(m.pv_f(0xa0), 0.104_719_76));
-            if !l.aca && dist(m.pos, hp) < 6.0 && seq(w, id, ctx) == 2 { ctx.host.set_anim(&w.mobys[id], 1, 0, 6); }
+            if !l.aca && dist2(m.pos, hp) < 6.0 && seq(w, id, ctx) == 2 { ctx.host.set_anim(&w.mobys[id], 1, 0, 6); }
             let at = w.mobys[id].pv_i(0x80);
             let z = w.mobys[id].pos[2];
             let dz = (z - hp[2]).abs();
             if on_pad(w, ctx) {
                 start(w, ctx, if at == 0 { 3 } else { 2 });
             } else if l.aca {
-                if 6.0 < dz && at == 0 && dist(w.mobys[id].pos, hp) < 25.0 {
+                if 6.0 < dz && at == 0 && dist2(w.mobys[id].pos, hp) < 25.0 {
                     start(w, ctx, 3);
                 } else if 6.0 < dz && at == 1 {
                     start(w, ctx, 2);
@@ -746,7 +746,7 @@ fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] { [a[0] + b[0], a[1] + b[1], a[2] 
 /// 3 below; down it drops 0.08 a tick, slowing (k 0.02, d 0.3) and held over Ratchet once he is in the cuboid [0xb0].
 /// It waits at the top while he is within 1.2, at the bottom within 1 (the sound 1, the tweak released).
 pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
-    use crate::hero::physics::{dist, ease, spring};
+    use crate::hero::physics::{dist, dist2, ease, spring};
     let (old, old_yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
     let hp = ctx.hero.pos;
     let pad = |w: &MobyWorld| usize::try_from(w.mobys[id].pv_i(0xa0)).ok().filter(|&i| i < w.mobys.len());
@@ -836,7 +836,7 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 m.pos[2] = z;
                 m.set_pv_f(0xac, v);
                 m.set_pv_i(0x84, m.pv_i(0x84) + 1);
-            } else if 1.2 < dist(m.pos, hp) {
+            } else if 1.2 < dist2(m.pos, hp) {
                 release(w, ctx);
                 w.mobys[id].set_pv_i(0x80, 0);
                 stop_loop(w, ctx);
@@ -867,7 +867,7 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                     m.set_pv_f(0xac, v);
                     m.set_pv_i(0x84, m.pv_i(0x84) + 1);
                 }
-            } else if dist(m.pos, hp) <= 1.0 {
+            } else if dist2(m.pos, hp) <= 1.0 {
                 release(w, ctx);
                 stop_loop(w, ctx);
             } else {
