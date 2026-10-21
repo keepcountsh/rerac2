@@ -648,14 +648,15 @@ fn ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
     place_ship_parts(w, ship, ctx);
 }
 
-/// `0x384d28(ship)`: each part shown, at the ship with the rows of its joint 0 (in a scene at its joint 1 less
-/// (4.192, 0, 1.355) through them); with the ship's collision in play.
-fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
+/// `0x384d28(ship)`: each part shown, at the ship with the rows of its joint 0 (in a scene, for the arrival's ship,
+/// at its joint 1 less (4.192, 0, 1.355) through them); with the ship's collision in play. A scene's own ship actor
+/// takes them at itself (`actor`: the original's frames show them so).
+pub fn place_ship_parts_on(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx, actor: bool) {
     let (rows, _) = ctx.host.joint_matrix(&w.mobys[ship], 0).unwrap_or((w.mobys[ship].rows, w.mobys[ship].pos));
     let rows = rows.map(|r| set_len(r, 1.0));
     let mut pos = w.mobys[ship].pos;
     let in_scene = ctx.game.scenes.mode == crate::scene::SCENE;
-    if in_scene {
+    if in_scene && !actor {
         if let Some(j) = ctx.host.joint(&w.mobys[ship], 1) {
             let o = [-4.192_877, 0.0, -1.355];
             pos = add(j, add(add(scale(rows[0], o[0]), scale(rows[1], o[1])), scale(rows[2], o[2])));
@@ -674,6 +675,8 @@ fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
         w.rebuild(p, &*ctx.host);
     }
 }
+
+fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) { place_ship_parts_on(w, ship, ctx, false) }
 
 /// Shows or hides the members of a group (more than one alive): hidden is mode |= 0x43 without collision, shown
 /// mode &= !0x43 with the class's collision.

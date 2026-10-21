@@ -40,11 +40,13 @@ impl Plugin for Rac2PlayPlugin {
         app.insert_resource(if fly { CameraSource::Fly } else { CameraSource::Play })
             .insert_resource(Rac2Script(script))
             .init_resource::<PadFrame>()
+            .init_resource::<CanopyDraw>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
             .add_systems(FixedUpdate, tick)
-            .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created), draw_canopy))
+            .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created)))
+            .add_systems(PostUpdate, draw_canopy.before(bevy::asset::AssetEventSystems))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
-            .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>, crate::level_switch::remove::<CanopyDraw>));
+            .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::rac2_mobys::CreatedDraw>, crate::level_switch::reset::<CanopyDraw>));
     }
 }
 
@@ -690,6 +692,9 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
             let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level };
             rc_game2::hero::items::head_pass(&mut mobys.world, &mut ctx);
+            // The ship's parts on the scene's ship, the one drawn, at itself (as the original's frames show them).
+            let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
+            if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game2::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
         }
         let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods };
         mobys.skin_head(lv, p.hero.items.head, Some(&pose));
@@ -955,23 +960,11 @@ fn canopy_tick(mobys: &mut crate::rac2_mobys::Rac2Mobys, lv: &crate::level_load:
     mobys.canopy_frame = Some(canopy.draw(rows, at, m.pos, camera, mode));
 }
 
-/// The canopy's mesh (crate::rac2 Aranos): the frame's strips with the effect texture 0x15, tinted and blended.
-#[derive(Resource)]
+/// The canopy's draw: a list-1 draw callback (crate::fx_draw: FX 0x15, MODULATE, ALPHA 0x44 on the display bytes, as
+/// R&C1's ship glass `0x2a70a8` draws).
+#[derive(Resource, Default)]
 struct CanopyDraw {
-    entity: Entity,
-    mesh: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
-    shown: bool,
-}
-
-fn canopy_mesh(f: &rc_game2::canopy::CanopyFrame) -> Mesh {
-    use bevy::mesh::{Indices, PrimitiveTopology};
-    let idx: Vec<u32> = f.strips.iter().flat_map(|q| [q[0], q[1], q[2], q[2], q[1], q[3]].map(u32::from)).collect();
-    Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, f.verts.iter().map(|v| crate::tfrag_render::game_to_bevy(*v).to_array()).collect::<Vec<_>>())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; f.verts.len()])
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, f.uvs.clone())
-        .with_inserted_indices(Indices::U32(idx))
+    slots: crate::fx_draw::FxSlots,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -979,41 +972,29 @@ fn draw_canopy(
     mut commands: Commands,
     level: Res<crate::Level>,
     play: Option<Res<Play>>,
-    draw: Option<ResMut<CanopyDraw>>,
+    mut draw: ResMut<CanopyDraw>,
+    fog: Option<Res<crate::game_camera::GameFog>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<crate::fx_draw::FxPrimMaterial>>,
+    mut vis: Query<&mut Visibility>,
 ) {
     let frame = play.as_ref().and_then(|p| p.mobys.as_ref()).and_then(|m| m.canopy_frame.as_ref());
-    let Some(mut d) = draw else {
-        let Some(f) = frame else { return };
-        let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(rc_game2::canopy::TEXTURE)).and_then(|t| t.as_ref()) else { return };
-        use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
-        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-        let mut img = Image::new_uninit(Extent3d { width: t.width, height: t.height, depth_or_array_layers: 1 }, TextureDimension::D2, TextureFormat::Rgba8UnormSrgb, bevy::asset::RenderAssetUsages::RENDER_WORLD);
-        // Alpha 0x80 = 1.
-        img.data = Some(t.rgba.chunks(4).flat_map(|c| [c[0], c[1], c[2], (c[3] as u16 * 2).min(255) as u8]).collect());
-        let linear = ImageFilterMode::Linear;
-        img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor { address_mode_u: ImageAddressMode::ClampToEdge, address_mode_v: ImageAddressMode::ClampToEdge, mag_filter: linear, min_filter: linear, ..default() });
-        let image = images.add(img);
-        // The colour modulates the texture (0x80 = 1), in the PS2's gamma space.
-        let c = f.rgba.map(|v| v as f32 / 128.0);
-        let material = mats.add(StandardMaterial { base_color: Color::srgba(c[0], c[1], c[2], c[3]), base_color_texture: Some(image), unlit: true, alpha_mode: AlphaMode::Blend, cull_mode: None, double_sided: true, fog_enabled: false, ..default() });
-        let mesh = meshes.add(canopy_mesh(f));
-        let entity = commands.spawn((Name::new("ship canopy"), Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), Transform::IDENTITY, Visibility::Inherited, bevy::camera::visibility::NoFrustumCulling)).id();
-        commands.insert_resource(CanopyDraw { entity, mesh, material, shown: true });
-        return;
-    };
-    match frame {
-        Some(f) => {
-            if let Some(mut m) = meshes.get_mut(&d.mesh) { *m = canopy_mesh(f); }
-            let c = f.rgba.map(|v| v as f32 / 128.0);
-            let want = Color::srgba(c[0], c[1], c[2], c[3]);
-            if let Some(mut m) = mats.get_mut(&d.material) { if m.base_color != want { m.base_color = want; } }
-            if !d.shown { commands.entity(d.entity).insert(Visibility::Inherited); d.shown = true; }
+    let mut groups = Vec::new();
+    if let Some(f) = frame {
+        let [r, g, b, a] = f.rgba.map(u32::from);
+        let rgba = r | g << 8 | b << 16 | a << 24;
+        let mut prims = crate::fx_draw::PrimBuf::default();
+        for q in &f.strips {
+            let k = q.map(|i| i as usize);
+            prims.quad(k.map(|i| f.verts[i]), k.map(|i| f.uvs[i]), [rgba; 4]);
         }
-        None => if std::mem::take(&mut d.shown) { commands.entity(d.entity).insert(Visibility::Hidden); },
+        groups.push(crate::fx_draw::FxGroup { fx: rc_game2::canopy::TEXTURE, additive: false, subtract: false, prims });
     }
+    let fog = fog.map(|f| f.uniform).unwrap_or_else(|| crate::game_camera::TfragFog::new(&level.0.fog));
+    let tex = level.0.particles.textures.as_ref().map(|t| t.fx_textures.as_slice());
+    let mut a = crate::fx_draw::FxAssets { meshes: &mut meshes, images: &mut images, materials: &mut materials, fx: tex, fog };
+    draw.slots.show(&mut commands, &mut vis, &mut a, groups, crate::fx_draw::LIST1_BIAS, "ship canopy");
 }
 
 /// The hero at Ratchet's instance (class 0).
