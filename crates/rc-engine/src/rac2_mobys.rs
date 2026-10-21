@@ -150,15 +150,12 @@ impl Host<'_> {
         }
     }
 
-    /// A created moby's animation, at its class's first sequence (`InitMobyInstance` → `0x3116e0`: with its trigger
-    /// count, header `+0x12`, so its sound triggers play: the Lancer's equip), unless it has one.
+    /// A created moby's animation, at its class's first sequence (`InitMobyInstance`), unless it has one.
     fn spawn_created(&mut self, m: &Moby) {
         if self.created.contains_key(&m.index) || self.placed_index(m).is_some() { return; }
         let Some(ci) = self.class_of(m.o_class) else { return };
         let Some(ac) = self.lv.anim.get(ci) else { return };
-        let mut st = AnimState::spawn(ac);
-        st.trigger_count = ac.sequence(0).map_or(0, |q| q.header.trigger_count);
-        self.created.insert(m.index, Created { class: ci, state: st, snapshot: None, serial: m.serial });
+        self.created.insert(m.index, Created { class: ci, state: AnimState::spawn(ac), snapshot: None, serial: m.serial });
     }
 
     fn class_of(&self, o_class: i16) -> Option<usize> { self.lv.classes.iter().position(|c| c.o_class == o_class as i32) }

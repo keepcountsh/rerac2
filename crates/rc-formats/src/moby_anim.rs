@@ -379,11 +379,13 @@ pub struct AnimState {
 }
 
 impl AnimState {
-    /// `init_moby_instance` (0x20c5f0): zeroed struct (seq 0, frames 0/0, t = 0), speed = rate = 1. A
-    /// class with exactly one sequence of ≤ 1 frame gets speed 0, and mode 0x40 when that sequence's
-    /// loop-sound byte has bit 7 set.
+    /// `init_moby_instance` (0x20c5f0): zeroed struct (seq 0, frames 0/0, t = 0), speed = rate = 1, and its
+    /// `update_moby_animation_state` (0x263718; R&C2 `0x3116e0`): +0x7e = sequence 0's trigger count, so its sound
+    /// triggers play on the first pass. A class with exactly one sequence of ≤ 1 frame gets speed 0, and mode 0x40
+    /// when that sequence's loop-sound byte has bit 7 set.
     pub fn spawn(class: &MobyAnimClass) -> AnimState {
-        let mut s = AnimState { seq_a: 0, frame_a: 0, seq_b: 0, frame_b: 0, t: 0.0, speed: 1.0, rate: 1.0, flags: 0, trigger_count: 0, skip_advance: false };
+        let trigger_count = class.sequence(0).map_or(0, |q| q.header.trigger_count);
+        let mut s = AnimState { seq_a: 0, frame_a: 0, seq_b: 0, frame_b: 0, t: 0.0, speed: 1.0, rate: 1.0, flags: 0, trigger_count, skip_advance: false };
         if class.sequences.len() == 1 {
             if let Some(q) = &class.sequences[0] {
                 if q.header.frame_count <= 1 {
