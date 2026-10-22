@@ -17,8 +17,7 @@
 //! 3 at 1.75: spheres of 0.17 at its joints 0..3 doing `+0x2b0`; his hurt by it → 9; out of reach after 2 s → the
 //! chase); 9 20 ticks, then 10 sequence 4 to its end, then the chase. It bobs 0.1 and sways 8° once `+0x272` is out.
 //!
-//! Not ported: its sounds (`0x3605f0`), the death's burst (`0x3f8348`), the shadow (`0x31da58`), the lighting
-//! (`0x31a8e4`).
+//! Not ported: its sounds (`0x3605f0`), the shadow (`0x31da58`), the lighting (`0x31a8e4`).
 
 use crate::hero::physics::*;
 use crate::moby::ai;
@@ -189,6 +188,8 @@ pub fn update_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 let h = w.mobys[id].pv_i(0x2a8);
                 if h != -1 { ctx.host.stop_sound(h); }
                 w.mobys[id].set_pv_i(0x2a8, -1);
+                let at = w.mobys[id].pos;
+                crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.3, bursts: [0; 3], puffs: 0x14, streaks: 0x2d });
                 ctx.host.play_sound(&w.mobys[id], 0, 0);
                 crate::moby::bolts::drop(w, id, 0, 3, ctx);
                 w.delete(id);
@@ -338,10 +339,24 @@ pub fn update_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 // along its joint 4 doing `+0x298`), else it walks up to 2.8 of him (its yaw offset `+0x284`) or turns to him; 0xd the
 // bite's turn; 0xe after a bite: farther than 4, the fight (0x1c), else sequence 7.
 //
-// Not ported: its sounds but the two, the debris and the burst (`0x3d8d90`, `0x3210a8`, `0x3f8348`), the shadow, the
+// Not ported: its sounds but the two, the burst `0x3210a8`, the pieces' burning (`0x3d8f70`, with `+0x2b4`), the shadow, the
 // head's and tail's aims (`0x324208` / `0x327308`, the joint records `+0x3d0` / `+0x450`), the
 // emerge flash (`0x3d8920`), the gravity frames. Its glows and wire are draw callbacks (crate::fx); its flame jet is
 // particles ([`bite`]).
+
+/// The burrowers' deaths (0x0b0a `0x3d6ea0`, 0x0b0b `0x3d9870`): no collision, out of the target list; a blast 0.75
+/// up its rows (0.5: five of each blast sprite); its pieces 3..9 (0x0b0a's `0x3d8d90`: 3..10) thrown at `speeds` a
+/// second across and up, plus a twentieth of its knock's velocity (the reaction block's `+0x80`).
+fn die(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, speeds: (f32, f32)) {
+    let m = &mut w.mobys[id];
+    m.mode = (m.mode | 0x41) & !crate::moby::mode::TARGET;
+    m.has_collision = false;
+    let at = add(m.pos, scale(m.rows[2], 0.75));
+    let knock = scale(m.pv_v(ai::react(m) + 0x80), 0.05);
+    let mask = if m.o_class == 0x0b0a { 0x7f8 } else { 0x3f8 };
+    crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.5, bursts: [5; 3], puffs: 0, streaks: 0 });
+    crate::moby::shards::break_into(w, id, ctx, speeds, speeds, mask, knock, 0xff);
+}
 
 /// `0x3d82c0`: the moby's group's burrowers (not dead) are woken (`+0x276` = 1).
 fn wake_burrowers(w: &mut MobyWorld, id: usize) {
@@ -628,6 +643,7 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             if res & 1 != 0 || w.mobys[id].pv_f(0x20) <= 0.0 {
                 ctx.host.play_sound(&w.mobys[id], 0xc, 0);
                 if let Some(hm) = ai::link(&w.mobys[id], 0x2ac).filter(|&h| w.mobys.get(h).is_some_and(|m| m.o_class == 0x0ab7)) { w.delete(hm); }
+                die(w, id, ctx, (3.0, 5.0));
                 crate::moby::bolts::drop(w, id, 0, 3, ctx);
                 w.delete(id);
                 return;
@@ -841,7 +857,7 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 // (sequence 0x11, its parts still through frames 12..15). The parts spin 8° a tick but on the ground, as a mound or
 // in the flight.
 //
-// Not ported: its sounds but the two, the debris and the bursts (`0x3210a8`, `0x3f8348`, `0x327498`), the parts'
+// Not ported: its sounds but the two, the burst `0x3210a8`, the parts'
 // sparks (`0x3dbc20`), the bite's trail (`0x3dbde8`, `0x3dbe88`, `0x3dc100`), the shadow, the head's
 // aims (`0x324208`, `0x327308`), the draw callbacks, the scene's hiding (`0x1a8f00` = 2).
 
@@ -1202,6 +1218,7 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 ctx.host.play_sound(&w.mobys[id], 0xd, 0);
                 delete_parts(w, id, 0x2a0);
                 delete_mound(w, id);
+                die(w, id, ctx, (3.0, 6.0));
                 crate::moby::bolts::drop(w, id, 0, 3, ctx);
                 w.delete(id);
                 return;

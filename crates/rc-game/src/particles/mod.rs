@@ -11,6 +11,8 @@
 //! | 0x30 | [`drift`] `0x33a1c0` | `0x33a2e8` = R&C1's type 48 (`crate::particles::type48::update48`) | drifting smoke: fades in and out over the life |
 //! | 0x55 | [`sprite`] `0x33ef78` | `+0x3c` = `0x33f120` ([`update_sprite`]) | sprites: alpha and size tweened over the life |
 //! | 0x59 | [`glow`] `0x33f550` | `0x33f6e8` ([`update_glow`]) | a glow riding a moby (the hand item's), pulled toward the camera |
+//! | 0x5a | [`streak`] `0x33f940` | `0x33fa58` ([`update_streak`]) | streaks: a ribbon from the point back along its last move |
+//! | 0x61 | [`burst`] `0x340830` | `0x3409a8` ([`update_burst`]) | the blasts' sprites: size and alpha stepped over the life |
 //!
 //! Any other type kills itself on its first update. The gravity direction (`0x18a0e0`) is (0, 0, −1): normal gravity.
 //! Not ported: the gravity-boots bend of the positions (`0x380e08`, `+0x1c` = 2).
@@ -227,6 +229,99 @@ pub fn glow(sys: &mut Particles, rng: &mut Rng, size: f32, pull: f32, offset: [f
     Some(i)
 }
 
+/// `0x33f940(fall, pos, vel, life)`: a streak (type 0x5a, a ribbon: record kind 3) at `pos` moving `vel` a tick (its z
+/// falling `fall` more each tick), its tail 0.9 of a move behind; both colours white at full alpha, fading over its last
+/// `life − 15` ticks; widths 0.05 and twice that; additive, near 2 / far 64.
+pub fn streak(sys: &mut Particles, fall: f32, pos: [f32; 3], vel: [f32; 3], life: i16) -> Option<usize> {
+    let i = sys.create_part(0x5a)?;
+    let def = sys.def_first(0x5a);
+    let r = &mut sys.pool.recs[i];
+    rec::set_u32(r, 0xc, 0x7fff_ffff);
+    rec::set_u32(r, 4, 0x7fff_ffff);
+    r[9] = 2 + 0x20;
+    r[1] = 3;
+    r[3] = 0x48;
+    r[2] = def;
+    rec::set_v3(r, 0x30, vel);
+    rec::set_ff(r, 0x3c, fall);
+    rec::set_v3(r, 0x10, pos);
+    rec::set_v3(r, 0x20, std::array::from_fn(|k| pos[k] - vel[k] * 0.9));
+    rec::set_i16(r, 0xa, life);
+    rec::set_ff(r, 0x1c, 0.05);
+    rec::set_ff(r, 0x2c, 2.0);
+    r[8] = (life - 15) as u8;
+    Some(i)
+}
+
+/// `0x33fa58`: the life down (out: killed); one of its type's first two frames; the point moves, the tail follows 0.9
+/// of the move behind, the velocity's z falls; under `+8` ticks left both alphas go down with the life.
+pub fn update_streak(sys: &mut Particles, i: usize, rng: &mut Rng) {
+    if dec_life(&mut sys.pool.recs[i]) {
+        sys.kill_part(i);
+        return;
+    }
+    let k = rng.randi(2) as usize;
+    let def = sys.def_frame(0x5a, k);
+    let r = &mut sys.pool.recs[i];
+    r[2] = def;
+    let (p, v) = (rec::v3(r, 0x10), rec::v3(r, 0x30));
+    let q: [f32; 3] = std::array::from_fn(|k| p[k] + v[k]);
+    rec::set_v3(r, 0x10, q);
+    rec::set_v3(r, 0x20, std::array::from_fn(|k| q[k] - (q[k] - p[k]) * 0.9));
+    rec::set_ff(r, 0x2c, 2.0);
+    rec::set_ff(r, 0x38, rec::ff(r, 0x38) - rec::ff(r, 0x3c));
+    let life = rec::i16(r, 0xa);
+    if life < r[8] as i16 {
+        let a = ((life as f32 / r[8] as f32) * 127.0) as i32 as u32;
+        for o in [4, 0xc] { rec::set_u32(r, o, a << 24 | rec::u32(r, o) & 0xff_ffff); }
+    }
+}
+
+/// `0x340830(size0, size1, fall, pos, vel, life, rgb, spin, alpha0, alpha1, frame)`: a blast sprite (type 0x61) at `pos`
+/// moving `vel` a tick (its z falling `fall` more each tick), its size from `size0` toward `size1` and its alpha from
+/// `alpha0` toward `alpha1` in steps over `life` ticks, turning `spin` a tick from a random angle, frame `frame` of its
+/// type's list; additive, near 1 / far 128.
+#[allow(clippy::too_many_arguments)]
+pub fn burst(sys: &mut Particles, rng: &mut Rng, size0: f32, size1: f32, fall: f32, pos: [f32; 3], vel: [f32; 3], life: i16, rgb: u32, spin: u8, alpha0: i32, alpha1: i32, frame: usize) -> Option<usize> {
+    let i = sys.create_part(0x61)?;
+    let rot = rng.randi(0xff) as u8;
+    let def = sys.def_frame(0x61, frame);
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, pos);
+    rec::set_u32(r, 4, (alpha0 as u32) << 24 | rgb);
+    r[1] = 0;
+    rec::set_ff(r, 0xc, size0);
+    r[3] = 0x48;
+    r[9] = 4 + 0x40;
+    r[8] = rot;
+    rec::set_i16(r, 0xa, life);
+    r[2] = def;
+    rec::set_v3(r, 0x20, vel);
+    rec::set_ff(r, 0x2c, fall);
+    r[0x35] = spin;
+    rec::set_ff(r, 0x30, (size1 - size0) / life as f32);
+    r[0x34] = ((alpha1 - alpha0) / life.max(1) as i32) as u8;
+    Some(i)
+}
+
+/// `0x3409a8`: the life down (out: killed); the alpha steps, the position moves, the velocity's z falls, the angle turns
+/// and the size grows.
+pub fn update_burst(sys: &mut Particles, i: usize) {
+    let r = &mut sys.pool.recs[i];
+    if dec_life(r) {
+        sys.kill_part(i);
+        return;
+    }
+    let c = rec::u32(r, 4);
+    let a = ((c as i32 >> 24) + r[0x34] as i32) as u32;
+    rec::set_u32(r, 4, c & 0xff_ffff | a.wrapping_shl(24));
+    let (p, v) = (rec::v3(r, 0x10), rec::v3(r, 0x20));
+    rec::set_v3(r, 0x10, [p[0] + v[0], p[1] + v[1], p[2] + v[2]]);
+    rec::set_ff(r, 0x28, rec::ff(r, 0x28) - rec::ff(r, 0x2c));
+    r[8] = r[8].wrapping_add(r[0x35]);
+    rec::set_ff(r, 0xc, rec::ff(r, 0xc) + rec::ff(r, 0x30));
+}
+
 /// `0x33f6e8`: the life down (out, or its moby gone: killed); at its moby's position plus its rows × the offset, then
 /// pulled toward the camera at `cam` by its pull.
 pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld, cam: [f32; 3]) {
@@ -255,8 +350,8 @@ pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld
 }
 
 /// `UpdateParts` `0x331150`: every live record up to the high water mark at entry, in pool order (the mobys and the
-/// camera for the glows that ride a moby).
-pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f32; 3]) {
+/// camera for the glows that ride a moby; the game's random stream).
+pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f32; 3], rng: &mut Rng) {
     let end = (sys.pool.hw + 1).max(0) as usize;
     for i in 0..end {
         let r = &sys.pool.recs[i];
@@ -267,6 +362,8 @@ pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f
             DRIFT => crate::particles::type48::update48(sys, i),
             0x55 if rec::u32(r, 0x3c) == SPRITE_UPDATE => update_sprite(sys, i),
             0x59 => update_glow(sys, i, mobys, cam),
+            0x5a => update_streak(sys, i, rng),
+            0x61 => update_burst(sys, i),
             _ => sys.kill_part(i),
         }
     }

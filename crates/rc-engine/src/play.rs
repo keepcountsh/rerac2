@@ -523,7 +523,7 @@ fn tick(
     // `0x2afc38`: his pose layers (the holding layers, the face), after the item pass.
     rc_game::hero::layers::upkeep(&mut p.hero, &p.anim.ctl(class));
     // `UpdateParts` (`0x331150`), after the hero.
-    if let Some(s) = parts.as_deref_mut() { rc_game::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos); }
+    if let Some(s) = parts.as_deref_mut() { rc_game::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos, &mut p.game.rng); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game::fx).
     {
         // The callbacks read joints (0x0b0b's glows) through the loop's host, as the draw reads the mobys' poses.
@@ -956,7 +956,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
-    if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye); }
+    if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye, &mut p.game.rng); }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: p.game.view_far * 1024.0 });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }
