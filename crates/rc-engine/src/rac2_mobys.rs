@@ -22,7 +22,7 @@ pub const HERO_LISTS: [usize; 9] = [0, 1, 2, 3, 4, 5, 6, 29, 30];
 /// Palette slots per created moby (joints; the largest gadget class has fewer).
 const SLOT_JOINTS: u32 = 96;
 /// Created mobys drawn at once.
-const DRAW_SLOTS: usize = 48;
+const DRAW_SLOTS: usize = 128;
 
 /// A created moby's animation (the placed instances' are crate::moby_anim's).
 pub struct Created {
@@ -631,9 +631,16 @@ impl CreatedDraw {
                 }
             };
             let Some(class) = lv.classes.get(c.class) else { continue };
-            let used: Vec<u32> = self.slots.values().copied().collect();
-            let Some(next) = (0..DRAW_SLOTS as u32).find(|s| !used.contains(s)) else { continue };
-            let slot = *self.slots.entry(id).or_insert(next);
+            // A moby keeps its slot; a new one takes a free one (none free: not drawn this frame, the others still are).
+            let slot = match self.slots.get(&id) {
+                Some(&s) => s,
+                None => {
+                    let used: Vec<u32> = self.slots.values().copied().collect();
+                    let Some(next) = (0..DRAW_SLOTS as u32).find(|s| !used.contains(s)) else { continue };
+                    self.slots.insert(id, next);
+                    next
+                }
+            };
             let model = moby_render::extra_model(m.rows, m.scale, m.pos);
             // MobyProc's shine gate (crate::moby_lod: `+0x73` is 0x18 for a class with metal packets): the metal pass
             // (chrome, glass: the ship's canopy) within its distance, with its sphere-map basis.
