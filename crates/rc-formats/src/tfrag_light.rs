@@ -18,6 +18,7 @@
 //!   `u16 pos_ofs, u8 azimuth, u8 elevation, u16 rgb555a1, u16 light_select`).
 
 use crate::buf::{invalid, Buf, Result};
+use crate::tfrag::{Tfrag, TfragRgba};
 use bytemuck::{Pod, Zeroable};
 
 /// Directional light sets in the EE bank (`FastMemZero16(0x180340, 0x400)`).
@@ -225,11 +226,167 @@ pub mod ps2 {
     }
 }
 
+type V4 = [u32; 4];
+
+fn bits(v: [f32; 4]) -> V4 { v.map(f32::to_bits) }
+/// `vmul`: lane-wise product.
+fn vmul(a: V4, b: V4) -> V4 { [0, 1, 2, 3].map(|k| ps2::mul(a[k], b[k])) }
+/// `vmulbc`: every lane times one scalar.
+fn vmuls(a: V4, s: u32) -> V4 { a.map(|x| ps2::mul(x, s)) }
+/// `vadda / vmadd` step: `acc + a * s` per lane.
+fn vmadds(acc: V4, a: V4, s: u32) -> V4 { [0, 1, 2, 3].map(|k| ps2::add(acc[k], ps2::mul(a[k], s))) }
+/// `vmul.xyz t, a, b; vadday.x ACC, t, t; vmaddz.x r, vf21(1.0), t`: `(ax*bx + ay*by) + 1.0*(az*bz)`.
+fn dot3(a: V4, b: V4) -> u32 {
+    let p = vmul(a, b);
+    ps2::add(ps2::add(p[0], p[1]), ps2::mul(ps2::ONE, p[2]))
+}
+/// Colour byte -> float `65536 + c / 128` (`pextlb/pextlh` to words, `padduw` with 0x47800000).
+fn color_float(c: [u8; 4]) -> V4 { c.map(|b| 0x4780_0000 + b as u32) }
+/// `vminibcx.xyz` with 0x478000ff, then `ppach/ppacb`: the low byte of each lane.
+fn pack_color(v: V4) -> [u8; 4] {
+    let clamp = 0x4780_00ff;
+    [ps2::min(v[0], clamp) as u8, ps2::min(v[1], clamp) as u8, ps2::min(v[2], clamp) as u8, v[3] as u8]
+}
+
+/// PEXT5 of the 5:5:5:1 base colour: r = bits 0..4 << 3, g = bits 5..9 << 3, b = bits 10..14 << 3, a = bit 15 << 7.
+pub fn pext5(c: u16) -> [u8; 4] {
+    [((c & 0x1f) << 3) as u8, ((c >> 5 & 0x1f) << 3) as u8, ((c >> 10 & 0x1f) << 3) as u8, ((c >> 15) << 7) as u8]
+}
+
+/// The normal the pass stores in scratchpad: `-(cos az * cos el, sin az * cos el, sin el)`, w = sin el.
+/// (`ld` of table[az] ‖ table[el]; `vmulz.xy`; `vaddw.z`; `vsub.xyz vf0 - v`.)
+pub fn decode_normal(table: &NormalTable, azimuth: u8, elevation: u8) -> V4 {
+    let [ca, sa] = table.0[azimuth as usize];
+    let [ce, se] = table.0[elevation as usize];
+    let (x, y, z) = (ps2::mul(ca, ce), ps2::mul(sa, ce), ps2::add(0, se));
+    [ps2::sub(0, x), ps2::sub(0, y), ps2::sub(0, z), se]
+}
+
+/// Light set for one vertex as the VU registers hold it: (colour A, dir A, colour B, dir B), with
+/// the back-face factors extracted and colour w lanes cleared.
+struct ActiveSet { ca: V4, da: V4, cb: V4, db: V4, wa: u32, wb: u32 }
+
+fn active_set(bank: &LightBank, select: u16) -> ActiveSet {
+    let set = |i: u16| bank.sets[(i & 0xf) as usize];
+    let (mut ca, da, mut cb, db);
+    if select & 0xff00 == 0 {
+        let s = set(select);
+        (ca, da, cb, db) = (bits(s.color_a), bits(s.dir_a), bits(s.color_b), bits(s.dir_b));
+    } else {
+        // t = ((sel >> 4) & 0xff0) itof12 = hi / 256; w = 1 - t.
+        let t = ps2::itof12(((select as u32 >> 4) & 0xff0) as i32);
+        let w = ps2::sub(ps2::ONE, t);
+        let (a, b) = (set(select), set(select >> 4));
+        let blend = |x: [f32; 4], y: [f32; 4]| {
+            let (p, q) = (vmuls(bits(x), w), vmuls(bits(y), t));
+            [0, 1, 2, 3].map(|k| ps2::add(p[k], q[k]))
+        };
+        ca = blend(a.color_a, b.color_a);
+        cb = blend(a.color_b, b.color_b);
+        let norm = |v: V4| {
+            let q = ps2::rsqrt(ps2::ONE, dot3(v, v));
+            [ps2::mul(v[0], q), ps2::mul(v[1], q), ps2::mul(v[2], q), v[3]]
+        };
+        da = norm(blend(a.dir_a, b.dir_a));
+        db = norm(blend(a.dir_b, b.dir_b));
+    }
+    // vaddw.x/.y vf31 = 0 + colour.w; vsubw.w colour = 1 - 1.
+    let (wa, wb) = (ps2::add(0, ca[3]), ps2::add(0, cb[3]));
+    ca[3] = 0;
+    cb[3] = 0;
+    ActiveSet { ca, da, cb, db, wa, wb }
+}
+
+/// Directional pass for one vertex: `base + A.rgb * max(dA, dA*wA) + B.rgb * max(dB, dB*wB)`.
+pub fn light_vertex(bank: &LightBank, table: &NormalTable, l: &VertexLight) -> [u8; 4] {
+    light_vertex_n(bank, &decode_normal(table, l.azimuth, l.elevation), l)
+}
+
+fn light_vertex_n(bank: &LightBank, n: &V4, l: &VertexLight) -> [u8; 4] {
+    let s = active_set(bank, l.select);
+    let da = dot3(*n, s.da);
+    let db = dot3(*n, s.db);
+    let da = ps2::max(da, ps2::mul(da, s.wa));
+    let db = ps2::max(db, ps2::mul(db, s.wb));
+    let acc = vmuls(color_float(pext5(l.color)), ps2::ONE);
+    let acc = vmadds(acc, s.ca, da);
+    pack_color(vmadds(acc, s.cb, db))
+}
+
+/// Runs the tfrag light pass (Going Commando: L00 `0x36b4f0`, R&C1's `LightTfrags` record for record) for one tfrag
+/// and returns its new RGBA array (the game writes it back over the tfrag's RGBA block, `rgba_ofs`, which VU1 then
+/// reads verbatim). Entries `0..vert_count` are computed; the padding entries up to `rgba_size * 4` keep the stored
+/// values (the game fills them with scratchpad leftovers that no vertex references). The point lights the pass adds
+/// after are the renderer's (crate docs: the tfrag shader adds the listed lights).
+pub fn light_tfrag(t: &Tfrag, bank: &LightBank, table: &NormalTable) -> Vec<TfragRgba> {
+    let mut out = t.rgba.clone();
+    let n = (t.header.vert_count as usize).min(t.lights.len()).min(out.len());
+    // Header 0x34 >= 0 selects one set for the whole tfrag.
+    let single = t.header.dir_lights_one as i8;
+    for (o, rec) in out.iter_mut().zip(&t.lights[..n]) {
+        let l = VertexLight::from_record(rec);
+        let l = if single >= 0 { VertexLight { select: (single as u16) & 0xf, ..l } } else { l };
+        let c = light_vertex(bank, table, &l);
+        *o = TfragRgba { r: c[0], g: c[1], b: c[2], a: c[3] };
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn f(x: f32) -> u32 { x.to_bits() }
+    fn table() -> NormalTable {
+        // Synthetic table: exact values at the quarter angles, IEEE cos/sin elsewhere.
+        let mut t = [[0u32; 2]; 256];
+        for (i, e) in t.iter_mut().enumerate() {
+            let a = i as f64 * std::f64::consts::TAU / 256.0;
+            *e = [f(a.cos() as f32), f(a.sin() as f32)];
+        }
+        t[0] = [f(1.0), 0];
+        t[64] = [0, f(1.0)];
+        t[192] = [0, f(-1.0)];
+        NormalTable(t)
+    }
+
+    #[test]
+    fn normal_decode() {
+        let t = table();
+        // Elevation 64 = straight up: stored normal is the negation, (0, 0, -1).
+        assert_eq!(decode_normal(&t, 0, 64)[..3], [0, 0, f(-1.0)]);
+        // Azimuth 0, elevation 0: -(1, 0, 0).
+        assert_eq!(decode_normal(&t, 0, 0)[..3], [f(-1.0), 0, 0]);
+        // Azimuth 64 (+Y), elevation 192 (down): -(0*0, 1*0, -1) = (0, 0, 1).
+        assert_eq!(decode_normal(&t, 64, 192)[..3], [0, 0, f(1.0)]);
+        assert_eq!(pext5(0x8000 | 31 | 16 << 5 | 1 << 10), [248, 128, 8, 128]);
+    }
+
+    #[test]
+    fn one_light_evaluation() {
+        let t = table();
+        let mut bank = LightBank::default();
+        // Sun travelling straight down (-Z), colour (1.0, 0.5, 0.25); back light along +X with w = -0.5.
+        bank.sets[2] = DirLightSet {
+            color_a: [1.0, 0.5, 0.25, 0.0],
+            dir_a: [0.0, 0.0, -1.0, 0.0],
+            color_b: [0.25, 0.25, 0.25, -0.5],
+            dir_b: [1.0, 0.0, 0.0, 0.0],
+        };
+        // Up-facing vertex, base colour (40, 48, 56), alpha bit set.
+        let l = VertexLight { pos_ofs: 0, azimuth: 0, elevation: 64, color: 0x8000 | 5 | 6 << 5 | 7 << 10, select: 2 };
+        // dA = (0,0,-1).(0,0,-1) = 1 -> +128, +64, +32. dB = 0.
+        assert_eq!(light_vertex(&bank, &t, &l), [168, 112, 88, 128]);
+        // Facing -X (azimuth 0, elevation 0 -> stored normal (-1, 0, 0)): dA = 0, dB = -1 -> max(-1, 0.5) = 0.5 -> +16.
+        let l2 = VertexLight { elevation: 0, ..l };
+        assert_eq!(light_vertex(&bank, &t, &l2), [56, 64, 72, 128]);
+        // Saturation: 248 + 128 clamps to 255.
+        let l3 = VertexLight { color: 0x8000 | 31, ..l };
+        assert_eq!(light_vertex(&bank, &t, &l3)[0], 255);
+        // Blend 50 % between set 2 and an empty set 3: colour halves, direction renormalises -> +64 red.
+        let l4 = VertexLight { select: 0x80 << 8 | 3 << 4 | 2, ..l };
+        assert_eq!(light_vertex(&bank, &t, &l4), [104, 80, 72, 128]);
+    }
 
     #[test]
     fn ps2_arithmetic_truncates() {

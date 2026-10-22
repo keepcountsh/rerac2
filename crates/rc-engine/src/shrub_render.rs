@@ -107,7 +107,7 @@ pub struct LevelShrubs {
 /// billboard textures. Levels 2 / 3, the palettes and the billboards live in `gs_ram`, the GS image of the world
 /// being loaded (a level's `gs_ram.bin`, or the title world's). Textures that do not decode fall back to the
 /// world's decoded base level.
-pub fn load_shrubs(core: &rc_formats::level::LevelCore, core_data: &[u8], gs_ram: &[u8], gameplay: &[u8], textures: &[LevelTexture]) -> Result<LevelShrubs> {
+pub fn load_shrubs(core: &rc_formats::level::LevelCore, core_data: &[u8], gs_ram: &[u8], gameplay: &[u8], textures: &[LevelTexture], lights: Option<&crate::moby_light::MobyLighting>) -> Result<LevelShrubs> {
     let t0 = Instant::now();
     let classes = shrub::parse_level_shrubs(core, core_data).context("parsing shrub classes")?;
     let instances = rc_formats::disc::gameplay::shrub_instances(gameplay)
@@ -120,9 +120,15 @@ pub fn load_shrubs(core: &rc_formats::level::LevelCore, core_data: &[u8], gs_ram
         .collect();
     let parse_time = t0.elapsed();
     let t0 = Instant::now();
-    // Going Commando's shrub lighting is not mapped yet: neutral palettes (docs/plan/bringup.md §6.3 D).
-    // Neutral colours until Going Commando's shrub lighting is read (milestone D).
-    let palettes = vec![[[0x80; 4]; rc_formats::shrub_light::PALETTE]; instances.len()];
+    // `LightShrubs` (L00 `0x35d690`) over every instance at load; without lights (`RC_NO_LIGHT`) the texture colour.
+    let palettes = instances
+        .iter()
+        .zip(&class_of)
+        .map(|(inst, c)| match (lights, c) {
+            (Some(l), Some(ci)) => rc_formats::shrub_light::light_shrub_instance(&classes[*ci].class, inst, &l.bank),
+            _ => [[0x80; 4]; PALETTE],
+        })
+        .collect();
     let light_time = t0.elapsed();
 
     let t0 = Instant::now();

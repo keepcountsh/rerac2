@@ -163,8 +163,13 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     t.parse_core = t0.elapsed();
 
     let t0 = Instant::now();
-    // The stored colours, unlit (milestone D).
-    let tfrags = tfrag::parse_level_tfrags(&core, &core_data).context("parsing tfrags")?;
+    // The level's lights and the normal table (the tfrag, tie and moby light passes).
+    let lights = crate::moby_light::load(root, &gameplay).context("loading the light bank")?;
+    // Lit as the level loader lights them (`0x36b4f0` over every tfrag); `RC_NO_LIGHT=1` keeps the stored colours.
+    let mut tfrags = tfrag::parse_level_tfrags(&core, &core_data).context("parsing tfrags")?;
+    if let Some(l) = &lights {
+        for t in &mut tfrags { t.rgba = rc_formats::tfrag_light::light_tfrag(t, &l.bank, &l.table); }
+    }
     t.parse_tfrags = t0.elapsed();
     let t0 = Instant::now();
     let textures = texture::parse_textures(&core, &core_data, gs_ram).context("decoding textures")?;
@@ -178,9 +183,8 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let collision = rc_formats::collision::parse_collision(&core, &core_data)
         .map_err(|e| eprintln!("level {index}: collision not parsed ({e})"))
         .ok();
-    let lights = crate::moby_light::load(root, &gameplay).context("loading the light bank")?;
     let ties = crate::tie_render::load_ties(&core, &core_data, gs_ram, &gameplay, &textures, lights.as_ref()).context("loading ties")?;
-    let shrubs = crate::shrub_render::load_shrubs(&core, &core_data, gs_ram, &gameplay, &textures).context("loading shrubs")?;
+    let shrubs = crate::shrub_render::load_shrubs(&core, &core_data, gs_ram, &gameplay, &textures, lights.as_ref()).context("loading shrubs")?;
     // The shells turn by the game's own rotations (rc_game::sky).
     let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?;
     let mut textures = textures;

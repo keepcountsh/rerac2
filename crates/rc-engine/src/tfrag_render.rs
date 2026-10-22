@@ -12,7 +12,8 @@
 //! * `vinfos`: one entry per (tfrag, vertex-info entry): UV, position, tier, and the collapse links
 //!   (parent-1 entry = `parent_indices` / `unk_indices_2`, parent-2 position = `parent / 2`).
 //!
-//! No directional lighting here (lighting: tfrag_light.rs; fog and projection: game_camera.rs): each vertex gets its
+//! No directional lighting here (the level load lights the RGBA, rc_formats::tfrag_light; fog and projection:
+//! game_camera.rs): each vertex gets its
 //! position slot's RGBA, modulated with its texture exactly as the GS does with TFX = MODULATE. The point lights of
 //! `LightTfrags` are added to a slot's RGBA in the vertex shader when the tfrag's nibble list names any
 //! (crate::world_lights): the slot's normal is packed in its `pad` word, the lists and the bank follow the draw

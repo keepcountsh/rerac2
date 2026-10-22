@@ -151,6 +151,8 @@ branch is taken on `rc_formats::Game::Rac2` only, and R&C1's default paths stay 
     has its own colour slots (gameplay `tie_colors`), lit per instance by `0x36f0a8` (R&C1's `LightTies` maths, normals
     from the angle table) and averaged into vertex colours by per-LOD colour programs at +0x34 (`rc_formats::tie`,
     `rc_formats::tie_light`); slot 511 is the class's self-lit colour. Not ported: the per-slot point lights (VU0 0x580).
+    Tfrags and shrubs are lit as in R&C1 (L00 `0x36b4f0` = `LightTfrags`, `0x35d690` = `LightShrubs`, the same VU0
+    entries), at load.
   - **Moby classes**: R&C1's class header and packets; only the vertex table header differs, eight u16s (0x10
     bytes) with no RGBA multiplier blob. R&C2's relocation (L00 `0x2ffe70`) converts an "old format" class — R&C1's
     eight u32s — to that form. `moby::parse_moby_class_for` reads every class of every level checked (127–208 per
