@@ -1,9 +1,9 @@
 //! The audio layer on the game's tick (docs/plan/audio.md §3.1, §3.2): the class sounds the gameplay code plays
 //! (`PlayClassSound` level01 0x2a1618 / 0x2a16c0) and the per-tick sound step, all on the game's one `rand`
-//! stream ([`crate::base::tick::Game::rng`]) at the game's points:
+//! stream (`rerac:rc_game::tick::Game::rng`) at the game's points:
 //!
 //! * **Moby class sounds** (crates, bolts, platforms, …): the moby loop calls `PlayClassSound` through
-//!   [`crate::base::moby_update::services::SoundSink`]; [`ClassSoundSink`] allocates the slot at once
+//!   `rerac:rc_game::moby_update::services::SoundSink`; [`ClassSoundSink`] allocates the slot at once
 //!   ([`AudioSystem::play_class_sound`], `SoundSlotAlloc` 0x2a13a0), so its pitch-bend `randi` lands in the moby
 //!   order. The listener is the camera 0x167240 as the previous tick's camera update left it.
 //! * **Ratchet's animation triggers**: `RatchetAnimAdvance` 0x247d48 plays the class sound of the first trigger

@@ -1,20 +1,18 @@
-//! Readers for the on-disc formats of Ratchet & Clank (2002, PS2).
+//! Readers for the on-disc formats of Ratchet & Clank: Going Commando (2003, PS2).
 //!
-//! Every reader here follows the specification in `docs/formats/`. The readers were first verified byte for byte
-//! against a C++ reference extractor, retired on 2026-09-27 (git history at 2230812); the golden tests now
-//! check their output against the committed snapshot table `data/loader_snapshots.tsv` (`tests/formats/golden.rs`).
+//! Most formats are R&C1's with Going Commando's changes: the shared readers follow the specifications in
+//! `docs/formats/` (written for R&C1, first verified byte for byte against a C++ reference extractor, git 2230812),
+//! and [`rac2`] holds what is Going Commando's own (the table of contents, the level WADs, the front end).
 
 pub mod buf;
 pub mod wad;
 pub mod toc;
 pub mod iso9660;
-pub mod disc;
 pub mod level;
 pub mod texture;
 pub mod vif;
 pub mod tfrag;
 pub mod moby;
-pub mod gadget;
 pub mod tie;
 pub mod shrub;
 pub mod shrub_light;
@@ -24,7 +22,6 @@ pub mod gameplay;
 pub mod moby_light;
 pub mod moby_anim;
 pub mod moby_collision;
-pub mod moby_shadow;
 pub mod moby_spawn;
 pub mod sky;
 pub mod collision;
@@ -37,12 +34,7 @@ pub mod level_overlay;
 pub mod strings;
 pub mod sound_bank;
 pub mod vag;
-pub mod water;
-pub mod sea;
-pub mod save_game;
-pub mod frontend;
 pub mod scene;
-pub mod transition;
 pub mod volumes;
 pub mod cameras;
 pub mod pss;
@@ -51,13 +43,3 @@ pub mod sha1;
 pub mod test_data;
 
 pub use buf::{Buf, FormatError};
-
-/// Which game a level's data comes from. The shared readers take R&C1's layout unless told otherwise; a
-/// Going Commando level ([`rac2::level`]) carries [`Game::Rac2`] in its [`level::LevelCore`], and the readers whose
-/// layout differs between the games branch on it (docs/plan/rac2_bringup.md §6).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Game {
-    #[default]
-    Rac1,
-    Rac2,
-}

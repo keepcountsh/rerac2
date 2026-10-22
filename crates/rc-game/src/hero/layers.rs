@@ -1,6 +1,6 @@
 //! Ratchet's pose layers (nodes of his moby's `+0x60` list, which the evaluator blends over his own key), kept by
 //! `0x2afc38` right after the item pass: the **holding layers** `0x2aede0` and the **face layer** `0x2aeb90`. They are
-//! R&C1's `0x22e660` / `0x22e3a8` (crate::base::hero::weapons `hold_update` / `face_update`, docs/plan/hero_gameplay.md
+//! R&C1's `0x22e660` / `0x22e3a8` (rerac:rc_game::hero::weapons `hold_update` / `face_update`, docs/plan/hero_gameplay.md
 //! §11) with R&C2's values; the nodes are R&C1's (crate::hero::anim::AnimLayer: `0x3122c8` / `0x311f78` are
 //! `FUN_002641c0` / `FUN_00263f70`).
 //!

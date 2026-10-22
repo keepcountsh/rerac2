@@ -363,7 +363,6 @@ mod tests {
         assert_eq!(frame_size(Resolution::Height(1080), Aspect::Wide16x10, UVec2::new(300, 300)), UVec2::new(1728, 1080));
         assert_eq!(frame_size(Resolution::Height(1080), w, UVec2::new(300, 300)), UVec2::new(1920, 1080));
         assert_eq!(frame_size(Resolution::Window, Aspect::Wide16x10, UVec2::new(3024, 1890)), UVec2::new(3024, 1890));
-        assert_eq!(side_extra(Aspect::Wide16x10), 51);
         assert_eq!(Resolution::parse("720"), Some(Resolution::Height(720)));
         assert_eq!(ui_box(UVec2::new(2560, 1440)), (Vec2::new(320.0, 0.0), Vec2::new(1920.0, 1440.0)));
         assert_eq!(ui_box(UVec2::new(1024, 768)), (Vec2::ZERO, Vec2::new(1024.0, 768.0)));
@@ -371,7 +370,7 @@ mod tests {
         assert!((hor_scale(w) - 4.0 / 3.0).abs() < 1e-6);
         assert_eq!(fit(UVec2::new(1024, 832), Vec2::new(1600.0, 832.0)), Vec2::new(1024.0, 832.0));
         assert_eq!(fit(UVec2::new(1024, 832), Vec2::new(1024.0, 1000.0)), Vec2::new(1024.0, 832.0));
-        for r in Resolution::ALL { assert_eq!(Resolution::from_index(r.index()), r); assert_eq!(Resolution::parse(&r.key()), Some(r)); }
-        for a in Aspect::ALL { assert_eq!(Aspect::from_index(a.index()), a); assert_eq!(Aspect::parse(a.key()), Some(a)); }
+        for r in Resolution::ALL { assert_eq!(Resolution::parse(&r.key()), Some(r)); }
+        for a in Aspect::ALL { assert_eq!(Aspect::parse(a.key()), Some(a)); }
     }
 }

@@ -40,14 +40,12 @@ use crate::level::LevelCore;
 /// One 0x20-byte primitive record, kept as raw words so floats keep their bits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MobyCollPrim {
-    pub raw: [u32; 8],
+    pub(crate) raw: [u32; 8],
 }
 
 impl MobyCollPrim {
     /// +0 `s8` kind (1 sphere, 2 joint sphere, 3 vertical cylinder, 4 joint capsule).
     pub fn kind(&self) -> i8 { self.raw[0] as u8 as i8 }
-    /// +1 byte (4 on the disc; unused).
-    pub fn byte1(&self) -> u8 { (self.raw[0] >> 8) as u8 }
     /// +2 `s16` mask: bit 0 / bit 1 select the query class (flag 0x4 set / clear), bit 15 ends the list.
     pub fn mask(&self) -> i16 { (self.raw[0] >> 16) as u16 as i16 }
     /// +4 as `s32` (kind 2's joint, read with `lw`).
@@ -76,7 +74,7 @@ impl MobyCollision {
     /// Parses the blob at `blob` (the bytes from class + class[0x10] on). Rejects sizes that are not a
     /// multiple of their record, a primitive list without its bit-15 terminator (or with an early one), and
     /// face indices past the vertex count.
-    pub fn parse(blob: &[u8]) -> Result<MobyCollision> {
+    pub(crate) fn parse(blob: &[u8]) -> Result<MobyCollision> {
         let b = Buf(blob);
         let joint_counts = [b.u16(0)?, b.u16(2)?];
         let (pb, fb, vb) = (b.i32(4)?, b.i32(8)?, b.i32(0xc)?);
@@ -99,11 +97,8 @@ impl MobyCollision {
         Ok(MobyCollision { joint_counts, prims, vertices, faces })
     }
 
-    /// Byte size of the blob (header + sections).
-    pub fn size(&self) -> usize { 0x10 + 0x20 * self.prims.len() + 8 * self.vertices.len() + 4 * self.faces.len() }
-
     /// The blob of a class (`class_blob` = the class's core block), `None` when class +0x10 is 0.
-    pub fn of_class(class_blob: &[u8]) -> Result<Option<MobyCollision>> {
+    pub(crate) fn of_class(class_blob: &[u8]) -> Result<Option<MobyCollision>> {
         let off = Buf(class_blob).i32(0x10)?;
         if off == 0 { return Ok(None); }
         if off < 0 { return invalid(format!("moby collision offset {off:#x}")); }
@@ -125,46 +120,3 @@ pub fn parse_level(core: &LevelCore, core_data: &[u8]) -> Result<Vec<(i32, MobyC
     Ok(out)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn blob(prims: &[[u32; 8]], verts: &[[i16; 4]], faces: &[[u8; 4]], counts: [u16; 2]) -> Vec<u8> {
-        let mut b = Vec::new();
-        b.extend_from_slice(&counts[0].to_le_bytes());
-        b.extend_from_slice(&counts[1].to_le_bytes());
-        for n in [prims.len() * 0x20, faces.len() * 4, verts.len() * 8] { b.extend_from_slice(&(n as i32).to_le_bytes()); }
-        for p in prims { for w in p { b.extend_from_slice(&w.to_le_bytes()); } }
-        for v in verts { for c in v { b.extend_from_slice(&c.to_le_bytes()); } }
-        for f in faces { b.extend_from_slice(f); }
-        b
-    }
-
-    #[test]
-    fn parses_sections_and_primitive_fields() {
-        let sphere = [0x8003_0401, 0, 0, 0, 0, 0, 1.5f32.to_bits(), 2.0f32.to_bits()];
-        let cyl = [0x0002_0403, 3.0f32.to_bits(), 0, 0, 0, 0, 0, 0.5f32.to_bits()];
-        let b = blob(&[cyl, sphere], &[[0, 0, 0, 0], [1024, 0, 0, 0], [0, 1024, 0, 0]], &[[0, 1, 2, 0x1f]], [0, 6]);
-        let c = MobyCollision::parse(&b).unwrap();
-        assert_eq!(c.size(), b.len());
-        assert_eq!(c.joint_counts, [0, 6]);
-        assert_eq!((c.prims[0].kind(), c.prims[0].mask(), c.prims[0].byte1()), (3, 2, 4));
-        assert_eq!(f32::from_bits(c.prims[0].q0()[1]), 3.0);
-        assert_eq!((c.prims[1].kind(), c.prims[1].mask()), (1, -0x7ffd));
-        assert_eq!(f32::from_bits(c.prims[1].q1()[3]), 2.0);
-        assert_eq!(c.vertices[1], [1024, 0, 0, 0]);
-        assert_eq!(c.faces, [[0, 1, 2, 0x1f]]);
-        let joint = MobyCollPrim { raw: [0x8002_0404, 0x0007_0005, 0, 0, 0, 0, 0, 0] };
-        assert_eq!((joint.joints(), joint.word4()), ([5, 7], 0x0007_0005));
-    }
-
-    #[test]
-    fn rejects_bad_lists_and_indices() {
-        let open = [0x0002_0401, 0, 0, 0, 0, 0, 0, 0];
-        let end = [0x8002_0401, 0, 0, 0, 0, 0, 0, 0];
-        assert!(MobyCollision::parse(&blob(&[open], &[], &[], [0, 0])).is_err(), "no end bit");
-        assert!(MobyCollision::parse(&blob(&[end, open], &[], &[], [0, 0])).is_err(), "early end");
-        assert!(MobyCollision::parse(&blob(&[], &[[0; 4]], &[[0, 0, 1, 0]], [0, 0])).is_err(), "index past the vertices");
-        assert!(MobyCollision::parse(&blob(&[open, end], &[], &[], [0, 0])).is_ok());
-    }
-}

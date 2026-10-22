@@ -1,7 +1,7 @@
 //! The eight dynamic point lights (level01 bank 0x180740, 8 × 0x20 bytes; per slot `{r, g, b, intensity}` then
 //! `{position, radius}`, the active flag at 0x180950 + 0x30·i): `WritePointLight_B` 0x252750 takes the first free
 //! slot (only while the frame-load measure 0x15f5d4 is at most 0.8), the owner rewrites its slot every tick, and
-//! `FreePointLight` 0x252850 clears it. The explosion light moby (class 0x27f, `crate::base::moby_update::creature::fx`)
+//! `FreePointLight` 0x252850 clears it. The explosion light moby (class 0x27f, `rerac:rc_game::moby_update::creature::fx`)
 //! is the owner on every level.
 //!
 //! Who reads the bank in the game: `MobyProc` merges the lights in range of a moby into its third directional light

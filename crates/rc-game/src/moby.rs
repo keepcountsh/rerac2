@@ -2,7 +2,7 @@
 //! `0x311320`, the level loader's static spawn (in `0x3012a0`), the active-list builder `0x313718`, the per-frame loop
 //! `0x32e398` and the matrix rebuild `0x313dc0`. Native `f32` (docs/plan/decisions.md "native-first"); the record
 //! fields keep their L00 offsets in the docs. R&C2's moby system is R&C1's (crate::moby::runtime,
-//! crate::base::moby_update::scheduler) with the record reordered and 240 class slots (R&C1 224); each step here is read
+//! rerac:rc_game::moby_update::scheduler) with the record reordered and 240 class slots (R&C1 224); each step here is read
 //! from R&C2's code (docs/plan/rac2_bringup.md §6.6).
 //!
 //! **Record** (the fields the port keeps):

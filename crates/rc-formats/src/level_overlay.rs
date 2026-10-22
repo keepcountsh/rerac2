@@ -29,16 +29,14 @@ use crate::font::{parse_overlay_sections, read_overlay, OverlaySection};
 use std::collections::{BTreeSet, HashMap};
 
 /// Index of `lvl.vtbl` in the overlay's section list (the same on all 19 levels).
-pub const VTBL_SECTION: usize = 3;
-/// Index of `lvl.camvtbl` (the camera classes, [`LevelOverlay::camvtbl`]).
-pub const CAMVTBL_SECTION: usize = 4;
+pub(crate) const VTBL_SECTION: usize = 3;
 /// Index of `.text`.
 pub const TEXT_SECTION: usize = 6;
 /// `$gp` in every level (the boot ELF sets it once; the small data is addressed from it: `0x15f5c4` is
 /// `-0x763c($gp)` in all 19 overlays).
-pub const GP: u32 = 0x166c00;
+pub(crate) const GP: u32 = 0x166c00;
 /// Longest function extent compared (bytes); a longer reference extent is cut here.
-pub const MAX_EXTENT: u32 = 0x8000;
+pub(crate) const MAX_EXTENT: u32 = 0x8000;
 
 /// One `lvl.vtbl` record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,19 +44,7 @@ pub struct VtblEntry {
     pub o_class: i32,
     /// The update function (0: none).
     pub update: u32,
-    pub w8: u32,
-}
-
-/// One `lvl.camvtbl` record (0x14 bytes): a camera class and its four functions (`UpdateAllCameras` 0x20d620 reads
-/// them by the UpdateCam's mode +0x8c, the record's index: activate +4 (`Camera_ActivationCheckPriority` 0x20d410),
-/// init +8 (the switch `0x20d110`), update +0xc, pre +0x10 (the current camera's, before the activation loop)).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CamVtblEntry {
-    pub class: i32,
-    pub activate: u32,
-    pub init: u32,
-    pub update: u32,
-    pub pre: u32,
+    pub(crate) w8: u32,
 }
 
 /// A parsed level overlay.
@@ -149,7 +135,7 @@ impl HiState {
 pub fn mask(words: &[u32]) -> Vec<u32> { walk(words).into_iter().map(|(m, _)| m).collect() }
 
 /// The (word offset, address) of every `lui`/`%lo` pair completed in `words`, and of every `$gp`-relative access.
-pub fn address_refs(words: &[u32]) -> Vec<(usize, u32)> { address_refs_gp(words, GP) }
+pub(crate) fn address_refs(words: &[u32]) -> Vec<(usize, u32)> { address_refs_gp(words, GP) }
 
 /// [`address_refs`] with another game's `$gp` (Going Commando's 0x1aeff0; the masking does not depend on it).
 pub fn address_refs_gp(words: &[u32], gp: u32) -> Vec<(usize, u32)> {
@@ -193,7 +179,7 @@ fn walk_gp(words: &[u32], gp: u32) -> Vec<(u32, Option<u32>)> {
 impl LevelOverlay {
     pub fn parse(bytes: &[u8]) -> crate::buf::Result<LevelOverlay> { Ok(Self::from_sections(parse_overlay_sections(bytes)?)) }
 
-    pub fn from_sections(sections: Vec<OverlaySection>) -> LevelOverlay {
+    pub(crate) fn from_sections(sections: Vec<OverlaySection>) -> LevelOverlay {
         let (text_start, text) = sections
             .get(TEXT_SECTION)
             .map(|s| (s.dest, s.data.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect()))
@@ -220,7 +206,7 @@ impl LevelOverlay {
     }
 
     /// `n` bytes at `addr` (None past the loaded sections).
-    pub fn read(&self, addr: u32, n: usize) -> Option<&[u8]> { read_overlay(&self.sections, addr, n) }
+    pub(crate) fn read(&self, addr: u32, n: usize) -> Option<&[u8]> { read_overlay(&self.sections, addr, n) }
     pub fn u32(&self, addr: u32) -> Option<u32> { self.read(addr, 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())) }
 
     fn text_end(&self) -> u32 { self.text_start + 4 * self.text.len() as u32 }
@@ -249,20 +235,6 @@ impl LevelOverlay {
             .collect()
     }
 
-    /// The `lvl.camvtbl` records up to the `-1` end marker (the slot init's class → mode lookup `0x20ee30` searches
-    /// them; class 0 is always the first).
-    pub fn camvtbl(&self) -> Vec<CamVtblEntry> {
-        let Some(s) = self.sections.get(CAMVTBL_SECTION) else { return Vec::new() };
-        let w = |e: &[u8], i: usize| u32::from_le_bytes(e[4 * i..4 * i + 4].try_into().unwrap());
-        s.data
-            .as_chunks::<0x14>()
-            .0
-            .iter()
-            .map(|e| CamVtblEntry { class: w(e, 0) as i32, activate: w(e, 1), init: w(e, 2), update: w(e, 3), pre: w(e, 4) })
-            .take_while(|e| e.class != -1)
-            .collect()
-    }
-
     /// The code extent of the function at `addr`, in words: up to the next known function start (`jal` targets,
     /// class-table updates), at most [`MAX_EXTENT`] bytes and the end of `.text`.
     pub fn extent(&self, addr: u32) -> Option<usize> {
@@ -280,16 +252,13 @@ pub struct Relocation<'a> {
     identity: bool,
     /// Target `.text` positions by the masked key of their first 4 words.
     index: HashMap<[u32; 4], Vec<u32>>,
-    /// Reference data address → the (function start, word offset) that form it (built on the first
-    /// [`Relocation::data`]).
-    xrefs: std::cell::OnceCell<HashMap<u32, Vec<(u32, usize)>>>,
 }
 
 impl<'a> Relocation<'a> {
     /// Identity when the target is the reference itself (same bytes).
     pub fn new(reference: &'a LevelOverlay, target: &'a LevelOverlay) -> Relocation<'a> {
         let identity = reference.text_start == target.text_start && reference.text == target.text && reference.sections == target.sections;
-        let mut r = Relocation { reference, target, identity, index: HashMap::new(), xrefs: std::cell::OnceCell::new() };
+        let mut r = Relocation { reference, target, identity, index: HashMap::new() };
         if identity { return r; }
         let t = &target.text;
         for p in 0..t.len().saturating_sub(3) {
@@ -298,24 +267,14 @@ impl<'a> Relocation<'a> {
         r
     }
 
-    /// Whether the target is the reference overlay itself.
-    pub fn is_identity(&self) -> bool { self.identity }
-
     /// The reference function at `ref_fn`, masked over its extent.
     fn ref_masked(&self, ref_fn: u32) -> Option<Vec<u32>> {
         let n = self.reference.extent(ref_fn)?;
         Some(mask(self.reference.code(ref_fn, n)?))
     }
 
-    /// Whether the target code at `target_fn` is the reference function `ref_fn` (module doc).
-    pub fn same_code(&self, ref_fn: u32, target_fn: u32) -> bool {
-        if self.identity { return ref_fn == target_fn; }
-        let Some(m) = self.ref_masked(ref_fn) else { return false };
-        self.target.code(target_fn, m.len()).is_some_and(|c| mask(c) == m)
-    }
-
     /// Every copy of the reference function `ref_fn` in the target's `.text`.
-    pub fn copies(&self, ref_fn: u32) -> Vec<u32> {
+    pub(crate) fn copies(&self, ref_fn: u32) -> Vec<u32> {
         if self.identity { return self.reference.code(ref_fn, 1).map(|_| vec![ref_fn]).unwrap_or_default(); }
         let Some(m) = self.ref_masked(ref_fn).filter(|m| m.len() >= 4) else { return Vec::new() };
         let Some(cands) = self.index.get(&[m[0], m[1], m[2], m[3]]) else { return Vec::new() };
@@ -331,53 +290,5 @@ impl<'a> Relocation<'a> {
         }
     }
 
-    /// The target's address for the reference data address `ref_addr` (module doc). None when no reference
-    /// function forms it with `lui`/`%lo`, or none of those functions has a copy in the target.
-    pub fn data(&self, ref_addr: u32) -> Option<u32> {
-        if self.identity { return Some(ref_addr); }
-        let xrefs = self.xrefs.get_or_init(|| {
-            let mut x: HashMap<u32, Vec<(u32, usize)>> = HashMap::new();
-            for &f in &self.reference.starts {
-                let Some(code) = self.reference.extent(f).and_then(|n| self.reference.code(f, n)) else { continue };
-                for (off, a) in address_refs(code) { x.entry(a).or_default().push((f, off)); }
-            }
-            x
-        });
-        let sites = xrefs.get(&ref_addr)?;
-        for &(f, off) in sites {
-            let Some(g) = self.func(f) else { continue };
-            let n = self.reference.extent(f)?;
-            let refs = address_refs(self.target.code(g, n)?);
-            if let Some(&(_, a)) = refs.iter().find(|(o, _)| *o == off) { return Some(a); }
-        }
-        // No copy of a whole referencing function (its extent runs into level code): the code around one of
-        // the references, from its function start up to 16 words past it, found once in the target.
-        for &(f, off) in sites {
-            let n = (off + 16).min(self.reference.extent(f)?);
-            let m = mask(self.reference.code(f, n)?);
-            if m.len() < 4 { continue; }
-            let Some(cands) = self.index.get(&[m[0], m[1], m[2], m[3]]) else { continue };
-            let hits: Vec<u32> = cands.iter().copied().filter(|&c| self.target.code(c, n).is_some_and(|w| mask(w) == m)).collect();
-            if let [g] = hits.as_slice() {
-                if let Some(&(_, a)) = address_refs(self.target.code(*g, n)?).iter().find(|(o, _)| *o == off) { return Some(a); }
-            }
-        }
-        None
-    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn masking_follows_lui_through_moves_and_keeps_constants() {
-        // lui v0,0x17 ; addiu s1,v0,0x42c0 ; move s2,v0 ; addiu s1,s2,0x42c0 ; lui at,0x3f80 ; lw t0,8(a0) ; lw t1,-0x10(gp)
-        let w = [0x3c02_0017, 0x2451_42c0, 0x0040_902d, 0x2651_42c0, 0x3c01_3f80, 0x8c88_0008, 0x8f89_fff0];
-        let m = mask(&w);
-        assert_eq!(m, vec![0x3c02_0000, 0x2451_0000, 0x0040_902d, 0x2651_0000, 0x3c01_3f80, 0x8c88_0008, 0x8f89_0000]);
-        assert_eq!(address_refs(&w), vec![(1, 0x1742c0), (3, 0x1742c0), (6, GP - 0x10)]);
-        // lui a0,0x1b ; addiu a0,a0,-0x1000 → 0x1af000
-        assert_eq!(address_refs(&[0x3c04_001b, 0x2484_f000]), vec![(1, 0x1a_f000)]);
-    }
-}

@@ -15,11 +15,11 @@ use crate::buf::{invalid, Buf, Result};
 use std::collections::HashMap;
 
 /// Parts of the blob.
-pub const TEXTURES: usize = 0;
-pub const BACKDROP: usize = 2;
-pub const TEXT: usize = 9;
+pub(crate) const TEXTURES: usize = 0;
+pub(crate) const BACKDROP: usize = 2;
+pub(crate) const TEXT: usize = 9;
 /// "Sony Computer Entertainment America presents", "A game created and developed by", the copyright page.
-pub const SPLASHES: [usize; 3] = [10, 11, 12];
+pub(crate) const SPLASHES: [usize; 3] = [10, 11, 12];
 
 pub struct FrontEnd {
     blob: Vec<u8>,
@@ -39,7 +39,7 @@ impl FrontEnd {
         Ok(FrontEnd { blob, parts })
     }
 
-    pub fn part(&self, i: usize) -> &[u8] {
+    pub(crate) fn part(&self, i: usize) -> &[u8] {
         let (o, n) = self.parts[i];
         &self.blob[o..o + n]
     }

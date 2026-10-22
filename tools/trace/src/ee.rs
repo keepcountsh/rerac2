@@ -96,9 +96,9 @@ pub fn pcsx2_sstates_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join("Library/Application Support/PCSX2/sstates"))
 }
 
-/// Resolves `--state`: a `.p2s` path, a directory (newest `SCUS-97199*.p2s` in it), `latest`
-/// (newest `SCUS-97199*.p2s` in PCSX2's sstates folder), or the name of a kept savestate in
-/// `~/PS2/ratchet1/savestates/` (`novalis_spawn` = `novalis_spawn.p2s` there; see `save-state`).
+/// Resolves `--state`: a `.p2s` path, a directory (newest `SCUS-97268*.p2s` in it), `latest`
+/// (newest `SCUS-97268*.p2s` in PCSX2's sstates folder), or the name of a kept savestate in
+/// `~/PS2/ratchet2/savestates/` .
 pub fn resolve_state(arg: &str) -> Result<PathBuf> {
     let p = PathBuf::from(arg);
     if arg != "latest" && !p.exists() && !arg.contains('/') {
@@ -109,19 +109,19 @@ pub fn resolve_state(arg: &str) -> Result<PathBuf> {
     newest_state(&dir)
 }
 
-/// The newest `SCUS-97199*.p2s` in `dir`.
+/// The newest `SCUS-97268*.p2s` in `dir`.
 pub fn newest_state(dir: &Path) -> Result<PathBuf> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for e in std::fs::read_dir(dir).with_context(|| format!("listing {}", dir.display()))? {
         let e = e?;
         let name = e.file_name().to_string_lossy().into_owned();
-        if !(name.starts_with("SCUS-97199") && name.ends_with(".p2s")) { continue; }
+        if !(name.starts_with("SCUS-97268") && name.ends_with(".p2s")) { continue; }
         let t = e.metadata()?.modified()?;
         if best.as_ref().is_none_or(|(bt, _)| t > *bt) { best = Some((t, e.path())); }
     }
     match best {
         Some((_, p)) => Ok(p),
-        None => bail!("no SCUS-97199*.p2s savestate in {}", dir.display()),
+        None => bail!("no SCUS-97268*.p2s savestate in {}", dir.display()),
     }
 }
 
@@ -193,7 +193,7 @@ mod tests {
         let z = build(&[(P2S_VERSION, &ver, METHOD_STORE), (P2S_EE_MEMORY, &ram, METHOD_ZSTD), (P2S_SCRATCHPAD, &[1; 0x4000], METHOD_ZSTD)]);
         let dir = std::env::temp_dir().join(format!("rc-trace-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("SCUS-97199 (00000000).01.p2s");
+        let path = dir.join("SCUS-97268 (00000000).01.p2s");
         std::fs::write(&path, z).unwrap();
         assert_eq!(resolve_state(dir.to_str().unwrap()).unwrap(), path);
         let s = Savestate::open(&path).unwrap();

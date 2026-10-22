@@ -4,7 +4,8 @@ One list of every known gap in the Going Commando port, **by missing shared syst
 the class census (`rac2_class_census.md`: the ranking of missing systems by the instances they block), the "not yet"
 notes of `rac2_bringup.md`, and the module docs and comments of `crates/rc-game`, `crates/rc-engine/src/rac2*` and
 `crates/rc-formats/src/rac2` ("not ported", "not yet", "not drawn", "later"). The module docs stay the detailed record;
-this page is the index.
+this page is the index. The systems R&C1's port has and this one does not are mapped to their R&C1 code in
+[`porting_from_rac1.md`](porting_from_rac1.md).
 
 ## How to use it
 
@@ -36,6 +37,10 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-REN-006 | **Lighting**: point lights (`0x2fda20`: the Lancer's flash), the enemies' lighting `0x31a8e4`, the moby lights and colours `0x3132e0` (bolts), tie and moby lighting (milestone D) | Lancer, enemies, bolts, 3 units | 3 / 56 (3 / 56) | lancer.rs:20; enemies.rs:20; bolts.rs:7; moby.rs:29; rac2_bringup.md §2 D | yes |
 | G-REN-007 | **Ship and space**: the ship's engine glow and draw callback, the parked ship, the hull mesh (`0x2fef68`, `SPACE.WAD` `+0xab8`) | Aranos's ship 0x0d54 | — | props.rs:526; rac2_bringup.md §6 | yes |
 | G-REN-008 | **Occlusion offset point** (`occlusion_rad_offset`, set by a camera mode in `0x2f2af0`) | — | — | rac2_bringup.md §6 | minor |
+| G-REN-009 | **Water surfaces and the sea**: the strips' scroll, wobble and bob, the ripple patch, the sea | the levels with water (to map) | — | R&C2's code not mapped yet; R&C1's port: `water.rs`, `water_render.rs`, `sea_render.rs` (porting_from_rac1.md) | yes |
+| G-REN-010 | **Fog zones and the underwater view**: the environment transitions, the underwater test, the fog selection | the levels with fog zones or water (to map); the audio's underwater flag | — | R&C2's code not mapped yet; R&C1's port: `fog_zones.rs`, `fog_state.rs` (porting_from_rac1.md) | yes |
+| G-REN-011 | **Sky stars**: the star sprites of the sky dispatch | the levels with stars (to map) | — | R&C2's code not mapped yet; R&C1's port: `sky_stars.rs` (porting_from_rac1.md) | yes |
+| G-REN-012 | **After-images**: translucent copies of a moby where it was a few ticks ago | the users (to map) | — | R&C2's code not mapped yet; R&C1's port: `afterimage.rs`, `afterimage_render.rs` (porting_from_rac1.md) | yes |
 
 ## Particles (PRT)
 
@@ -97,6 +102,8 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-WPN-003 | **Bolt leftovers**: the XP of a drop (`+0xb6`, `0x18d198` / `0x18d208`), the challenge multiplier `0x1a7a10`, the magnet `0x3831a8`, the spin, the settle arc `0x382e20`, the per-level tally | bolts | — | bolts.rs:7; bolt.rs:7, 65 | yes |
 | G-WPN-004 | **Crate leftovers**: the stack's fall `0x39dfd8`, the TNT crate 0x1f9, the ammo and nanotech pickups (`0x31aa10` / `0x3d2d30`), the respawn's stacking search `0x31c9d8`, the out-of-sight test `0x2f0080` | crates | — | crate_.rs:13, 86, 179 | yes |
 | G-WPN-005 | **The shot's reaction** on a hit moby `0x4126b8` (`+0x98`) and the gravity boots' bend (`0x37f538` / `0x37f618`) | the Lancer's shot | — | shot.rs:20 | yes |
+| G-WPN-006 | **Targeting**: the target list, the aim searches, the throw's landing preview, the ground reticle and markers | the thrown and aimed items, the HUD | — | R&C2's code not mapped yet; R&C1's port: `targeting.rs`, `reticle_render.rs`, `marker_render.rs` (porting_from_rac1.md) | yes |
+| G-WPN-007 | **Inventory and equipment**: what Ratchet owns, each slot's equipped item, the rules that change them | the hand items, the vendor, the saves | — | R&C2's code not mapped yet; R&C1's port: `inventory.rs` (porting_from_rac1.md) | yes |
 
 ## Enemies (ENM)
 
@@ -122,18 +129,23 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-UI-003 | **Help leftovers**: the multi-page help `0x27d800`, the shake offset `0x27d808`, PAL's height | help | — | help.rs:18 | minor |
 | G-UI-004 | **Subtitles** in other languages and the attract-mode list | scenes | — | scene.rs:27; rac2_bringup.md §6 | yes |
 | G-UI-005 | **Pad rumble** `0x2d6d60` | Lancer, 1 unit | 1 / 15 (1 / 15) | lancer.rs:20 | yes |
+| G-UI-006 | **Pause menu and in-level menus**: the mode system, the page menus, Options, the menu text and models | every level | — | R&C2's code not mapped yet; R&C1's port: `menus/`, `menu_render.rs`, `menu_models.rs`, `text_render.rs` (porting_from_rac1.md) | yes |
+| G-UI-007 | **The map**: the map files, the fog mask and its writer, the saved mask | the pause menu | — | R&C2's code not mapped yet; R&C1's port: `map.rs`, `map/` (porting_from_rac1.md) | yes |
+| G-UI-008 | **Cheats**: the cheat bytes, the in-game entry, the mirror mode | the menus, the camera | — | R&C2's code not mapped yet; R&C1's port: `cheats.rs`, `mirror_render.rs` (porting_from_rac1.md) | minor |
 
 ## Scenes (CUT)
 
 | ID | System | Consumers | Census | Sources | Seen |
 |---|---|---|---|---|---|
 | G-CUT-001 | **Scene leftovers**: the end's teleport (`0x1bca86`) and callback (`0x1a8fd0`), the mirror cheat's camera, the actors' lighting and shadows, the modes 3..9 | Aranos's scenes | — | scene.rs:27 | yes |
+| G-CUT-002 | **Movie mode in a level and the credits slideshow** (game modes 1 and 7) | the classes and scenes that start movies, the ending | — | R&C2's code not mapped yet; R&C1's port: `movie_player.rs`, `slideshow.rs`, `movie_render.rs`, `media_render.rs` (porting_from_rac1.md) | yes |
 
 ## Saves (SAV)
 
 | ID | System | Consumers | Census | Sources | Seen |
 |---|---|---|---|---|---|
 | G-SAV-001 | **The save-slot page** between New Game and the level, the autosave `0x30d658`, the level name | the front end, the level end | — | rac2.rs:314; game.rs:146; props.rs:526, 1239 | yes |
+| G-SAV-002 | **Memory card and the persistent game state**: the card driver, the save block, the save paths | the save-slot page, the autosave, the Options | — | R&C2's code not mapped yet; R&C1's port: `memcard.rs`, `game_state.rs`, `saves.rs` (porting_from_rac1.md) | yes |
 
 ## Needs triage
 

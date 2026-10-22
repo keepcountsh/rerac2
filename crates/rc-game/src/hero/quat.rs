@@ -22,7 +22,7 @@
 //!
 //! The edge look-down branch of `0x22b928` reads the edge probe `Hero::edge_probe`. The other producers the hero update
 //! runs around these (the feet `0x22c5c0`, `HeroScanTargets` 0x22c080, the Magneboots lean `0x2352e0`) are
-//! `super::pose`. The cheats (`crate::base::cheats`, [`Hero::cheats`]): 0x15edb1 (record 17's scale 1.57), 0x15edb3 (0x15ee18 → 1.8,
+//! `super::pose`. The cheats (`rerac:rc_game::cheats`, [`Hero::cheats`]): 0x15edb1 (record 17's scale 1.57), 0x15edb3 (0x15ee18 → 1.8,
 //! record 18 = 0x15ee18). Not ported: the cheat 0x15edb5's mirror (below), Clank hidden (0x141628, 0 on Novalis), the
 //! hit flash 0x13f53e in the glow, and the sound triggers of the advances (`PlayClassSound` pitch draws, the sound layer).
 //!

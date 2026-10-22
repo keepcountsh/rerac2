@@ -3,7 +3,7 @@
 //! (joint 1, reach + 0.17) since the last tick (`0x31d648`, 5 lines) and tests a sphere at the head (0.35; the jump
 //! attack 0.47) against the mobys, with the item's damage (`0x262560` / `0x262564` of its row: 1 / 2); thrown (states
 //! 10 out, 11 back) it flies along the throw, comes back to the hand and hits what its spheres touch. R&C1's wrench
-//! update (crate::base::hero::melee, `0x2be1c0`) is the map.
+//! update (rerac:rc_game::hero::melee, `0x2be1c0`) is the map.
 //!
 //! **pvars**: +0x40 the throw's direction, +0x60 its speed, +0x64 the speed's change, +0x6c the wall-hit timer,
 //! +0x70 the trail, +0x74 the swing counter (s16), +0x76 the "skimmed the floor" flag (s16), +0x7c the trail's swing.

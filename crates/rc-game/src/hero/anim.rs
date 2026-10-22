@@ -24,7 +24,7 @@
 //! moby)`. There is no phase gate (unlike the moby advance's every-4th-tick refresh). This is the helicopter hum
 //! Clank's glide carries (class 0x57 sequence 0xe, loop sound 0x10), played while he holds ✕ in the air.
 //!
-//! The hero owns `0x13fde0` (playback speed, [`crate::base::hero::Hero::anim_speed`]) and passes it to
+//! The hero owns `0x13fde0` (playback speed, `rerac:rc_game::hero::Hero::anim_speed`) and passes it to
 //! [`AnimCtl::advance`] once per tick (step 1 of the hero update); the rate `0x13fde4`, the curve state
 //! `0x13fdf0/f4` and the flags `0x13fde8` live in the binding.
 #![allow(clippy::neg_cmp_op_on_partial_ord, clippy::assign_op_pattern)] // FPU compare semantics and op order are spelled out on purpose.
@@ -134,7 +134,7 @@ pub trait AnimCtl {
 /// | +0x20 / +0x21 / +0x22 / +0x23 | frame A / frame B / seq A / seq B |
 /// | +0x18 | the retarget class (the glove-holding layers: classes 1 / 2, [`HoldClass`]) |
 /// | +0x24 / +0x28 / +0x2c | t / speed (1) / rate |
-/// | +0x30..+0x34 | the glove-holding layers' own blend, special-pose and fade flags (`crate::base::hero::weapons::hold_update`) |
+/// | +0x30..+0x34 | the glove-holding layers' own blend, special-pose and fade flags (`rerac:rc_game::hero::weapons::hold_update`) |
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct AnimLayer {
     pub list: u8,
@@ -163,7 +163,7 @@ pub struct AnimLayer {
 
 /// Ratchet's pose-layer nodes (the moby's +0x60 list): 0x140058 / 0x14005c (the weapon arm, lists 12 / 13),
 /// 0x140050 / 0x140054 (the glove-holding layers, lists 12 / 13) and 0x140060 (the face, list 0x18:
-/// `crate::base::hero::weapons::face_update`).
+/// `rerac:rc_game::hero::weapons::face_update`).
 pub(crate) type PoseNodes = [Option<AnimLayer>; 5];
 
 /// The joint lists the pose layers run on, in the order of the `joints` argument of [`pose_layers_with`]: the arms

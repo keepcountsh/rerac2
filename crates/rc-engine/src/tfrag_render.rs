@@ -293,7 +293,7 @@ pub fn spawn_tfrags_on(
     for (ti, t) in level.tfrags.iter().enumerate() {
         let alpha = AlphaRange::of(t.rgba.iter().take(t.positions.len()).map(|c| c.a));
         for (list, n_list) in n_tris.iter_mut().enumerate() {
-            let tris = tfrag_triangles(t, list).expect("tfrag strips were validated by the golden test");
+            let tris = tfrag_triangles(t, list).expect("tfrag strips decode");
             *n_list += tris.len();
             for tri in &tris {
                 let ad = &t.ad_gifs[tri.ad_gif as usize];

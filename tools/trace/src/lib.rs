@@ -1,29 +1,15 @@
-//! Ground-truth harness: read the PS2's EE memory (PCSX2 savestates or the PINE socket) and
-//! compare it with what our reimplementation computes. Doc: docs/plan/trace_harness.md,
-//! tools/trace/README.md, docs/workflows/pcsx2.md.
+//! Development tools: the class census over the level overlays, and the PS2's EE memory (PCSX2 savestates or the
+//! PINE socket). Doc: tools/trace/README.md, docs/workflows/pcsx2.md.
 //!
 //! A dev tool (never ships). Where things live:
 //! * reads game data from `extracted/` ([`default_extracted`]) and never writes there ([`ensure_not_extracted`]);
 //! * writes generated output (EE dumps, reports, CSVs) to `work/trace/` ([`trace_out_dir`]);
-//! * reads the user's personal material from `~/PS2/ratchet1/` ([`personal_dir`]): savestates in `savestates/`,
-//!   recordings in `traces/` (`record` writes new recordings there, the one personal write).
+//! * reads the user's personal material from `~/PS2/ratchet2/` ([`personal_dir`]): savestates in `savestates/`.
 
 pub mod class_census;
-pub mod disc_check;
 pub mod ee;
-pub mod hero_analysis;
-pub mod hero_record;
-pub mod hero_replay;
-pub mod hero_trace;
-pub mod level_peek;
 pub mod mips;
-pub mod novalis_spawn;
-pub mod overlay_diff;
 pub mod pine;
-pub mod port_sim;
-pub mod spawn_facts;
-pub mod tfrag_light_cmp;
-pub mod tie_shrub_cmp;
 pub mod zip;
 
 use anyhow::{bail, Result};
@@ -49,19 +35,13 @@ pub fn work_dir() -> PathBuf { env_dir("RC_WORK").unwrap_or_else(|| repo_root().
 /// This tool's output folder, `work/trace/`.
 pub fn trace_out_dir() -> PathBuf { work_dir().join("trace") }
 
-/// The user's personal material (ISO, savestates, recordings): `RC_PERSONAL`, else `~/PS2/ratchet1`.
+/// The user's personal material (ISO, savestates): `RC_PERSONAL`, else `~/PS2/ratchet2`.
 pub fn personal_dir() -> PathBuf {
-    env_dir("RC_PERSONAL").unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("PS2/ratchet1"))
+    env_dir("RC_PERSONAL").unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("PS2/ratchet2"))
 }
 
-/// Kept savestates: `~/PS2/ratchet1/savestates/`.
+/// Kept savestates: `~/PS2/ratchet2/savestates/`.
 pub fn savestates_dir() -> PathBuf { personal_dir().join("savestates") }
-
-/// Hero recordings: `~/PS2/ratchet1/traces/`.
-pub fn recordings_dir() -> PathBuf { personal_dir().join("traces") }
-
-/// The committed Novalis spawn fixture (`distill-spawn` writes it, `tests/trace/novalis_spawn.rs` reads it).
-pub fn spawn_fixture() -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/novalis_spawn.tsv") }
 
 /// Refuses an output path inside the game-data tree: this tool never writes into `extracted/`.
 pub fn ensure_not_extracted(out: &Path) -> Result<()> {

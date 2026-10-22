@@ -15,8 +15,8 @@ use crate::texture::Texture;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GadgetEntry {
     pub o_class: i32,
-    pub a: (usize, usize),
-    pub b: (usize, usize),
+    pub(crate) a: (usize, usize),
+    pub(crate) b: (usize, usize),
 }
 
 /// The gadget header's entries (class 0: unused).

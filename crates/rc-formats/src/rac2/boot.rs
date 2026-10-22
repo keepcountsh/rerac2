@@ -31,7 +31,7 @@ impl<'a> BootElf<'a> {
     }
 
     /// `n` bytes at `vaddr` (they must lie in one segment's file data).
-    pub fn read(&self, vaddr: u32, n: usize) -> Result<&'a [u8]> {
+    pub(crate) fn read(&self, vaddr: u32, n: usize) -> Result<&'a [u8]> {
         for &(va, off, size) in &self.loads {
             if vaddr >= va && (vaddr - va) as usize + n <= size {
                 let o = off + (vaddr - va) as usize;

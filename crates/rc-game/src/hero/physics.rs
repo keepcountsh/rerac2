@@ -1,6 +1,6 @@
 //! The hero's physics helpers and the move pipeline (L00 addresses; native `f32`, docs/plan/decisions.md
 //! "native-first"). Each function is the R&C2 routine named in its doc; where R&C1 has the same routine the
-//! R&C1 port (`crate::base::hero::physics`) is the map, never the source.
+//! R&C1 port (`rerac:rc_game::hero::physics`) is the map, never the source.
 //!
 //! | Routine | L00 | Here |
 //! | --- | --- | --- |

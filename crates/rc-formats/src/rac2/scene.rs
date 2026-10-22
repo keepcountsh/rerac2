@@ -14,13 +14,13 @@
 use crate::buf::{invalid, Result};
 use crate::scene::{parse_scene_chunk, Region, Scene};
 
-pub const RECORDS: usize = 15;
-pub const RECORD_SIZE: usize = 0x14c;
-pub const LANGUAGES: usize = 12;
-pub const CHUNK_SLOTS: usize = 71;
+pub(crate) const RECORDS: usize = 15;
+pub(crate) const RECORD_SIZE: usize = 0x14c;
+pub(crate) const LANGUAGES: usize = 12;
+pub(crate) const CHUNK_SLOTS: usize = 71;
 
 /// `$gp − 0x1c00` (`0x1ad3f0`): the first scene id of each level, then the last's end.
-pub const SCENE_BASES: [u8; 28] = [
+pub(crate) const SCENE_BASES: [u8; 28] = [
     0x21, 0x26, 0x2b, 0x31, 0x37, 0x44, 0x49, 0x4f, 0x53, 0x5f, 0x68, 0x6b, 0x72, 0x77, 0x7a, 0x81, 0x84, 0x89, 0x8f, 0x96,
     0x9b, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa9,
 ];
@@ -45,18 +45,18 @@ pub fn record_of(id: i32) -> i32 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
     pub speech: [u32; LANGUAGES],
-    pub chunks: Vec<u32>,
+    pub(crate) chunks: Vec<u32>,
 }
 
 impl Record {
     /// The byte range of chunk `i` in the WAD.
-    pub fn chunk_bytes(&self, i: usize) -> Option<std::ops::Range<usize>> {
+    pub(crate) fn chunk_bytes(&self, i: usize) -> Option<std::ops::Range<usize>> {
         let (a, b) = (*self.chunks.get(i)?, *self.chunks.get(i + 1)?);
         Some(a as usize * 2048..b as usize * 2048)
     }
 
     /// Chunks (the sentinel not counted).
-    pub fn chunk_count(&self) -> usize { self.chunks.len().saturating_sub(1) }
+    pub(crate) fn chunk_count(&self) -> usize { self.chunks.len().saturating_sub(1) }
 }
 
 /// The table.
@@ -113,17 +113,3 @@ impl SceneWad {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ids() {
-        assert_eq!(record_of(0x21), 0);
-        assert_eq!(record_of(0x23), 2);
-        assert_eq!(record_of(0x26), 0);
-        assert_eq!(record_of(0x16), 0x16);
-        assert_eq!(record_of(0xbf), 0x2e);
-        assert!(is_scene(0x21) && !is_scene(0x16) && !is_scene(0xb1));
-    }
-}

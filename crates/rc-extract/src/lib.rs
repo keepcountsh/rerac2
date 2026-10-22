@@ -9,11 +9,9 @@
 
 pub mod archive;
 pub mod build_db;
-pub mod export;
 pub mod extract;
 pub mod identify;
 pub mod json;
-pub mod prepare;
 /// SHA-1, shared with the loader snapshots (it lives in rc-formats).
 pub use rc_formats::sha1;
 pub mod space;

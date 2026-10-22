@@ -1,6 +1,5 @@
 //! `verify`: re-hash a data folder against the built-in size/SHA-1 table of the disc named in `extract-info.json`.
 
-use crate::archive::is_pal_copy;
 use crate::build_db::Build;
 use crate::extract::{build_table, fail_with};
 use crate::json::{self, Value};
@@ -16,7 +15,6 @@ pub struct ExtractInfo {
     pub disc: String,
     pub data_format: i64,
     pub extractor_version: String,
-    pub ntsc_only: bool,
     pub files: i64,
     pub bytes: i64,
 }
@@ -28,8 +26,7 @@ pub fn read_info(out: &Path) -> Result<ExtractInfo, Error> {
     let obj = json::parse_object(&text).ok_or_else(|| bad("not a JSON object"))?;
     let s = |k: &str| match json::get(&obj, k) { Some(Value::Str(s)) => Ok(s.clone()), _ => Err(bad(&format!("no \"{k}\""))) };
     let n = |k: &str| match json::get(&obj, k) { Some(Value::Num(n)) => Ok(*n), _ => Err(bad(&format!("no \"{k}\""))) };
-    let ntsc_only = match json::get(&obj, "ntsc_only") { Some(Value::Bool(b)) => *b, _ => return Err(bad("no \"ntsc_only\"")) };
-    Ok(ExtractInfo { disc: s("disc")?, data_format: n("data_format")?, extractor_version: s("extractor_version")?, ntsc_only, files: n("files")?, bytes: n("bytes")? })
+    Ok(ExtractInfo { disc: s("disc")?, data_format: n("data_format")?, extractor_version: s("extractor_version")?, files: n("files")?, bytes: n("bytes")? })
 }
 
 pub fn verify(out: &Path, builds: &[Build], threads: usize, cancel: Option<&AtomicBool>, emit: Emit) -> Result<(ExtractInfo, Summary), Error> {
@@ -40,8 +37,7 @@ pub fn verify(out: &Path, builds: &[Build], threads: usize, cancel: Option<&Atom
     let n = crate::build_db::normalize_serial(&info.disc);
     let build = builds.iter().find(|b| b.supported && b.table.is_some() && crate::build_db::normalize_serial(b.serial) == n)
         .ok_or_else(|| Error::new(Code::VerifyFailed, format!("{INFO_FILE} names disc {:?}, which has no file table", info.disc)))?;
-    let mut table = build_table(build)?;
-    if info.ntsc_only { table.retain(|e| !is_pal_copy(&e.path)); }
+    let table = build_table(build)?;
     let total = table.iter().map(|e| e.size).sum();
     let results = workers::run(
         table.len(), total, Stage::Verify, threads, cancel, emit,

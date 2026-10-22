@@ -1,7 +1,7 @@
 //! Hits: the template a hit is described by (`0x31d158`), the 64-record hit log (L00 `0x1c3400`, 0x40 bytes a
 //! record, next slot `0x1bf194`; a moby's record index at `+0xa8`, −1 none) and the sphere query that hits every moby
 //! it touches (`0x2e14b0`, the moby pass of rc_game's `coll_sphere_mobys`, which is R&C2's). R&C1's design
-//! (crate::base::moby_update::services::HitLog), with R&C2's merge rule: a moby whose current record is its own and does
+//! (rerac:rc_game::moby_update::services::HitLog), with R&C2's merge rule: a moby whose current record is its own and does
 //! at least the new damage keeps it and takes the new flags into it.
 
 use super::{mode, MobyWorld};

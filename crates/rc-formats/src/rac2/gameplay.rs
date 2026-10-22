@@ -13,10 +13,10 @@ use crate::shrub::{self, ShrubInstance};
 use crate::tie::TieInstance;
 
 /// Header words (0x28 × 4 = 0xa0 bytes; the last is 0 on every level seen).
-pub const HEADER_WORDS: usize = 40;
+pub(crate) const HEADER_WORDS: usize = 40;
 
 /// `(name, known by)` per header word.
-pub const SECTIONS: [(&str, &str); HEADER_WORDS] = [
+pub(crate) const SECTIONS: [(&str, &str); HEADER_WORDS] = [
     ("level_settings", "content"),
     ("directional_lights", "content"),
     ("cameras", "content"),
@@ -64,11 +64,8 @@ pub const SECTIONS: [(&str, &str); HEADER_WORDS] = [
     ("unused_39", "order"),
 ];
 
-/// The index of a named section in [`SECTIONS`].
-pub fn index(name: &str) -> Option<usize> { SECTIONS.iter().position(|s| s.0 == name) }
-
 /// The present sections as (name, byte range) in file order: each runs to the next section's start.
-pub fn sections(gameplay: &[u8]) -> Result<Vec<(&'static str, std::ops::Range<usize>)>> {
+pub(crate) fn sections(gameplay: &[u8]) -> Result<Vec<(&'static str, std::ops::Range<usize>)>> {
     let g = Buf(gameplay);
     let mut starts = Vec::new();
     for (i, (name, _)) in SECTIONS.iter().enumerate() {
@@ -130,7 +127,7 @@ pub fn shrub_instances(gameplay: &[u8]) -> Result<Vec<ShrubInstance>> {
 
 /// R&C2's moby instance (0x88 bytes): R&C1's 0x78-byte record with four words inserted at 0x10 (after the spawn
 /// id; their meaning is not mapped yet), so the class is at 0x28 and the position at 0x40.
-pub const MOBY_INSTANCE: usize = 0x88;
+pub(crate) const MOBY_INSTANCE: usize = 0x88;
 
 /// A moby instance: R&C1's fields, and the four words R&C2 adds.
 #[derive(Clone, Copy, Debug)]

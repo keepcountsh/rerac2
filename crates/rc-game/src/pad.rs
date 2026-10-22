@@ -56,8 +56,8 @@ pub struct PadState {
     pub rx: Pf,
     pub ry: Pf,
     /// +0x108 / +0x10c (0x13ca48 / 0x13ca4c): **left stick** X/Y.
-    pub(crate) lx: Pf,
-    pub(crate) ly: Pf,
+    pub lx: Pf,
+    pub ly: Pf,
     /// +0x110..+0x13c: the 12 button pressures / 255 (libpad2 bytes 6..17: R, L, U, D, △, ○, ✕, □, L1, R1, L2, R2).
     pub(crate) pressure: [Pf; 12],
     /// +0x140..+0x17c: copy of +0x100..+0x13c before the mirror option is applied a second time (i.e.
@@ -118,7 +118,7 @@ impl Default for PadState {
 
 /// One axis byte → float (`ProcessPadInput` loop at 0x27be40): `d = |b − 127|`; `d < 48 → 0` (the
 /// field keeps the 0 written before the loop); else `min(cvt(d − 48) / cvt(76), 1)`, negated when `b < 127`.
-pub(crate) fn axis(b: u8) -> Pf {
+pub fn axis(b: u8) -> Pf {
     let d = (b as i32 - 0x7f).abs();
     if d <= 0x2f { return Pf::ZERO; }
     let v = Pf::from_i32(d - 0x30) / Pf::from_i32(0x4c);

@@ -280,7 +280,6 @@ mod tests {
         for &v in Hud::ALL { assert_eq!(Hud::parse(v.key()), Some(v)); }
         for &v in Textures::ALL { assert_eq!(Textures::parse(v.key()), Some(v)); }
         for &v in Detail::ALL { assert_eq!(Detail::parse(v.key()), Some(v)); }
-        assert_eq!(Detail::from_index(9), Detail::Original);
         assert_eq!(AntiAliasing::from_samples(0), AntiAliasing::Off);
         assert_eq!(AntiAliasing::from_samples(4).samples(), 4);
     }

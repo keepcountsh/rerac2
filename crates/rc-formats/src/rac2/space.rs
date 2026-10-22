@@ -15,7 +15,7 @@ use crate::texture::Texture;
 const PAINT_ROWS: usize = 0xad0;
 
 /// Paint `paint`'s part of `SPACE.WAD`.
-pub fn paint_part(toc: &Toc, paint: usize) -> Result<Part> {
+pub(crate) fn paint_part(toc: &Toc, paint: usize) -> Result<Part> {
     let h = toc.header(Global::Space)?;
     let o = PAINT_ROWS + 8 * paint;
     Ok(Part { sector: h.u32(o)?, sectors: h.u32(o + 4)? })

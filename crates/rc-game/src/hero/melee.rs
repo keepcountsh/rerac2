@@ -2,7 +2,7 @@
 //! swings), the jump attack 0x14, the throw 0x15 / 0x83 (the comet strike: the wrench flies, `0x2ba610`) and the
 //! gadget swing 0x22, their SetState entries (`0x2c4560` group 6), physics (`0x2ba8e0`) and transitions (`0x2cb650`),
 //! the aim `0x2b76a8` with the target search `0x2ae900` / `0x2ae400`. The wrench moby's own update (the hit test,
-//! the flight) is `crate::moby::classes::wrench` (`0x38d318`). R&C1's melee (crate::base::hero::melee) is the map.
+//! the flight) is `crate::moby::classes::wrench` (`0x38d318`). R&C1's melee (rerac:rc_game::hero::melee) is the map.
 //!
 //! **The swing table** (`0x25d910`, 0x2c a row, row `0x18aa1c`): `[kind (0 ground, 1 jump, 2 comet), step,
 //! chain-before, input-ref, chain-from, jump-after, idle-after, hit-from, hit-to, +0x24, +0x28]`, frames of Ratchet's

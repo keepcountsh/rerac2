@@ -10,8 +10,7 @@
 //! 2. The old level's entities are despawned: every mesh, camera and UI root that is not [`KeepAcrossLevels`] (the main
 //!    camera, the frame's presentation). The old level's state is dropped by each module's [`LevelUnload`] systems.
 //! 3. The level-wide resources are replaced: `Level`, `GameFog`, `ClearColor`, the audio system's level data
-//!    (`crate::audio_out::AudioOut::swap_level`); the current level ([`crate::level_load::level_index`]) and the lumps
-//!    the store keeps for the old one ([`rc_data::Lumps::forget_level`]).
+//!    (`crate::audio_out::AudioOut::swap_level`); the current level ([`crate::level_load::level_index`]).
 //! 4. [`LevelGeneration`] + 1, then the level start runs again: [`LevelStartup`] / [`LevelPostStartup`] (the systems that
 //!    ran at the boot's `Startup` / `PostStartup` for the level), and on the next frame the lazy set-ups whose guards
 //!    follow the generation.
@@ -147,7 +146,6 @@ fn apply_switch(world: &mut World) {
     despawn_level_entities(world);
     let LevelBundle { index, mut level } = bundle;
     crate::level_load::set_level_index(index);
-    rc_data::global().forget_level(&crate::level_load::extracted_root(), old);
     if let Some(data) = level.audio.take() {
         if let Some(mut out) = world.get_resource_mut::<crate::audio_out::AudioOut>() { out.swap_level(data); }
     }

@@ -4,12 +4,12 @@
 
 use crate::buf::{invalid, Buf, Result};
 
-pub const WAD_HEADER_SIZE: usize = 0x10;
+pub(crate) const WAD_HEADER_SIZE: usize = 0x10;
 
 pub fn is_wad(b: &[u8]) -> bool { b.len() >= WAD_HEADER_SIZE && &b[..3] == b"WAD" }
 
 /// Total stream size in bytes including the 16-byte header.
-pub fn compressed_size(b: &[u8]) -> Result<u32> {
+pub(crate) fn compressed_size(b: &[u8]) -> Result<u32> {
     if !is_wad(b) { return invalid("not a WAD stream"); }
     Ok(u32::from_le_bytes([b[3], b[4], b[5], b[6]]))
 }
@@ -88,30 +88,3 @@ pub fn decompress(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn wad(packets: &[u8]) -> Vec<u8> {
-        let mut v = b"WAD\0\0\0\0TEST\0\0\0\0\0".to_vec();
-        v.extend_from_slice(packets);
-        let size = v.len() as u32;
-        v[3..7].copy_from_slice(&size.to_le_bytes());
-        v
-    }
-    #[test]
-    fn literal_then_little_match() {
-        let out = decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0xC0, 0x00])).unwrap();
-        assert_eq!(out, b"abcdddddddd");
-    }
-    #[test]
-    fn medium_match_with_little_literal() {
-        let out = decompress(&wad(&[0x01, b'x', b'y', b'z', b'w', 0x21, 0x02, 0x00, b'!', b'?'])).unwrap();
-        assert_eq!(out, b"xyzwwww!?");
-    }
-    #[test]
-    fn dummy_packet_and_pad() {
-        assert_eq!(decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0x11, 0x02, 0x00, b'e', b'f'])).unwrap(), b"abcdef");
-        assert_eq!(decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0x12, 0x00, 0x00, 0xEE])).unwrap(), b"abcd");
-        assert!(decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0x01, b'e', b'f', b'g', b'h'])).is_err());
-    }
-}

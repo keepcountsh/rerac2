@@ -46,7 +46,7 @@ impl<'a> LevelWad<'a> {
     }
 
     /// A part's byte range in the file (sector sized), `None` when empty.
-    pub fn part(&self, p: Part) -> Result<Option<Range<usize>>> {
+    pub(crate) fn part(&self, p: Part) -> Result<Option<Range<usize>>> {
         let b = Buf(self.file);
         let o = 0x10 + 8 * p as usize;
         let (sector, sectors) = (b.u32(o)? as usize, b.u32(o + 4)? as usize);

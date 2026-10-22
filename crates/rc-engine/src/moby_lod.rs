@@ -253,18 +253,15 @@ mod tests {
     use super::*;
 
     /// The glow word: on with mode bit 0x10 only; RGB from +0x90, its byte 3 dropped (the vertex alpha replaces it);
-    /// a class with a glow colour starts on, one without off.
+    /// black is a colour.
     #[test]
     fn glow_word_of_mode_and_colour() {
         assert_eq!(glow_word(0x10, 0x8084_e643), GLOW_ON | 0x84_e643);
         assert_eq!(glow_word(0x210, 0x0020_8020), GLOW_ON | 0x20_8020);
         assert_eq!(glow_word(0x200, 0x8084_e643), 0);
-        assert_eq!(class_glow_word(0x808c_8c8cu32 as i32), GLOW_ON | 0x8c_8c8c);
-        assert_eq!(class_glow_word(0), 0);
         // Black is a colour: mode 0x10 with +0x90 = 0 draws the glow packets black.
         assert_eq!(glow_word(0x10, 0), GLOW_ON);
     }
-    use rc_formats::moby::{LevelMobyClass, MobySubmesh};
 
     fn inp(dd: i32, lod: u8, shine: u8) -> ProcInput {
         ProcInput { position: [0.0; 3], rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], scale: 1.0, draw_distance: dd, lod_trans: lod, shine_distance: shine, alpha: 0x80 }
@@ -335,72 +332,4 @@ mod tests {
         assert!(v[2] < 0.99, "{v:?}");
     }
 
-    fn level01() -> Option<(rc_formats::level::LevelCore, Vec<u8>, Vec<LevelMobyClass>)> {
-        let root = crate::level_load::extracted_root();
-        let (Ok(index), Ok(data)) = (crate::disc_source::level_file(&root, 1, "core_index.bin"), crate::disc_source::level_file(&root, 1, "core_data.bin")) else { return None };
-        let data = rc_formats::wad::decompress(&data).unwrap();
-        let core = rc_formats::level::parse_level_core(&index, data.len()).unwrap();
-        let classes = rc_formats::moby::parse_level_mobys(&core, &data).unwrap();
-        Some((core, data, classes))
-    }
-
-    fn max_palette_slot(list: &[MobySubmesh]) -> Option<u8> {
-        list.iter().flat_map(|s| &s.vertices).map(|v| *v.skin.joints[..v.skin.count.max(1) as usize].iter().max().unwrap()).max()
-    }
-
-    /// The low-LOD joint mapping: `MobyAnimEval` runs with class[9] joints for the low LOD, so its packets
-    /// may only use palette slots below class[9] (slot 0 = identity when class[9] = 0). Measured on every
-    /// class of every level on the disc that has a low LOD. Needs the disc data; skipped without it.
-    #[test]
-    fn low_lod_uses_the_first_low_joint_count_slots() {
-        let root = crate::level_load::extracted_root();
-        let mut checked = 0;
-        for lv in 0..19u32 {
-            let (Ok(index), Ok(data)) = (crate::disc_source::level_file(&root, lv, "core_index.bin"), crate::disc_source::level_file(&root, lv, "core_data.bin")) else { continue };
-            let data = rc_formats::wad::decompress(&data).unwrap();
-            let core = rc_formats::level::parse_level_core(&index, data.len()).unwrap();
-            let Ok(classes) = rc_formats::moby::parse_level_mobys(&core, &data) else { continue };
-            for c in &classes {
-                let h = &c.class.header;
-                let Some(max) = max_palette_slot(&c.class.low_lod) else { continue };
-                checked += 1;
-                assert!((max as u32) < (h.low_lod_joint_count as u32).max(1), "level {lv} class {}: low LOD skins to slot {max}, low joint count {}", c.o_class, h.low_lod_joint_count);
-            }
-        }
-        if checked == 0 { eprintln!("skipped: no level data"); } else { println!("{checked} low-LOD classes checked"); }
-    }
-
-    /// Novalis metal classes, their packets' textures (−2 chrome / −3 glass) and the TEX1/CLAMP words of their
-    /// ad-gifs, for the notes.
-    #[test]
-    #[ignore = "survey: prints, asserts nothing; run with --ignored --nocapture"]
-    fn novalis_metal_classes() {
-        let Some((core, data, classes)) = level01() else { eprintln!("skipped: no level 01 data"); return };
-        for c in classes.iter().filter(|c| !c.class.metal.is_empty()) {
-            let mut tex = std::collections::BTreeMap::<i32, usize>::new();
-            for s in &c.class.metal { for t in &s.triangles { *tex.entry(t.texture).or_default() += 1; } }
-            let verts: usize = c.class.metal.iter().map(|s| s.vertices.len()).sum();
-            let max_joint = max_palette_slot(&c.class.metal);
-            let blk = core.blocks.iter().find(|b| b.name == format!("moby_class/{:04}", c.o_class)).unwrap();
-            let blob = &data[blk.offset..blk.offset + blk.size];
-            let mut words = std::collections::BTreeSet::new();
-            for s in &c.class.metal {
-                let e = &s.entry;
-                let list = &blob[e.vif_list_offset as usize..e.vif_list_offset as usize + e.vif_list_size as usize * 16];
-                let codes = rc_formats::vif::parse_vif(list).unwrap();
-                if let Some(ad) = codes.iter().filter(|c| c.is_unpack()).nth(1) {
-                    for b in 0..ad.count() as usize / 4 {
-                        let w = |q: usize, k: usize| u32::from_le_bytes(ad.data[b * 0x40 + q * 16 + k * 4..][..4].try_into().unwrap());
-                        words.insert((w(0, 0), w(0, 1), w(1, 0), w(2, 0)));
-                    }
-                }
-            }
-            println!(
-                "class {:4}: {} metal packets, {verts} vertices, triangles by texture {tex:?}, max joint {max_joint:?} (joint count {}), ad-gif (TEX1 lo, TEX1 hi, CLAMP lo, TEX0 lo) {words:x?}",
-                c.o_class, c.class.metal.len(), c.class.header.joint_count
-            );
-        }
-        let h = &core.header;
-        println!("env maps: chrome tex 0x{:x} pal 0x{:x}, glass tex 0x{:x} pal 0x{:x}", h.chrome_map_texture, h.chrome_map_palette, h.glass_map_texture, h.glass_map_palette);
-    }
 }

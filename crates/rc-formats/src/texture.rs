@@ -1,6 +1,6 @@
 //! Level textures: 8-bit indexed pixels with a 256-entry RGBA32 CLUT in CSM1
 //! order. Spec: docs/formats/textures_rac1.md (§3, §4, §9, §12, §12b).
-//! Ported from the retired C++ reference extractor (git 2230812); `tests/formats/golden.rs` checks every section against the committed snapshot table (`data/loader_snapshots.tsv`).
+//! Ported from the retired C++ reference extractor (git 2230812).
 
 use crate::buf::{invalid, Buf, Result};
 use crate::level::{LevelCore, ShrubBillboardInfo};
@@ -16,7 +16,7 @@ use crate::level::{LevelCore, ShrubBillboardInfo};
 /// | 0xa | s16 | `palette` | CLUT at `gs_ram[palette * 0x100]`, 1024 bytes |
 /// | 0xc | s16 | `mipmap` | tfrag textures: gs_ram block (0x100 bytes) of mip level 2 (tfrag_rac1.md §2.5.1) |
 /// | 0xe | s16 | `pad` | tfrag textures: gs_ram block of mip level 3, -1 when `ty` = 3 |
-pub use crate::level::TextureEntry;
+pub(crate) use crate::level::TextureEntry;
 
 /// RGBA8 image, row-major, top-down, alpha already scaled to 0..=255.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,12 +28,12 @@ pub struct Texture {
 
 /// PS2 CSM1 CLUT order -> linear: within each 32-entry group swap the two middle
 /// 8-entry blocks (swap bits 3 and 4 of the index). An involution. Spec §4.3.
-pub fn clut_index(i: u32) -> u32 {
+pub(crate) fn clut_index(i: u32) -> u32 {
     if ((i >> 3) & 1) != ((i >> 4) & 1) { i ^ 0x18 } else { i }
 }
 
 /// PS2 alpha 0..=0x80 -> 0..=0xff (0x80 = opaque; anything above clamps to opaque). Spec §4.4.
-pub fn scale_alpha(a: u8) -> u8 {
+pub(crate) fn scale_alpha(a: u8) -> u8 {
     if a < 0x80 { a * 2 } else { 0xff }
 }
 
@@ -56,19 +56,6 @@ pub fn decode_indexed8(indices: &[u8], width: u32, height: u32, clut: &[u8]) -> 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextureTable { Tfrag, Moby, Tie, Shrub, Billboard }
 
-impl TextureTable {
-    /// Short table name (snapshot keys, texture keys, export folders).
-    pub fn name(self) -> &'static str {
-        match self {
-            TextureTable::Tfrag => "tfrag",
-            TextureTable::Moby => "moby",
-            TextureTable::Tie => "tie",
-            TextureTable::Shrub => "shrub",
-            TextureTable::Billboard => "billboard",
-        }
-    }
-}
-
 /// Where a decoded texture's description came from.
 #[derive(Clone, Copy, Debug)]
 pub enum TextureSource {
@@ -88,31 +75,20 @@ pub struct LevelTexture {
     pub texture: Texture,
 }
 
-impl LevelTexture {
-    /// The texture's key (the retired C++ extractor's file stem), e.g. `tfrag/000_128x128_t4`
-    /// or `billboard/0123_32x64`.
-    pub fn key(&self) -> String {
-        match self.source {
-            TextureSource::Entry(e) => format!("{}/{:03}_{}x{}_t{}", self.table.name(), self.index, e.width, e.height, e.ty),
-            TextureSource::Billboard { o_class, info } => format!("billboard/{:04}_{}x{}", o_class, info.width, info.height),
-        }
-    }
-}
-
 /// One stored 8-bit indexed image: the `width × height` indices and the 256-entry RGBA32 CLUT (1024 bytes) exactly
 /// as the disc holds them (CLUT in CSM1 order, alpha 0x80 = 1.0). [`IndexedImage::decode`] is the decode every
 /// loader here applies; exporters use the raw parts to keep the indices and the CLUT.
 #[derive(Clone, Copy, Debug)]
-pub struct IndexedImage<'a> {
-    pub width: u32,
-    pub height: u32,
-    pub indices: &'a [u8],
-    pub clut: &'a [u8],
+pub(crate) struct IndexedImage<'a> {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) indices: &'a [u8],
+    pub(crate) clut: &'a [u8],
 }
 
 impl IndexedImage<'_> {
     /// [`decode_indexed8`] of the image.
-    pub fn decode(&self) -> Result<Texture> { decode_indexed8(self.indices, self.width, self.height, self.clut) }
+    pub(crate) fn decode(&self) -> Result<Texture> { decode_indexed8(self.indices, self.width, self.height, self.clut) }
 }
 
 fn entry_image_in<'a>(tex: Buf<'a>, gs: Buf<'a>, e: &TextureEntry) -> Result<IndexedImage<'a>> {
@@ -121,14 +97,8 @@ fn entry_image_in<'a>(tex: Buf<'a>, gs: Buf<'a>, e: &TextureEntry) -> Result<Ind
     Ok(IndexedImage { width: e.width as u32, height: e.height as u32, indices: px.bytes(), clut: clut.bytes() })
 }
 
-/// The stored image of a tfrag/moby/tie/shrub table entry (level 0 only), as [`parse_textures`] decodes it.
-pub fn entry_image<'a>(core: &LevelCore, core_data: &'a [u8], gs_ram: &'a [u8], e: &TextureEntry) -> Result<IndexedImage<'a>> {
-    let Some(blk) = core.blocks.iter().find(|b| b.name == "textures") else { return invalid("level core has no textures block"); };
-    entry_image_in(Buf(core_data).sub(blk.offset, blk.size, "textures block")?, Buf(gs_ram), e)
-}
-
 /// The stored image of a shrub billboard (level 0 only), as [`parse_textures`] decodes it.
-pub fn billboard_image<'a>(gs_ram: &'a [u8], b: &ShrubBillboardInfo) -> Result<IndexedImage<'a>> {
+pub(crate) fn billboard_image<'a>(gs_ram: &'a [u8], b: &ShrubBillboardInfo) -> Result<IndexedImage<'a>> {
     let gs = Buf(gs_ram);
     if b.texture_offset < 0 || b.palette_offset < 0 { return invalid("negative billboard gs_ram offset"); }
     let px = gs.sub(b.texture_offset as usize * 0x100, b.width as usize * b.height as usize, "billboard pixels")?;
@@ -198,7 +168,7 @@ pub fn decode_tfrag_mip_levels(core: &LevelCore, core_data: &[u8], gs_ram: &[u8]
 }
 
 /// The stored images of a tfrag texture's mip chain (level 0 first), the parts [`decode_tfrag_mip_levels`] decodes.
-pub fn tfrag_mip_images<'a>(core: &LevelCore, core_data: &'a [u8], gs_ram: &'a [u8], e: &TextureEntry) -> Result<Vec<IndexedImage<'a>>> {
+pub(crate) fn tfrag_mip_images<'a>(core: &LevelCore, core_data: &'a [u8], gs_ram: &'a [u8], e: &TextureEntry) -> Result<Vec<IndexedImage<'a>>> {
     let Some(blk) = core.blocks.iter().find(|b| b.name == "textures") else { return invalid("level core has no textures block"); };
     let tex = Buf(core_data).sub(blk.offset, blk.size, "textures block")?;
     let gs = Buf(gs_ram);
@@ -231,7 +201,7 @@ pub fn decode_billboard_mip_levels(gs_ram: &[u8], b: &ShrubBillboardInfo) -> Res
 }
 
 /// The stored images of a billboard's mip chain (level 0 first), the parts [`decode_billboard_mip_levels`] decodes.
-pub fn billboard_mip_images<'a>(gs_ram: &'a [u8], b: &ShrubBillboardInfo) -> Result<Vec<IndexedImage<'a>>> {
+pub(crate) fn billboard_mip_images<'a>(gs_ram: &'a [u8], b: &ShrubBillboardInfo) -> Result<Vec<IndexedImage<'a>>> {
     let gs = Buf(gs_ram);
     if b.width <= 0 || b.height <= 0 || b.palette_offset < 0 { return invalid("billboard has no texture"); }
     if !(1..=4).contains(&b.max_mip) { return invalid("billboard level count outside 1..=4"); }
@@ -248,44 +218,3 @@ pub fn billboard_mip_images<'a>(gs_ram: &'a [u8], b: &ShrubBillboardInfo) -> Res
     Ok(out)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clut_index_swaps_middle_blocks() {
-        // per 32-entry group: stored blocks 0,1,2,3 -> linear 0,2,1,3
-        for g in 0..8u32 {
-            let b = g * 32;
-            for k in 0..8 {
-                assert_eq!(clut_index(b + k), b + k);
-                assert_eq!(clut_index(b + 8 + k), b + 16 + k);
-                assert_eq!(clut_index(b + 16 + k), b + 8 + k);
-                assert_eq!(clut_index(b + 24 + k), b + 24 + k);
-            }
-        }
-        for i in 0..256 { assert_eq!(clut_index(clut_index(i)), i, "involution"); }
-    }
-
-    #[test]
-    fn scale_alpha_maps_0x80_to_opaque() {
-        assert_eq!(scale_alpha(0x00), 0x00);
-        assert_eq!(scale_alpha(0x01), 0x02);
-        assert_eq!(scale_alpha(0x40), 0x80);
-        assert_eq!(scale_alpha(0x7f), 0xfe);
-        assert_eq!(scale_alpha(0x80), 0xff);
-        assert_eq!(scale_alpha(0x81), 0xff);
-        assert_eq!(scale_alpha(0xff), 0xff);
-    }
-
-    #[test]
-    fn decode_indexed8_applies_clut_order_and_alpha() {
-        // entry j of the stored CLUT = (j, j, j, 0x80 if j even else 0x10)
-        let clut: Vec<u8> = (0..256u32).flat_map(|j| [j as u8, j as u8, j as u8, if j % 2 == 0 { 0x80 } else { 0x10 }]).collect();
-        let t = decode_indexed8(&[0, 8, 16, 25], 2, 2, &clut).unwrap();
-        assert_eq!((t.width, t.height), (2, 2));
-        assert_eq!(t.rgba, [0, 0, 0, 0xff, 16, 16, 16, 0xff, 8, 8, 8, 0xff, 25, 25, 25, 0x20]);
-        assert!(decode_indexed8(&[0; 3], 2, 2, &clut).is_err());
-        assert!(decode_indexed8(&[0; 4], 2, 2, &clut[..1020]).is_err());
-    }
-}

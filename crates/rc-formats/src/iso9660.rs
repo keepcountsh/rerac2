@@ -13,7 +13,6 @@
 use crate::buf::{Buf, FormatError};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 use std::sync::Mutex;
 use thiserror::Error;
 
@@ -30,14 +29,14 @@ pub enum DiscError {
     #[error(transparent)]
     Format(#[from] FormatError),
 }
-pub type Result<T> = std::result::Result<T, DiscError>;
+pub(crate) type Result<T> = std::result::Result<T, DiscError>;
 
 pub(crate) fn bad<T>(msg: impl Into<String>) -> Result<T> { Err(DiscError::Format(FormatError::Invalid(msg.into()))) }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IsoEntry {
     /// Uppercase, without the `;1` version suffix.
-    pub name: String,
+    pub(crate) name: String,
     /// `/DIR/FILE.EXT`, uppercase.
     pub path: String,
     pub lba: u32,
@@ -53,10 +52,6 @@ pub struct IsoImage<R = File> {
     volume_id: String,
     volume_sectors: u32,
     entries: Vec<IsoEntry>,
-}
-
-impl IsoImage<File> {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> { Self::new(File::open(path)?) }
 }
 
 impl<R: Read + Seek> IsoImage<R> {
@@ -134,12 +129,12 @@ impl<R: Read + Seek> IsoImage<R> {
 
     pub fn read_file(&self, e: &IsoEntry) -> Result<Vec<u8>> { self.read_bytes(e.lba as u64 * SECTOR_SIZE as u64, e.size as u64) }
 
-    pub fn read_sectors(&self, lba: u32, count: u32) -> Result<Vec<u8>> {
+    pub(crate) fn read_sectors(&self, lba: u32, count: u32) -> Result<Vec<u8>> {
         self.read_bytes(lba as u64 * SECTOR_SIZE as u64, count as u64 * SECTOR_SIZE as u64)
     }
 
     /// Reads `size` user-data bytes starting at logical byte `offset` (= sector * 2048 + in-sector offset).
-    pub fn read_bytes(&self, offset: u64, size: u64) -> Result<Vec<u8>> {
+    pub(crate) fn read_bytes(&self, offset: u64, size: u64) -> Result<Vec<u8>> {
         let ss = SECTOR_SIZE as u64;
         let end = offset.checked_add(size).ok_or_else(|| FormatError::Invalid("byte range overflows".into()))?;
         if end > self.sector_count as u64 * ss {
@@ -173,115 +168,3 @@ fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> Result<usize> {
     Ok(n)
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    fn both_endian32(b: &mut [u8], o: usize, v: u32) {
-        b[o..o + 4].copy_from_slice(&v.to_le_bytes());
-        b[o + 4..o + 8].copy_from_slice(&v.to_be_bytes());
-    }
-    fn dir_record(lba: u32, size: u32, dir: bool, name: &[u8]) -> Vec<u8> {
-        let len = (33 + name.len() + 1) & !1;   // records are padded to even length
-        let mut r = vec![0u8; len];
-        r[0] = len as u8;
-        both_endian32(&mut r, 2, lba);
-        both_endian32(&mut r, 10, size);
-        r[25] = if dir { 2 } else { 0 };
-        r[32] = name.len() as u8;
-        r[33..33 + name.len()].copy_from_slice(name);
-        r
-    }
-
-    /// A tiny image: root holds `SYSTEM.CNF;1`, `SCUS_971.99;1` and directory `DATA` with `A.BIN;1`.
-    /// Sector 20 = root, 21 = DATA, 22 = SYSTEM.CNF, 23..24 = boot "ELF" (3000 bytes), 25 = A.BIN.
-    pub(crate) fn mini_iso(total_sectors: usize) -> (Vec<u8>, Vec<u8>) {
-        let mut img = vec![0u8; total_sectors * SECTOR_SIZE];
-        let pvd = &mut img[16 * SECTOR_SIZE..17 * SECTOR_SIZE];
-        pvd[0] = 1;
-        pvd[1..6].copy_from_slice(b"CD001");
-        pvd[6] = 1;
-        pvd[8..40].copy_from_slice(format!("{:<32}", "PLAYSTATION").as_bytes());
-        pvd[40..72].copy_from_slice(format!("{:<32}", "RATCHETANDCLANK").as_bytes());
-        both_endian32(pvd, 80, total_sectors as u32);
-        pvd[128..130].copy_from_slice(&(SECTOR_SIZE as u16).to_le_bytes());
-        let root = dir_record(20, SECTOR_SIZE as u32, true, &[0]);
-        pvd[156..156 + 34].copy_from_slice(&root);
-
-        let cnf = b"BOOT2 = cdrom0:\\SCUS_971.99;1\r\nVER = 1.00\r\nVMODE = NTSC\r\n\r\n".to_vec();
-        let mut elf = vec![0u8; 3000];
-        elf[..4].copy_from_slice(b"\x7fELF");
-        for (i, v) in elf.iter_mut().enumerate().skip(4) { *v = (i * 7) as u8; }
-
-        let mut root_dir = Vec::new();
-        root_dir.extend(dir_record(20, SECTOR_SIZE as u32, true, &[0]));
-        root_dir.extend(dir_record(20, SECTOR_SIZE as u32, true, &[1]));
-        root_dir.extend(dir_record(21, SECTOR_SIZE as u32, true, b"DATA"));
-        root_dir.extend(dir_record(23, elf.len() as u32, false, b"SCUS_971.99;1"));
-        root_dir.extend(dir_record(22, cnf.len() as u32, false, b"SYSTEM.CNF;1"));
-        img[20 * SECTOR_SIZE..20 * SECTOR_SIZE + root_dir.len()].copy_from_slice(&root_dir);
-        let mut data_dir = Vec::new();
-        data_dir.extend(dir_record(21, SECTOR_SIZE as u32, true, &[0]));
-        data_dir.extend(dir_record(20, SECTOR_SIZE as u32, true, &[1]));
-        data_dir.extend(dir_record(25, 5, false, b"a.bin;1"));
-        img[21 * SECTOR_SIZE..21 * SECTOR_SIZE + data_dir.len()].copy_from_slice(&data_dir);
-        img[22 * SECTOR_SIZE..22 * SECTOR_SIZE + cnf.len()].copy_from_slice(&cnf);
-        img[23 * SECTOR_SIZE..23 * SECTOR_SIZE + elf.len()].copy_from_slice(&elf);
-        img[25 * SECTOR_SIZE..25 * SECTOR_SIZE + 5].copy_from_slice(b"hello");
-        (img, elf)
-    }
-
-    /// Re-encodes a 2048-byte image as raw 2352-byte mode-2 form-1 sectors.
-    fn to_raw(img: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
-        for s in img.chunks(SECTOR_SIZE) {
-            let mut raw = vec![0u8; RAW_SECTOR_SIZE];
-            raw[..12].copy_from_slice(&[0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]);
-            raw[15] = 2;
-            raw[24..24 + SECTOR_SIZE].copy_from_slice(s);
-            raw[24 + SECTOR_SIZE..].fill(0xAA);   // EDC/ECC stand-in; must never leak into user data
-            out.extend(raw);
-        }
-        out
-    }
-
-    fn check(iso: &IsoImage<Cursor<Vec<u8>>>, elf: &[u8]) {
-        assert_eq!(iso.volume_id(), "RATCHETANDCLANK");
-        assert_eq!(iso.volume_sectors(), 32);
-        let names: Vec<&str> = iso.entries().iter().map(|e| e.path.as_str()).collect();
-        assert_eq!(names, ["/DATA", "/DATA/A.BIN", "/SCUS_971.99", "/SYSTEM.CNF"]);
-        assert_eq!(iso.read_file(iso.find("/scus_971.99;1").unwrap()).unwrap(), elf);
-        assert_eq!(iso.read_file(iso.find("data/a.bin").unwrap()).unwrap(), b"hello");
-        assert!(iso.find("/DATA").unwrap().is_directory);
-        assert!(iso.find("/NOPE").is_none());
-        // Unaligned reads crossing a sector boundary.
-        assert_eq!(iso.read_bytes(23 * 2048 + 2040, 20).unwrap(), &elf[2040..2060]);
-        assert!(iso.read_sectors(iso.sector_count(), 1).is_err());
-        assert!(iso.read_bytes(iso.sector_count() as u64 * 2048 - 1, 2).is_err());
-    }
-
-    #[test]
-    fn reads_a_synthetic_2048_byte_image() {
-        let (img, elf) = mini_iso(32);
-        let iso = IsoImage::new(Cursor::new(img)).unwrap();
-        assert_eq!(iso.raw_sector_size(), 2048);
-        assert_eq!(iso.sector_count(), 32);
-        check(&iso, &elf);
-    }
-
-    #[test]
-    fn reads_a_synthetic_raw_2352_byte_image() {
-        let (img, elf) = mini_iso(32);
-        let iso = IsoImage::new(Cursor::new(to_raw(&img))).unwrap();
-        assert_eq!(iso.raw_sector_size(), 2352);
-        assert_eq!(iso.sector_count(), 32);
-        check(&iso, &elf);
-    }
-
-    #[test]
-    fn rejects_images_without_a_pvd() {
-        assert!(IsoImage::new(Cursor::new(vec![0u8; 32 * 2048])).is_err());
-        assert!(IsoImage::new(Cursor::new(vec![0u8; 100])).is_err());
-    }
-}

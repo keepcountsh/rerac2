@@ -16,8 +16,8 @@ use crate::texture::Texture;
 /// An armour's two parts, as byte ranges of `ARMOR.WAD`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArmorParts {
-    pub mesh: (usize, usize),
-    pub textures: (usize, usize),
+    pub(crate) mesh: (usize, usize),
+    pub(crate) textures: (usize, usize),
 }
 
 /// The armour table of `RC2.HDR`.
@@ -51,7 +51,7 @@ pub fn read(wad: &[u8], p: ArmorParts) -> Result<Armor> {
 }
 
 /// A texture list as the armours and the gadgets keep theirs: `s32 count`, then `count` offsets of PIF2 images.
-pub fn read_textures(bytes: &[u8]) -> Result<Vec<Texture>> {
+pub(crate) fn read_textures(bytes: &[u8]) -> Result<Vec<Texture>> {
     let tex = Buf(bytes);
     let count = tex.i32(0)?;
     if !(0..=16).contains(&count) { return invalid(format!("texture list: {count} textures")); }

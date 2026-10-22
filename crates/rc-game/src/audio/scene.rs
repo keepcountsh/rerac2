@@ -53,9 +53,6 @@ pub enum SceneAudioCmd {
 
 static INBOX: Mutex<VecDeque<SceneAudioCmd>> = Mutex::new(VecDeque::new());
 
-/// Tests that post to or drain the process-wide inbox hold this (the test harness runs them in parallel).
-#[cfg(test)]
-pub(crate) static TEST_INBOX: Mutex<()> = Mutex::new(());
 
 /// Queues a request for the audio driver.
 pub fn post(cmd: SceneAudioCmd) { INBOX.lock().unwrap_or_else(|e| e.into_inner()).push_back(cmd); }

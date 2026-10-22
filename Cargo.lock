@@ -4375,20 +4375,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rc-data"
-version = "0.3.6"
-dependencies = [
- "rc-formats",
-]
-
-[[package]]
 name = "rc-engine"
 version = "0.3.6"
 dependencies = [
  "anyhow",
  "bevy",
  "libc",
- "rc-data",
  "rc-formats",
  "rc-game",
  "rc-video",
@@ -4398,7 +4390,6 @@ dependencies = [
 name = "rc-extract"
 version = "0.3.6"
 dependencies = [
- "rc-data",
  "rc-formats",
 ]
 
@@ -4425,7 +4416,6 @@ version = "0.3.6"
 dependencies = [
  "anyhow",
  "miniz_oxide 0.8.9",
- "rc-extract",
  "rc-formats",
  "rc-game",
  "ruzstd",

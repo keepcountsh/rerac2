@@ -84,19 +84,8 @@ pub struct Build<'a> {
     pub table: Option<&'a str>,
 }
 
-/// RC1 NTSC-U v1.00 reference: boot ELF and ISO hashes as recorded in docs/plan/decisions.md (2026-09-26).
-/// R&C2 NTSC-U v2.00: the bring-up build (docs/plan/rac2_bringup.md).
+/// Going Commando NTSC-U v2.00, the supported build.
 pub const BUILDS: &[Build<'static>] = &[
-    Build {
-        serial: "SCUS_971.99",
-        version: "1.00",
-        region: "NTSC-U",
-        elf_size: 1_383_028,
-        elf_sha1: "72fd1de379dafd8f243dceeb3be50980f3fd3cd5",
-        image_sectors: 2_057_664,
-        supported: true,
-        table: Some(include_str!("../data/scus_971_99.tsv")),
-    },
     Build {
         serial: "SCUS_972.68",
         version: "2.00",

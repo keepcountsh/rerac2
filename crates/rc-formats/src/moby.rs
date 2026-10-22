@@ -1,7 +1,6 @@
 //! Moby (animated character / dynamic object) classes. Spec: docs/formats/moby_rac1.md, with the
 //! skinning/lighting corrections from docs/plan/moby_skinning_lighting.md. Ported
 //! from the retired C++ reference extractor (git 2230812; `parse_moby_class`, `moby_normal`, the index walk);
-//! `tests/formats/golden.rs` checks every section against the committed snapshot table (`data/loader_snapshots.tsv`).
 //!
 //! What the loader resolves at load time, so a renderer never has to replay the PS2 machinery:
 //! * the 9-bit vertex-cache ids (stored 7 vertices late, spec 2.9) and duplicate vertices (2.8);
@@ -24,15 +23,15 @@ use bytemuck::{Pod, Zeroable};
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct MobyClassHeader {
     /// 0x00: packet (submesh) table; 0 = no mesh.
-    pub packet_table_offset: i32,
+    pub(crate) packet_table_offset: i32,
     /// 0x04: high-LOD packet count (first in the table).
-    pub high_lod_count: u8,
+    pub(crate) high_lod_count: u8,
     /// 0x05: low-LOD packet count (after the high-LOD entries).
-    pub low_lod_count: u8,
+    pub(crate) low_lod_count: u8,
     /// 0x06: metal ("shine") packet count.
     pub metal_count: u8,
     /// 0x07: table index of the first metal packet (= high + low on the disc).
-    pub metal_begin: u8,
+    pub(crate) metal_begin: u8,
     /// 0x08: joint count used with the high LOD (size of `skeleton` / `common_trans`).
     pub joint_count: u8,
     /// 0x09: joint count used with the low LOD (skinning doc 2).
@@ -44,7 +43,7 @@ pub struct MobyClassHeader {
     /// 0x0c: animation sequence count; the pointer list is at 0x48.
     pub sequence_count: u8,
     /// 0x0d: sound definition count.
-    pub sound_count: u8,
+    pub(crate) sound_count: u8,
     /// 0x0e: LOD switch distance; the game uses the low LOD beyond `lod_trans * 1024` depth.
     pub lod_trans: u8,
     /// 0x0f: number of 16-byte shadow entries just before `skeleton`.
@@ -53,23 +52,23 @@ pub struct MobyClassHeader {
     /// `InitMobyInstance`; parsed by [`crate::moby_collision::MobyCollision::of_class`].
     pub collision: i32,
     /// 0x14: `joint_count` Mat4 skeleton matrices (the game uses them as inverse bind matrices).
-    pub skeleton: i32,
+    pub(crate) skeleton: i32,
     /// 0x18: `joint_count` x [`MobyTrans`].
-    pub common_trans: i32,
+    pub(crate) common_trans: i32,
     /// 0x1c: joints lists (spec 3.3).
     pub joints: i32,
     /// 0x20: GIF usage table (spec 6.2).
-    pub gif_usage: i32,
+    pub(crate) gif_usage: i32,
     /// 0x24: world units = packed position * scale / 1024.
     pub scale: f32,
     /// 0x28: sound definitions.
-    pub sound_defs: i32,
+    pub(crate) sound_defs: i32,
     /// 0x2c: bangles block, in quadwords (0 on every RAC1 class).
-    pub bangles: u8,
+    pub(crate) bangles: u8,
     /// 0x2d: mipmap distance.
-    pub mip_dist: u8,
+    pub(crate) mip_dist: u8,
     /// 0x2e: unknown in RAC1.
-    pub rac1_short_2e: i16,
+    pub(crate) rac1_short_2e: i16,
     /// 0x30: bounding sphere centre xyz and radius, world units.
     pub bsphere: [f32; 4],
     /// 0x40: glow colour (RGBA, R low); non-zero → the moby's mode 0x10 and +0x90 (`InitMobyInstance`).
@@ -88,21 +87,21 @@ const _: () = assert!(std::mem::size_of::<MobyClassHeader>() == 0x48);
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct MobyPacketEntry {
     /// 0x0: class-relative offset of the VIF list.
-    pub vif_list_offset: u32,
+    pub(crate) vif_list_offset: u32,
     /// 0x4: VIF list size in quadwords.
-    pub vif_list_size: u16,
+    pub(crate) vif_list_size: u16,
     /// 0x6: quadword offset of the ad-gif unpack in the list (0 = none).
-    pub vif_list_texture_unpack_offset: u16,
+    pub(crate) vif_list_texture_unpack_offset: u16,
     /// 0x8: class-relative offset of the vertex table header.
-    pub vertex_offset: u32,
+    pub(crate) vertex_offset: u32,
     /// 0xc: vertex data size in quadwords, header included.
-    pub vertex_data_size: u8,
+    pub(crate) vertex_data_size: u8,
     /// 0xd: `(0xf + 6 * transfer_vertex_count) / 16`, the qwc of the positions DMA.
-    pub unknown_d: u8,
+    pub(crate) unknown_d: u8,
     /// 0xe: `(3 + transfer_vertex_count) / 4`, the qwc of the colours DMA.
-    pub unknown_e: u8,
+    pub(crate) unknown_e: u8,
     /// 0xf: vertices sent to VU1 (in-file + duplicates).
-    pub transfer_vertex_count: u8,
+    pub(crate) transfer_vertex_count: u8,
 }
 const _: () = assert!(std::mem::size_of::<MobyPacketEntry>() == 0x10);
 
@@ -111,58 +110,58 @@ const _: () = assert!(std::mem::size_of::<MobyPacketEntry>() == 0x10);
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct MobyVertexTableHeader {
     /// 0x00: pre-loop matrix transfers following this header.
-    pub matrix_transfer_count: u32,
+    pub(crate) matrix_transfer_count: u32,
     /// 0x04: two-way blend vertices (first in the vertex array).
-    pub two_way_blend_vertex_count: u32,
+    pub(crate) two_way_blend_vertex_count: u32,
     /// 0x08: three-way blend vertices (next).
-    pub three_way_blend_vertex_count: u32,
+    pub(crate) three_way_blend_vertex_count: u32,
     /// 0x0c: single-matrix vertices (last).
-    pub main_vertex_count: u32,
+    pub(crate) main_vertex_count: u32,
     /// 0x10: duplicate vertex entries.
-    pub duplicate_vertex_count: u32,
+    pub(crate) duplicate_vertex_count: u32,
     /// 0x14: in-file + duplicate vertices.
     pub transfer_vertex_count: u32,
     /// 0x18: byte offset of the vertex array from this header.
-    pub vertex_table_offset: u32,
+    pub(crate) vertex_table_offset: u32,
     /// 0x1c: byte offset of the RGBA multiplier blob from this header (also ends the epilogue).
-    pub unknown_e: u32,
+    pub(crate) unknown_e: u32,
 }
 const _: () = assert!(std::mem::size_of::<MobyVertexTableHeader>() == 0x20);
 
 /// Metal packet vertex table header (0x10 bytes). Skinning doc 6.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct MobyMetalVertexTableHeader {
+pub(crate) struct MobyMetalVertexTableHeader {
     /// 0x0: vertex count; the 16-byte metal vertices follow the header.
-    pub vertex_count: i32,
+    pub(crate) vertex_count: i32,
     /// 0x4: output offset of the positions (EE driver output buffer).
-    pub unknown_4: i32,
+    pub(crate) unknown_4: i32,
     /// 0x8: output offset of the colours.
-    pub unknown_8: i32,
+    pub(crate) unknown_8: i32,
     /// 0xc: total output bytes (ST at 0).
-    pub unknown_c: i32,
+    pub(crate) unknown_c: i32,
 }
 const _: () = assert!(std::mem::size_of::<MobyMetalVertexTableHeader>() == 0x10);
 
 /// Pre-loop matrix transfer: `VU0[vu0_dest_addr] = palette[spr_joint_index]`. Spec 2.10.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct MobyMatrixTransfer {
-    pub spr_joint_index: u8,
+pub(crate) struct MobyMatrixTransfer {
+    pub(crate) spr_joint_index: u8,
     /// VU0 quadword address (multiple of 4).
-    pub vu0_dest_addr: u8,
+    pub(crate) vu0_dest_addr: u8,
 }
 
 /// Per-joint `common_trans` record (0x10 bytes). Spec 3.2.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct MobyTrans {
+pub(crate) struct MobyTrans {
     /// 0x0: per-joint vector, role unknown.
-    pub vector: [f32; 3],
+    pub(crate) vector: [f32; 3],
     /// 0xc: parent joint index * 0x40 (byte offset into the skeleton table).
-    pub parent_offset: u16,
+    pub(crate) parent_offset: u16,
     /// 0xe: unknown, usually 0x70.
-    pub seventy: u16,
+    pub(crate) seventy: u16,
 }
 const _: () = assert!(std::mem::size_of::<MobyTrans>() == 0x10);
 
@@ -181,9 +180,7 @@ pub struct MobySkin {
 }
 
 impl MobySkin {
-    pub fn joint(j: u8) -> Self { MobySkin { count: 1, joints: [j, 0, 0], weights: [256, 0, 0] } }
-    /// Weights as fractions (`w / 256`), unused entries 0.
-    pub fn weights_f32(&self) -> [f32; 3] { self.weights.map(|w| w as f32 / 256.0) }
+    pub(crate) fn joint(j: u8) -> Self { MobySkin { count: 1, joints: [j, 0, 0], weights: [256, 0, 0] } }
 }
 
 /// Vertex kind (spec 2.9 types; metal from skinning doc 6).
@@ -200,9 +197,9 @@ pub struct MobyVertex {
     pub normal_azimuth: u8,
     pub normal_elevation: u8,
     /// Packed position; world units = value * class scale / 1024.
-    pub x: i16,
-    pub y: i16,
-    pub z: i16,
+    pub(crate) x: i16,
+    pub(crate) y: i16,
+    pub(crate) z: i16,
     /// 9-bit vertex-cache id after undoing the 7-vertex shift; metal: the vertex number.
     pub id: u16,
     pub kind: MobyVertexKind,
@@ -237,12 +234,12 @@ pub struct MobySubmesh {
     /// Zeroed for metal packets.
     pub vertex_table: MobyVertexTableHeader,
     /// Zeroed for regular packets.
-    pub metal_header: MobyMetalVertexTableHeader,
-    pub transfers: Vec<MobyMatrixTransfer>,
+    pub(crate) metal_header: MobyMetalVertexTableHeader,
+    pub(crate) transfers: Vec<MobyMatrixTransfer>,
     /// Raw duplicate entries (`cache id << 7`).
-    pub duplicates: Vec<u16>,
+    pub(crate) duplicates: Vec<u16>,
     /// The vertex records as stored: in-file + epilogue (regular) or the metal records.
-    pub raw_vertices: Vec<u8>,
+    pub(crate) raw_vertices: Vec<u8>,
     /// Going Commando: the vertex table header's word 7, the glow vertices: the driver (L00 `0x2dd410` → `0x2de438`)
     /// writes the moby's glow word (job `+0xac`, MobyProc's for mode 0x10) over the packet's last that many output
     /// colours (in-file vertices, then duplicates). 0 for R&C1 (class byte 0xa picks whole glow packets) and for an
@@ -250,23 +247,23 @@ pub struct MobySubmesh {
     pub glow_vertices: u32,
     /// The RAC1 `unknown_e` blob as stored: RGBA lighting multiplier per transfer vertex
     /// (0x80 = 1.0), zero-padded to 16 bytes. Every multiplier on the disc is 0x80. Empty for metal.
-    pub rgba_multipliers: Vec<u8>,
+    pub(crate) rgba_multipliers: Vec<u8>,
     /// In-file vertices, then duplicates.
     pub vertices: Vec<MobyVertex>,
     /// Raw ST unpack (s, t pairs), may be longer than `vertices`; empty for metal.
-    pub st: Vec<[i16; 2]>,
+    pub(crate) st: Vec<[i16; 2]>,
     /// Index bytes after the 4-byte index header, including the terminator and padding.
-    pub index_bytes: Vec<u8>,
+    pub(crate) index_bytes: Vec<u8>,
     /// Index header byte 2, then byte 0xc of the first `ad_gif count` quadwords of the ad-gif unpack.
-    pub secret_indices: Vec<u8>,
+    pub(crate) secret_indices: Vec<u8>,
     /// TEX0 `data_lo` of each ad-gif block, in switch order.
-    pub texture_indices: Vec<i32>,
+    pub(crate) texture_indices: Vec<i32>,
     /// Texture in effect at packet start (GS state left by the previous packet of the list; -1 for the first).
-    pub initial_texture: i32,
+    pub(crate) initial_texture: i32,
     /// Duplicates whose cache slot was never written (always 0 on the disc).
-    pub unresolved_duplicates: u32,
+    pub(crate) unresolved_duplicates: u32,
     pub triangles: Vec<MobyTriangle>,
-    pub is_metal: bool,
+    pub(crate) is_metal: bool,
 }
 
 impl MobySubmesh {
@@ -280,18 +277,10 @@ impl MobySubmesh {
 
 /// Skeleton: `joint_count` matrices and hierarchy records.
 #[derive(Clone, Debug, Default)]
-pub struct MobySkeleton {
+pub(crate) struct MobySkeleton {
     /// Row-major Mat4 as stored (rows 0-2 rotation, row 3 translation in packed units).
-    pub matrices: Vec<[[f32; 4]; 4]>,
-    pub trans: Vec<MobyTrans>,
-}
-
-impl MobySkeleton {
-    /// Parent joint (`parent_offset / 0x40`); joint 0 is the root.
-    pub fn parent(&self, joint: usize) -> Option<usize> {
-        if joint == 0 { return None; }
-        self.trans.get(joint).map(|t| t.parent_offset as usize / 0x40)
-    }
+    pub(crate) matrices: Vec<[[f32; 4]; 4]>,
+    pub(crate) trans: Vec<MobyTrans>,
 }
 
 #[derive(Clone, Debug)]
@@ -301,7 +290,7 @@ pub struct MobyClass {
     pub high_lod: Vec<MobySubmesh>,
     pub low_lod: Vec<MobySubmesh>,
     pub metal: Vec<MobySubmesh>,
-    pub skeleton: MobySkeleton,
+    pub(crate) skeleton: MobySkeleton,
     /// Going Commando's break pieces ([`MobyPiece`]; empty on R&C1), by piece number (None: no such piece).
     pub pieces: Vec<Option<MobyPiece>>,
 }
@@ -321,7 +310,7 @@ pub struct MobyPiece {
 }
 
 /// The most pieces a class has (the mask's bits 0..14).
-pub const MAX_PIECES: usize = 15;
+pub(crate) const MAX_PIECES: usize = 15;
 
 /// [`MobyPiece`]s of a Going Commando class blob.
 fn read_pieces(b: Buf, h: &MobyClassHeader) -> Result<Vec<Option<MobyPiece>>> {
@@ -335,7 +324,7 @@ fn read_pieces(b: Buf, h: &MobyClassHeader) -> Result<Vec<Option<MobyPiece>>> {
         if count == 0 { out.push(None); continue; }
         let entries: Vec<MobyPacketEntry> = b.pod_slice(h.packet_table_offset as usize + first * std::mem::size_of::<MobyPacketEntry>(), count, "moby piece packets")?;
         let mut st = ListState::new();
-        let packets = entries.iter().map(|e| read_packet(crate::Game::Rac2, b, e, false, &mut st)).collect::<Result<Vec<_>>>()?;
+        let packets = entries.iter().map(|e| read_packet(false, b, e, false, &mut st)).collect::<Result<Vec<_>>>()?;
         let mut piece = MobyPiece { packets, ..Default::default() };
         // The points (a record that does not read leaves the piece without: the classes have such entries for pieces
         // their breaks never ask for).
@@ -356,33 +345,13 @@ fn read_pieces(b: Buf, h: &MobyClassHeader) -> Result<Vec<Option<MobyPiece>>> {
     Ok(out)
 }
 
-impl MobyClass {
-    /// Unit normal of a vertex, game convention (see [`moby_normal`]).
-    pub fn normal(&self, v: &MobyVertex) -> [f32; 3] { moby_normal(v.normal_azimuth, v.normal_elevation) }
-    /// Bind-pose position in world units (no skinning, no instance transform).
-    pub fn position(&self, v: &MobyVertex) -> [f32; 3] {
-        let k = self.header.scale / 1024.0;
-        [v.x as f32 * k, v.y as f32 * k, v.z as f32 * k]
-    }
-}
-
-/// Normal from the packed spherical angles as VU0 program 104691 builds it from the (cos, sin)
-/// table at 0x165500: `x = cos a cos e, y = sin a cos e, z = sin e`, a/e in 2pi/256 steps.
-/// Wrench (and moby_rac1.md before 2026-09-26) swap x and y. Computed in f64 then rounded, like
-/// the C++ `moby_normal`; the game's f32 table differs from this by at most 3.5e-7 per entry.
-pub fn moby_normal(azimuth: u8, elevation: u8) -> [f32; 3] {
-    let k = std::f64::consts::PI / 128.0;
-    let (a, e) = (azimuth as f64 * k, elevation as f64 * k);
-    [(a.cos() * e.cos()) as f32, (a.sin() * e.cos()) as f32, e.sin() as f32]
-}
-
 /// 9-bit vertex-cache id of a duplicate entry (`index << 7`). Spec 2.8.
-pub fn duplicate_cache_id(entry: u16) -> u16 { (entry >> 7) & 0x1ff }
+pub(crate) fn duplicate_cache_id(entry: u16) -> u16 { (entry >> 7) & 0x1ff }
 
 /// Undoes the 7-vertex id shift (spec 2.9): record i carries the id of vertex i-7; the ids of the
 /// last vertices continue in the epilogue records and then in the six u16 at bytes 4..16 of the
 /// last epilogue record. `records` are the in-file + epilogue 16-byte records.
-pub fn vertex_cache_ids(records: &[[u8; 16]], in_file: usize) -> Result<Vec<u16>> {
+pub(crate) fn vertex_cache_ids(records: &[[u8; 16]], in_file: usize) -> Result<Vec<u16>> {
     let mut ids: Vec<u16> = records.iter().skip(7).map(|r| u16::from_le_bytes([r[0], r[1]]) & 0x1ff).collect();
     if let Some(last) = records.last() {
         for k in 0..6 {
@@ -398,17 +367,17 @@ pub fn vertex_cache_ids(records: &[[u8; 16]], in_file: usize) -> Result<Vec<u16>
 /// VU0 data memory of program 104691 as matrix slots (skinning doc 4-5): each quadword address a
 /// matrix was stored at holds one palette matrix (a transfer) or a 2-/3-way blend of them.
 /// Carried across the packets of one LOD list.
-pub struct Vu0Slots { slot: [Option<MobySkin>; 256] }
+pub(crate) struct Vu0Slots { slot: [Option<MobySkin>; 256] }
 
 impl Default for Vu0Slots { fn default() -> Self { Vu0Slots { slot: [None; 256] } } }
 
 impl Vu0Slots {
-    pub fn store(&mut self, addr: u8, s: MobySkin) -> Result<()> {
+    pub(crate) fn store(&mut self, addr: u8, s: MobySkin) -> Result<()> {
         if !addr.is_multiple_of(4) { return invalid("moby skin: unaligned VU0 store address"); }
         self.slot[addr as usize] = Some(s);
         Ok(())
     }
-    pub fn load(&self, addr: u8) -> Result<MobySkin> {
+    pub(crate) fn load(&self, addr: u8) -> Result<MobySkin> {
         if !addr.is_multiple_of(4) { return invalid("moby skin: unaligned VU0 load address"); }
         if addr >= 0xf4 { return invalid("moby skin: load from the VU0 sink/constant area"); }
         match self.slot[addr as usize] {
@@ -426,7 +395,7 @@ impl Vu0Slots {
     /// returns its skin. Two-way: store palette[b1>>1] at b6, blend b2/b3 with weights b4/b5, store
     /// at b7. Three-way: blend b2/b3/(b1 & 0xfe) with b4/b5/b6, store at b7. Single: store
     /// palette[b1>>1] at b3, then load b2. Stores happen before loads.
-    pub fn vertex(&mut self, kind: MobyVertexKind, r: &[u8; 8]) -> Result<MobySkin> {
+    pub(crate) fn vertex(&mut self, kind: MobyVertexKind, r: &[u8; 8]) -> Result<MobySkin> {
         let joint = r[1] >> 1;
         match kind {
             MobyVertexKind::TwoWay => {
@@ -455,7 +424,7 @@ impl Vu0Slots {
 
 /// Skin of a metal vertex from its bytes 8-15 (joint[3], count, weight[3], pad): count <= 1 is a
 /// single joint (byte 8), otherwise `count` joints whose weights sum to 256. Skinning doc 6.
-pub fn metal_skin(r: &[u8; 8]) -> Result<MobySkin> {
+pub(crate) fn metal_skin(r: &[u8; 8]) -> Result<MobySkin> {
     let n = r[3];
     if n <= 1 { return Ok(MobySkin::joint(r[0])); }
     if n > 3 { return invalid("moby metal vertex: joint count > 3"); }
@@ -464,13 +433,6 @@ pub fn metal_skin(r: &[u8; 8]) -> Result<MobySkin> {
     if s.weights.iter().sum::<u16>() != 256 { return invalid("moby metal vertex: weights do not sum to 256"); }
     Ok(s)
 }
-
-/// Walks the index stream into triangles (spec 2.4, corrected). Indices are 1-based, bit 7 means
-/// "no GS kick"; a 0 byte switches to the next ad-gif block's texture and pushes the next secret
-/// index (never kicked); a 0 secret index ends the packet, and the last three indices pushed (the
-/// 1,1,1 flush trailer) never reach the GS. A kicked push n draws (n-2, n-1, n). Starts with the
-/// submesh's `initial_texture`. Mirrors C++ `walk_indices`.
-pub fn moby_triangles(sub: &MobySubmesh) -> Result<Vec<MobyTriangle>> { Ok(walk_indices(sub)?.0) }
 
 fn walk_indices(sub: &MobySubmesh) -> Result<(Vec<MobyTriangle>, i32)> {
     struct Push { idx: u32, nokick: bool, texture: i32 }
@@ -507,7 +469,8 @@ struct ListState { cache: Vec<Option<MobyVertex>>, slots: Vu0Slots, texture: i32
 
 impl ListState { fn new() -> Self { ListState { cache: vec![None; 512], slots: Vu0Slots::default(), texture: -1 } } }
 
-fn read_packet(game: crate::Game, blob: Buf, e: &MobyPacketEntry, metal: bool, state: &mut ListState) -> Result<MobySubmesh> {
+/// `old`: the packet has R&C1's vertex table header (a class "in an old format", [`parse_moby_class`]).
+fn read_packet(old: bool, blob: Buf, e: &MobyPacketEntry, metal: bool, state: &mut ListState) -> Result<MobySubmesh> {
     // VIF list: ST (regular only), indices, optional ad-gifs.
     let list = blob.sub(e.vif_list_offset as usize, e.vif_list_size as usize * 0x10, "moby VIF list")?;
     let codes = parse_vif(list.bytes())?;
@@ -576,21 +539,20 @@ fn read_packet(game: crate::Game, blob: Buf, e: &MobyPacketEntry, metal: bool, s
         // Going Commando's vertex table header is eight u16s (0x10 bytes) and has no RGBA multiplier blob: its level
         // code converts an R&C1-layout class ("moby %d is in an old format", L00 0x2ffe70) by halving the eight words
         // to u16s, moving the rest down 0x10 bytes and zeroing the multiplier offset.
-        let (h, head) = match game {
-            crate::Game::Rac1 => (blob.pod::<MobyVertexTableHeader>(vo, "moby vertex table header")?, 0x20),
-            crate::Game::Rac2 => {
-                let w: [u16; 8] = blob.pod(vo, "moby vertex table header")?;
-                let [matrix, two, three, main, dup, transfer, table, mult] = w.map(u32::from);
-                let h = MobyVertexTableHeader {
-                    matrix_transfer_count: matrix, two_way_blend_vertex_count: two, three_way_blend_vertex_count: three,
-                    main_vertex_count: main, duplicate_vertex_count: dup, transfer_vertex_count: transfer,
-                    vertex_table_offset: table, unknown_e: mult,
-                };
-                (h, 0x10)
-            }
+        let (h, head) = if old {
+            (blob.pod::<MobyVertexTableHeader>(vo, "moby vertex table header")?, 0x20)
+        } else {
+            let w: [u16; 8] = blob.pod(vo, "moby vertex table header")?;
+            let [matrix, two, three, main, dup, transfer, table, mult] = w.map(u32::from);
+            let h = MobyVertexTableHeader {
+                matrix_transfer_count: matrix, two_way_blend_vertex_count: two, three_way_blend_vertex_count: three,
+                main_vertex_count: main, duplicate_vertex_count: dup, transfer_vertex_count: transfer,
+                vertex_table_offset: table, unknown_e: mult,
+            };
+            (h, 0x10)
         };
         sub.vertex_table = h;
-        if game == crate::Game::Rac2 { sub.glow_vertices = h.unknown_e; }
+        if !old { sub.glow_vertices = h.unknown_e; }
         let (n2, n3) = (h.two_way_blend_vertex_count as usize, h.three_way_blend_vertex_count as usize);
         let in_file = n2 + n3 + h.main_vertex_count as usize;
         if h.transfer_vertex_count as usize != in_file + h.duplicate_vertex_count as usize { return invalid("moby packet: transfer count mismatch"); }
@@ -604,17 +566,18 @@ fn read_packet(game: crate::Game, blob: Buf, e: &MobyPacketEntry, metal: bool, s
         if !ofs.is_multiple_of(4) { ofs += 2; }
         if !ofs.is_multiple_of(8) { ofs += 4; }
         sub.duplicates = blob.pod_slice(ofs, h.duplicate_vertex_count as usize, "moby duplicate vertices")?;
-        // The vertex records end where the multiplier blob starts (R&C1) or with the packet's vertex data (R&C2).
-        let records_end = if game == crate::Game::Rac2 { e.vertex_data_size as u32 * 0x10 } else { h.unknown_e };
+        // The vertex records end with the packet's vertex data, or where an old-format packet's multiplier blob starts.
+        let records_end = if old { h.unknown_e } else { e.vertex_data_size as u32 * 0x10 };
         if records_end < h.vertex_table_offset { return invalid("moby packet: unknown_e before vertex table"); }
         let epilogue = ((records_end - h.vertex_table_offset) / 0x10) as usize;
         let epilogue = epilogue.wrapping_sub(in_file);
         if !(1..7).contains(&epilogue) { return invalid(format!("moby packet: epilogue vertex count {}", epilogue as isize)); }
-        if game == crate::Game::Rac1 {
+        if old {
+            // An old-format packet's RGBA multiplier blob is checked but not kept: the conversion zeroes its offset.
             let mult_size = e.vertex_data_size as usize * 0x10;
             if mult_size < h.unknown_e as usize { return invalid("moby packet: multiplier blob starts past the vertex data"); }
-            sub.rgba_multipliers = blob.sub(vo + h.unknown_e as usize, mult_size - h.unknown_e as usize, "moby RGBA multipliers")?.bytes().to_vec();
-            if sub.rgba_multipliers.len() != (h.transfer_vertex_count as usize * 4).div_ceil(16) * 16 {
+            let mult = blob.sub(vo + h.unknown_e as usize, mult_size - h.unknown_e as usize, "moby RGBA multipliers")?;
+            if mult.bytes().len() != (h.transfer_vertex_count as usize * 4).div_ceil(16) * 16 {
                 return invalid("moby packet: multiplier blob is not align16(4 * transfer_vertex_count)");
             }
         }
@@ -666,12 +629,9 @@ fn read_packet(game: crate::Game, blob: Buf, e: &MobyPacketEntry, metal: bool, s
     Ok(sub)
 }
 
-/// Parses one moby class blob (a `moby_class/NNNN` block of the level core data).
-pub fn parse_moby_class(blob: &[u8]) -> Result<MobyClass> { parse_moby_class_for(crate::Game::Rac1, blob) }
-
-/// [`parse_moby_class`] for a class of `game`: Going Commando's class header is R&C1's (its relocation, L00
-/// 0x2ffe70, walks the same fields); its packets differ only in the vertex table header ([`read_packet`]).
-pub fn parse_moby_class_for(game: crate::Game, blob: &[u8]) -> Result<MobyClass> {
+/// Parses a moby class blob. Going Commando's class header is R&C1's (its relocation, L00 0x2ffe70, walks the same
+/// fields); its packets differ only in the vertex table header ([`read_packet`]).
+pub fn parse_moby_class(blob: &[u8]) -> Result<MobyClass> {
     let b = Buf(blob);
     let h: MobyClassHeader = b.pod(0, "moby class header")?;
     let sequence_pointers = if h.sequence_count > 0 { b.pod_slice(0x48, h.sequence_count as usize, "moby sequence pointers")? } else { Vec::new() };
@@ -683,14 +643,12 @@ pub fn parse_moby_class_for(game: crate::Game, blob: &[u8]) -> Result<MobyClass>
         // Going Commando reads a class with byte 0xb set as one "in an old format" (L00 `0x2ffe70`): its high and low
         // packets have R&C1's vertex table header, converted at load with the multiplier offset zeroed (no RGBA
         // multipliers), and the byte cleared.
-        let old = game == crate::Game::Rac2 && h.rac1_byte_b != 0;
+        let old = h.rac1_byte_b != 0;
         // Vertex cache, VU0 slots and GS texture state carry across the packets of one list.
         let list = |first: usize, count: usize, is_metal: bool, out: &mut Vec<MobySubmesh>| -> Result<()> {
             let mut st = ListState::new();
             for e in &entries[first..first + count] {
-                let mut sub = read_packet(if old && !is_metal { crate::Game::Rac1 } else { game }, b, e, is_metal, &mut st)?;
-                if old { sub.rgba_multipliers.clear(); }
-                out.push(sub);
+                out.push(read_packet(old && !is_metal, b, e, is_metal, &mut st)?);
             }
             Ok(())
         };
@@ -703,17 +661,17 @@ pub fn parse_moby_class_for(game: crate::Game, blob: &[u8]) -> Result<MobyClass>
     if h.skeleton > 0 && jc > 0 { skeleton.matrices = b.pod_slice::<[[f32; 4]; 4]>(h.skeleton as usize, jc, "moby skeleton")?; }
     if h.common_trans > 0 && jc > 0 { skeleton.trans = b.pod_slice(h.common_trans as usize, jc, "moby common trans")?; }
     // A class whose pieces do not read keeps none (its debris then draws whole).
-    let pieces = if game == crate::Game::Rac2 { read_pieces(b, &h).unwrap_or_default() } else { Vec::new() };
+    let pieces = read_pieces(b, &h).unwrap_or_default();
     let mut h = h;
     // Going Commando's MobyProc reads neither byte (its glow is per packet, MobySubmesh::glow_vertices): no class-wide
     // glow packets, and byte 0xb's old-format flag is spent.
-    if game == crate::Game::Rac2 { (h.rac1_byte_a, h.rac1_byte_b) = (0xff, 0xff); }
+    (h.rac1_byte_a, h.rac1_byte_b) = (0xff, 0xff);
     Ok(MobyClass { header: h, sequence_pointers, high_lod, low_lod, metal, skeleton, pieces })
 }
 
 /// Gives `class` the packets of a separate mesh blob: `u8 high, low, metal, metal_begin`, `+4` the packet table,
 /// offsets from the blob's start (Going Commando's armour, `crate::rac2::armor`; its level class 0 has none).
-pub fn attach_packets(game: crate::Game, class: &mut MobyClass, mesh: &[u8]) -> Result<()> {
+pub fn attach_packets(class: &mut MobyClass, mesh: &[u8]) -> Result<()> {
     let b = Buf(mesh);
     let (high, low, metal, metal_begin) = (b.u8(0)? as usize, b.u8(1)? as usize, b.u8(2)? as usize, b.u8(3)? as usize);
     let table = b.u32(4)? as usize;
@@ -722,7 +680,7 @@ pub fn attach_packets(game: crate::Game, class: &mut MobyClass, mesh: &[u8]) -> 
     let entries: Vec<MobyPacketEntry> = b.pod_slice(table, total, "moby mesh packet table")?;
     let list = |first: usize, count: usize, is_metal: bool| -> Result<Vec<MobySubmesh>> {
         let mut st = ListState::new();
-        entries[first..first + count].iter().map(|e| read_packet(game, b, e, is_metal, &mut st)).collect()
+        entries[first..first + count].iter().map(|e| read_packet(false, b, e, is_metal, &mut st)).collect()
     };
     class.high_lod = list(0, high, false)?;
     class.low_lod = list(high, low, false)?;
@@ -759,100 +717,33 @@ pub fn parse_level_mobys(core: &LevelCore, core_data: &[u8]) -> Result<Vec<Level
             return invalid(format!("moby class {}: no core block", e.o_class));
         };
         let blob = Buf(core_data).sub(blk.offset, blk.size, "moby class blob")?;
-        let class = parse_moby_class_for(core.game, blob.bytes()).map_err(|err| crate::FormatError::Invalid(format!("moby class {}: {err}", e.o_class)))?;
+        let class = parse_moby_class(blob.bytes()).map_err(|err| crate::FormatError::Invalid(format!("moby class {}: {err}", e.o_class)))?;
         out.push(LevelMobyClass { o_class: e.o_class, entry: *e, class });
     }
     Ok(out)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn close(a: [f32; 3], b: [f32; 3]) -> bool { a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6) }
-
-    #[test]
-    fn normal_axis_convention() {
-        // a = 0, e = 0 -> +x; a = 90 deg (64), e = 0 -> +y; e = 90 deg (64) -> +z; a = 180 deg -> -x.
-        assert!(close(moby_normal(0, 0), [1.0, 0.0, 0.0]));
-        assert!(close(moby_normal(64, 0), [0.0, 1.0, 0.0]));
-        assert!(close(moby_normal(0, 64), [0.0, 0.0, 1.0]));
-        assert!(close(moby_normal(128, 0), [-1.0, 0.0, 0.0]));
-        assert!(close(moby_normal(192, 0), [0.0, -1.0, 0.0]));
-        // a = 45 deg, e = 45 deg: (1/2, 1/2, sqrt(2)/2).
-        let h = std::f32::consts::FRAC_1_SQRT_2;
-        assert!(close(moby_normal(32, 32), [0.5, 0.5, h]));
-        let n = moby_normal(17, 200);
-        assert!(((n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn vertex_cache_ids_shift_by_seven() {
-        // 10 in-file vertices + 1 epilogue: records 7..=10 carry ids of vertices 0..=3, the
-        // epilogue's bytes 4.. carry the remaining six (upper bits 9-15 are not part of the id).
-        let mut recs = vec![[0u8; 16]; 11];
-        for (i, r) in recs.iter_mut().enumerate().skip(7) { r[..2].copy_from_slice(&((0x100 + i as u16) | 0xfe00).to_le_bytes()); }
-        for k in 0..6 { recs[10][4 + k * 2..6 + k * 2].copy_from_slice(&((0x1f0u16 + k as u16) | 0x200).to_le_bytes()); }
-        let ids = vertex_cache_ids(&recs, 10).unwrap();
-        assert_eq!(ids, [0x107, 0x108, 0x109, 0x10a, 0x1f0, 0x1f1, 0x1f2, 0x1f3, 0x1f4, 0x1f5]);
-        assert!(vertex_cache_ids(&recs[..8], 8).is_err(), "1 shifted id + 6 epilogue ids < 8");
-        // Duplicate entries store the cache id shifted left by 7.
-        assert_eq!(duplicate_cache_id(0x1ab << 7), 0x1ab);
-        assert_eq!(duplicate_cache_id(0xffff), 0x1ff);
-    }
-
-    #[test]
-    fn slot_machine_resolves_weights_summing_to_256() {
-        let mut s = Vu0Slots::default();
-        // Pre-loop transfers: joint 5 -> slot 0, joint 9 -> slot 4.
-        s.store(0, MobySkin::joint(5)).unwrap();
-        s.store(4, MobySkin::joint(9)).unwrap();
-        // Two-way: transfer joint 2 (b1 = 2 << 1) to 8, blend slots 0/4 with 100/156, store at 0x40.
-        let two = s.vertex(MobyVertexKind::TwoWay, &[0, 2 << 1, 0, 4, 100, 156, 8, 0x40]).unwrap();
-        assert_eq!(two, MobySkin { count: 2, joints: [5, 9, 0], weights: [100, 156, 0] });
-        // Three-way: slots 0, 4 and b1 & 0xfe = 8 (joint 2), weights 50/60/146, store at 0x44.
-        let three = s.vertex(MobyVertexKind::ThreeWay, &[0x77, 8 | 1, 0, 4, 50, 60, 146, 0x44]).unwrap();
-        assert_eq!(three, MobySkin { count: 3, joints: [5, 9, 2], weights: [50, 60, 146] });
-        for sk in [two, three] { assert_eq!(sk.weights.iter().sum::<u16>(), 256); }
-        // Single: transfer joint 7 to 0xc (store before load), then load it; loading a blend slot
-        // gives the blend; 0xf4 is the no-store sink.
-        assert_eq!(s.vertex(MobyVertexKind::Single, &[0, 7 << 1, 0xc, 0xc, 0, 0, 0, 0]).unwrap(), MobySkin::joint(7));
-        assert_eq!(s.vertex(MobyVertexKind::Single, &[0, 0, 0x40, 0xf4, 0, 0, 0, 0]).unwrap(), two);
-        // Invariants the disc satisfies: aligned addresses, no blend of blends, defined slots, sum 256.
-        assert!(s.vertex(MobyVertexKind::TwoWay, &[0, 0, 0x40, 0, 128, 128, 0xf4, 0xf4]).is_err(), "blend of a blend");
-        assert!(s.vertex(MobyVertexKind::Single, &[0, 0, 0x80, 0xf4, 0, 0, 0, 0]).is_err(), "undefined slot");
-        assert!(s.vertex(MobyVertexKind::Single, &[0, 0, 2, 0xf4, 0, 0, 0, 0]).is_err(), "unaligned");
-        assert!(s.vertex(MobyVertexKind::TwoWay, &[0, 0, 0, 4, 100, 100, 0xf4, 0xf4]).is_err(), "weights 200");
-        assert!(s.vertex(MobyVertexKind::Single, &[0, 0, 0xf4, 0xf4, 0, 0, 0, 0]).is_err(), "sink is write-only");
-        // Metal vertices carry their skin inline.
-        assert_eq!(metal_skin(&[3, 4, 5, 1, 0, 0, 0, 0]).unwrap(), MobySkin::joint(3));
-        assert_eq!(metal_skin(&[3, 4, 5, 3, 16, 32, 208, 0]).unwrap(), MobySkin { count: 3, joints: [3, 4, 5], weights: [16, 32, 208] });
-        assert!(metal_skin(&[3, 4, 5, 2, 16, 32, 208, 0]).is_err());
-    }
-
-    fn walk_sub(indices: &[u8], secrets: &[u8], textures: &[i32], nverts: usize) -> MobySubmesh {
-        let v = MobyVertex { raw: [0; 8], normal_azimuth: 0, normal_elevation: 0, x: 0, y: 0, z: 0, id: 0, kind: MobyVertexKind::Single, duplicate: false, skin: MobySkin::default(), st: [0, 0] };
-        MobySubmesh {
-            entry: Default::default(), vertex_table: Default::default(), metal_header: Default::default(),
-            transfers: vec![], duplicates: vec![], raw_vertices: vec![], glow_vertices: 0, rgba_multipliers: vec![],
-            vertices: vec![v; nverts], st: vec![], index_bytes: indices.to_vec(), secret_indices: secrets.to_vec(),
-            texture_indices: textures.to_vec(), initial_texture: 7, unresolved_duplicates: 0, triangles: vec![], is_metal: false,
-        }
-    }
-
-    #[test]
-    fn index_walk_secret_indices_and_trailer() {
-        // 0 -> texture 3 + secret vertex 2 (no kick); 0x83 no kick; 4 kicks (1,2,3); 5 kicks (2,3,4);
-        // 0 -> texture 1 + secret 6; 0x81 no kick; 2 kicks (5,0,1) with texture 1; trailer 1,1,1; 0 ends.
-        let sub = walk_sub(&[0, 0x83, 4, 5, 0, 0x81, 2, 1, 1, 1, 0, 0], &[0x82, 0x86, 0], &[3, 1], 6);
-        let t = moby_triangles(&sub).unwrap();
-        let abc: Vec<[u32; 4]> = t.iter().map(|t| [t.a, t.b, t.c, t.texture as u32]).collect();
-        assert_eq!(abc, [[1, 2, 3, 3], [2, 3, 4, 3], [5, 0, 1, 1]]);
-        // Without a texture switch the packet inherits the previous packet's texture.
-        let t = moby_triangles(&walk_sub(&[0x81, 0x82, 3, 1, 1, 1, 0], &[0], &[], 3)).unwrap();
-        assert_eq!(t, [MobyTriangle { a: 0, b: 1, c: 2, texture: 7 }]);
-        // Unterminated, or out of range.
-        assert!(moby_triangles(&walk_sub(&[0x81, 0x82, 3, 1, 1, 1], &[0], &[], 3)).is_err());
-        assert!(moby_triangles(&walk_sub(&[0x81, 0x82, 4, 1, 1, 1, 0], &[0], &[], 3)).is_err());
-    }
+/// The two byte lists of joint list `list` of a class (spec 3.3: header `joints` -> `s32 count`,
+/// `s32 pointer[count]`; each list `s16 n1, s16 n2, u8 a[n1], u8 b[n2], 0xff`).
+///
+/// The first list is a root-to-joint chain; its **last** entry is the joint the game attaches to:
+/// `fun_0020cca8` (boot 0x20cca8, L01 0x264508) passes the list to `fun_00210850` (boot 0x210850),
+/// which evaluates the pose of exactly those joints and returns the pose matrix of the last one.
+pub fn joint_list(blob: &[u8], header: &MobyClassHeader, list: usize) -> Result<(Vec<u8>, Vec<u8>)> {
+    let b = Buf(blob);
+    if header.joints <= 0 { return invalid("class has no joint lists"); }
+    let base = header.joints as usize;
+    let count = b.i32(base)?;
+    if list >= count.max(0) as usize { return invalid(format!("joint list {list} of {count}")); }
+    let p = b.i32(base + 4 + 4 * list)?;
+    if p <= 0 { return invalid("null joint list pointer"); }
+    let p = p as usize;
+    let (n1, n2) = (b.i16(p)?, b.i16(p + 2)?);
+    if n1 < 0 || n2 < 0 { return invalid("negative joint list length"); }
+    let (n1, n2) = (n1 as usize, n2 as usize);
+    let a = b.sub(p + 4, n1, "joint list")?.bytes().to_vec();
+    let c = b.sub(p + 4 + n1, n2, "joint list")?.bytes().to_vec();
+    if b.u8(p + 4 + n1 + n2)? != 0xff { return invalid("joint list without 0xff terminator"); }
+    Ok((a, c))
 }
+

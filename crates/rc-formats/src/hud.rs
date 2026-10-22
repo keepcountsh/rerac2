@@ -1,5 +1,5 @@
 //! Per-level HUD graphics: the `hud_header` lump and its five `hud_banks`. Spec: docs/plan/hud_text.md §1.
-//! Ported from the retired C++ reference extractor (git 2230812); snapshot-tested in `tests/formats/golden.rs`.
+//! Ported from the retired C++ reference extractor (git 2230812).
 //!
 //! The header (copied to the HUD heap by `LoadHudBanks__Fv`, level01 0x253e28) holds four tables, all
 //! offsets relative to the header:
@@ -15,107 +15,107 @@
 //! Banks are WAD-compressed on disc; every function here takes them decompressed.
 
 use crate::buf::{invalid, Buf, Result};
-use crate::texture::{clut_index, decode_indexed8, IndexedImage, Texture};
+use crate::texture::{clut_index, Texture};
 use bytemuck::{Pod, Zeroable};
 
 /// Number of HUD banks (`hud_banks[5]` in the level data header).
-pub const BANKS: usize = 5;
+pub(crate) const BANKS: usize = 5;
 
 /// `hud_header` +0x00..+0xb4 (the four table offsets and the per-bank ranges). Every per-bank array is
 /// `u32[8]` of which the first [`BANKS`] are used (the rest are 0). +0x74 and +0x94 are runtime fields
 /// (bank pointers, stash handles), 0 on disc.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct HudHeader {
+pub(crate) struct HudHeader {
     /// Icon entries including the 0xffff terminator.
-    pub icon_count: u16,
-    pub frame_count: u16,
-    pub icon_offset: u32,
-    pub frame_offset: u32,
-    pub palette_offset: u32,
-    pub texture_offset: u32,
+    pub(crate) icon_count: u16,
+    pub(crate) frame_count: u16,
+    pub(crate) icon_offset: u32,
+    pub(crate) frame_offset: u32,
+    pub(crate) palette_offset: u32,
+    pub(crate) texture_offset: u32,
     /// +0x14: cumulative palette count per bank.
-    pub palette_cum: [u32; 8],
+    pub(crate) palette_cum: [u32; 8],
     /// +0x34: cumulative texture count per bank.
-    pub texture_cum: [u32; 8],
+    pub(crate) texture_cum: [u32; 8],
     /// +0x54: decompressed size of each bank (0 = absent).
-    pub bank_size: [u32; 8],
+    pub(crate) bank_size: [u32; 8],
     /// +0x74, +0x94.
-    pub runtime_bank_base: [u32; 8],
-    pub runtime_stash: [u32; 8],
+    pub(crate) runtime_bank_base: [u32; 8],
+    pub(crate) runtime_stash: [u32; 8],
 }
 const _: () = assert!(std::mem::size_of::<HudHeader>() == HEADER_SIZE);
 
 /// Bytes of [`HudHeader`]; the icon table follows (offset 0xb4 on every level).
-pub const HEADER_SIZE: usize = 0xb4;
+pub(crate) const HEADER_SIZE: usize = 0xb4;
 
 /// Icon table entry: `{u16 id, u16 frame_count, u16 first_frame, u8 anim_mode, u8 ticks_per_frame}`.
 /// `anim_mode` / `ticks_per_frame` drive the per-slot frame animation (`FUN_0024f6b0`: 0 static,
 /// 1 loop, 2 ping-pong, 3 ping-pong with a random pause).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct IconEntry {
-    pub id: u16,
-    pub frame_count: u16,
-    pub first_frame: u16,
-    pub anim_mode: u8,
-    pub ticks_per_frame: u8,
+pub(crate) struct IconEntry {
+    pub(crate) id: u16,
+    pub(crate) frame_count: u16,
+    pub(crate) first_frame: u16,
+    pub(crate) anim_mode: u8,
+    pub(crate) ticks_per_frame: u8,
 }
 
 /// Frame table entry: palette and texture index.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct FrameEntry {
-    pub palette: i16,
-    pub texture: i16,
+pub(crate) struct FrameEntry {
+    pub(crate) palette: i16,
+    pub(crate) texture: i16,
 }
 
 /// Palette table entry: `offset | 0x80000000` (bit 31 = not linked yet), runtime CBP.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct PaletteEntry {
-    pub offset_flags: u32,
-    pub cbp: u16,
-    pub pad: u16,
+pub(crate) struct PaletteEntry {
+    pub(crate) offset_flags: u32,
+    pub(crate) cbp: u16,
+    pub(crate) pad: u16,
 }
 
 /// Texture table entry: `offset | 0x80000000`, runtime TBP, log2 of the size.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct TextureEntry {
-    pub offset_flags: u32,
-    pub tbp: u16,
-    pub log2_w: u8,
-    pub log2_h: u8,
+pub(crate) struct TextureEntry {
+    pub(crate) offset_flags: u32,
+    pub(crate) tbp: u16,
+    pub(crate) log2_w: u8,
+    pub(crate) log2_h: u8,
 }
 
 impl PaletteEntry {
-    pub fn offset(&self) -> usize { (self.offset_flags & 0x7fff_ffff) as usize }
+    pub(crate) fn offset(&self) -> usize { (self.offset_flags & 0x7fff_ffff) as usize }
 }
 
 impl TextureEntry {
-    pub fn offset(&self) -> usize { (self.offset_flags & 0x7fff_ffff) as usize }
-    pub fn width(&self) -> u32 { 1 << (self.log2_w & 0x1f) }
-    pub fn height(&self) -> u32 { 1 << (self.log2_h & 0x1f) }
+    pub(crate) fn offset(&self) -> usize { (self.offset_flags & 0x7fff_ffff) as usize }
+    pub(crate) fn width(&self) -> u32 { 1 << (self.log2_w & 0x1f) }
+    pub(crate) fn height(&self) -> u32 { 1 << (self.log2_h & 0x1f) }
 }
 
 /// A parsed HUD set with its decompressed banks.
 #[derive(Clone, Debug)]
 pub struct Hud {
-    pub header: HudHeader,
+    pub(crate) header: HudHeader,
     /// Including the terminator (id 0xffff).
-    pub icons: Vec<IconEntry>,
-    pub frames: Vec<FrameEntry>,
-    pub palettes: Vec<PaletteEntry>,
-    pub textures: Vec<TextureEntry>,
-    pub banks: [Vec<u8>; BANKS],
+    pub(crate) icons: Vec<IconEntry>,
+    pub(crate) frames: Vec<FrameEntry>,
+    pub(crate) palettes: Vec<PaletteEntry>,
+    pub(crate) textures: Vec<TextureEntry>,
+    pub(crate) banks: [Vec<u8>; BANKS],
 }
 
 /// Bank owning entry `i` of a table with cumulative per-bank counts `cum`.
 fn owning_bank(cum: &[u32; 8], i: usize) -> Option<usize> { cum[..BANKS].iter().position(|&c| i < c as usize) }
 
 /// Just the header record (to learn which banks exist before decompressing them).
-pub fn parse_header(header: &[u8]) -> Result<HudHeader> { Buf(header).pod(0, "hud header") }
+pub(crate) fn parse_header(header: &[u8]) -> Result<HudHeader> { Buf(header).pod(0, "hud header") }
 
 /// Parses `hud_header` and keeps the decompressed `banks` (absent banks empty).
 pub fn parse_hud(header: &[u8], banks: [&[u8]; BANKS]) -> Result<Hud> {
@@ -139,7 +139,7 @@ pub fn parse_hud(header: &[u8], banks: [&[u8]; BANKS]) -> Result<Hud> {
 
 /// Decodes 8-bit indices with a CSM1 CLUT keeping the GS alpha as stored (0x80 = 1.0, no scaling):
 /// what the GS samples (TCC = 1, CT32 CLUT). [`decode_indexed8`] is the same with `scale_alpha`.
-pub fn decode_indexed8_raw(indices: &[u8], width: u32, height: u32, clut: &[u8]) -> Result<Texture> {
+pub(crate) fn decode_indexed8_raw(indices: &[u8], width: u32, height: u32, clut: &[u8]) -> Result<Texture> {
     let n = width as usize * height as usize;
     if indices.len() < n { return invalid("indexed texture data too small"); }
     if clut.len() < 1024 { return invalid("palette too small"); }
@@ -153,11 +153,11 @@ pub fn decode_indexed8_raw(indices: &[u8], width: u32, height: u32, clut: &[u8])
 
 impl Hud {
     /// Bank of palette `i` / texture `i`.
-    pub fn palette_bank(&self, i: usize) -> Option<usize> { owning_bank(&self.header.palette_cum, i) }
-    pub fn texture_bank(&self, i: usize) -> Option<usize> { owning_bank(&self.header.texture_cum, i) }
+    pub(crate) fn palette_bank(&self, i: usize) -> Option<usize> { owning_bank(&self.header.palette_cum, i) }
+    pub(crate) fn texture_bank(&self, i: usize) -> Option<usize> { owning_bank(&self.header.texture_cum, i) }
 
     /// `Hud_GetIconIndex__Fi`: linear scan; not found → the terminator's index.
-    pub fn icon_index(&self, id: u16) -> usize {
+    pub(crate) fn icon_index(&self, id: u16) -> usize {
         self.icons.iter().position(|e| e.id == 0xffff || e.id == id).unwrap_or(self.icons.len() - 1)
     }
 
@@ -168,19 +168,6 @@ impl Hud {
         let e = &self.icons[self.icon_index(id)];
         if e.id == 0xffff || k >= e.frame_count as i32 { return 0; }
         (e.first_frame as i32 + k).max(0) as usize
-    }
-
-    /// Size in texels of frame `i` (its texture's power-of-two size).
-    pub fn frame_size(&self, i: usize) -> Option<(u32, u32)> {
-        let f = self.frames.get(i)?;
-        let t = self.textures.get(usize::try_from(f.texture).ok()?)?;
-        Some((t.width(), t.height()))
-    }
-
-    /// The stored indices and CLUT of frame `i` (the parts [`Hud::decode_frame`] decodes).
-    pub fn frame_image(&self, i: usize) -> Result<IndexedImage<'_>> {
-        let (indices, clut, width, height) = self.frame_parts(i)?;
-        Ok(IndexedImage { width, height, indices, clut })
     }
 
     fn frame_parts(&self, i: usize) -> Result<(&[u8], &[u8], u32, u32)> {
@@ -196,12 +183,6 @@ impl Hud {
         Ok((px.bytes(), clut.bytes(), w, h))
     }
 
-    /// Frame `i` as RGBA8 with alpha scaled like every level texture ([`decode_indexed8`]).
-    pub fn decode_frame(&self, i: usize) -> Result<Texture> {
-        let (px, clut, w, h) = self.frame_parts(i)?;
-        decode_indexed8(px, w, h, clut)
-    }
-
     /// Frame `i` with the raw GS alpha (0x80 = 1.0), as the renderer samples it.
     pub fn decode_frame_raw(&self, i: usize) -> Result<Texture> {
         let (px, clut, w, h) = self.frame_parts(i)?;
@@ -209,49 +190,3 @@ impl Hud {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn synthetic() -> (Vec<u8>, Vec<u8>) {
-        // Header 0xb4, icons at 0xb4 (2 + terminator), frames, 1 palette (bank 1), 1 texture 2×2 (bank 0).
-        let mut h = HudHeader { icon_count: 3, frame_count: 2, icon_offset: 0xb4, ..Default::default() };
-        h.frame_offset = h.icon_offset + 3 * 8;
-        h.palette_offset = h.frame_offset + 2 * 4;
-        h.texture_offset = h.palette_offset + 8;
-        h.palette_cum = [0, 1, 1, 1, 1, 0, 0, 0];
-        h.texture_cum = [1, 1, 1, 1, 1, 0, 0, 0];
-        h.bank_size = [4, 1024, 0, 0, 0, 0, 0, 0];
-        let mut hb = bytemuck::bytes_of(&h).to_vec();
-        for e in [IconEntry { id: 30031, frame_count: 2, first_frame: 0, ..Default::default() }, IconEntry { id: 7, frame_count: 1, first_frame: 1, ..Default::default() }, IconEntry { id: 0xffff, ..Default::default() }] {
-            hb.extend_from_slice(bytemuck::bytes_of(&e));
-        }
-        for f in [FrameEntry { palette: 0, texture: 0 }, FrameEntry { palette: 0, texture: 0 }] { hb.extend_from_slice(bytemuck::bytes_of(&f)); }
-        hb.extend_from_slice(bytemuck::bytes_of(&PaletteEntry { offset_flags: 0x8000_0000, cbp: 0, pad: 0 }));
-        hb.extend_from_slice(bytemuck::bytes_of(&TextureEntry { offset_flags: 0x8000_0000, tbp: 0, log2_w: 1, log2_h: 1 }));
-        let mut pal = vec![0u8; 1024];
-        // Stored entry 8 = linear 16 (CSM1).
-        pal[8 * 4..8 * 4 + 4].copy_from_slice(&[10, 20, 30, 0x40]);
-        pal[4..8].copy_from_slice(&[1, 2, 3, 0x80]);
-        (hb, pal)
-    }
-
-    #[test]
-    fn parse_lookup_and_decode() {
-        let (hb, pal) = synthetic();
-        let px = [16u8, 1, 1, 16];
-        let hud = parse_hud(&hb, [&px, &pal, &[], &[], &[]]).unwrap();
-        assert_eq!(hud.icon_index(7), 1);
-        assert_eq!(hud.icon_index(1234), 2, "missing id → terminator");
-        assert_eq!(hud.icon_frame(30031, 1), 1);
-        assert_eq!(hud.icon_frame(30031, 2), 0, "k past the count → frame 0");
-        assert_eq!(hud.icon_frame(1234, 0), 0);
-        assert_eq!(hud.frame_size(0), Some((2, 2)));
-        assert_eq!((hud.palette_bank(0), hud.texture_bank(0)), (Some(1), Some(0)));
-        let raw = hud.decode_frame_raw(0).unwrap();
-        assert_eq!(&raw.rgba[..8], &[10, 20, 30, 0x40, 1, 2, 3, 0x80]);
-        let scaled = hud.decode_frame(0).unwrap();
-        assert_eq!(&scaled.rgba[..8], &[10, 20, 30, 0x80, 1, 2, 3, 0xff]);
-        assert!(parse_hud(&hb, [&px[..3], &pal, &[], &[], &[]]).is_err(), "bank shorter than its size");
-    }
-}

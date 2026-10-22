@@ -1,16 +1,14 @@
-//! `extract`: identify, then copy every Tier 0 file from the image into the data folder, hashing each file while
-//! it is copied and checking it against the build's table, then write `extract-info.json`, then build the Tier 1
-//! engine cache (`prepare`, stage `prepare`).
+//! `extract`: identify, then copy every file of the disc's filesystem into the data folder (`G/DUMMY.` left out),
+//! hashing each file while it is copied and checking it against the build's table, then write `extract-info.json`.
 //!
 //! Crash safety (the launcher cancels by killing the process): `extract-info.json` is removed first and written
 //! last; every file is written as `<name>.partial` and renamed only when complete and hash-checked.
 
 use crate::archive::{self, Job};
-use crate::build_db::{self, Build, Game, TableEntry};
+use crate::build_db::{self, Build, TableEntry};
 use crate::identify::{self, Identified};
 use crate::workers::{self, Ctx, CHUNK};
 use crate::{json, mib, space, Code, Emit, Error, Event, Stage, Summary, DATA_FORMAT, EXTRACTOR_VERSION, INFO_FILE, PARTIAL_SUFFIX};
-use rc_formats::disc::Disc;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Seek, SeekFrom};
@@ -21,15 +19,13 @@ use std::sync::atomic::AtomicBool;
 pub const SPACE_MARGIN: u64 = 64 << 20;
 
 pub struct Options<'a> {
-    /// Skip the PAL copies (`archive::is_pal_copy`).
-    pub ntsc_only: bool,
     pub threads: usize,
     /// Cooperative cancel for library callers (the binary is cancelled by being killed).
     pub cancel: Option<&'a AtomicBool>,
 }
 
 impl Default for Options<'_> {
-    fn default() -> Self { Options { ntsc_only: false, threads: crate::DEFAULT_THREADS, cancel: None } }
+    fn default() -> Self { Options { threads: crate::DEFAULT_THREADS, cancel: None } }
 }
 
 pub(crate) fn partial_path(dest: &Path) -> PathBuf {
@@ -116,7 +112,7 @@ pub fn extract(iso_path: &Path, out: &Path, builds: &[Build], opts: &Options, em
     let (id, iso) = identify::identify(iso_path, builds, emit)?;
     let build = &builds[id.build.expect("supported build")];
     let table = build_table(build)?;
-    let jobs = archive::with_table(plan(id.game, iso)?, &table, opts.ntsc_only)?;
+    let jobs = archive::with_table(archive::iso_jobs(&iso), &table)?;
     let summary = Summary { files: jobs.len() as u64, bytes: jobs.iter().map(|j| j.bytes).sum() };
 
     fs::create_dir_all(out).map_err(|e| workers::write_error(out, e))?;
@@ -136,8 +132,8 @@ pub fn extract(iso_path: &Path, out: &Path, builds: &[Build], opts: &Options, em
         None => emit(Event::Info("free disk space unknown on this platform; not checked".into())),
     }
     emit(Event::Info(format!(
-        "extracting {} files ({:.1} MiB{}) to {}",
-        summary.files, mib(summary.bytes), if opts.ntsc_only { ", PAL copies skipped" } else { "" }, out.display())));
+        "extracting {} files ({:.1} MiB) to {}",
+        summary.files, mib(summary.bytes), out.display())));
 
     let problems = copy_files(iso_path, out, &jobs, opts.threads, opts.cancel, emit)?;
     if !problems.is_empty() { return Err(fail_with(&problems, "file(s) differ from the reference: the disc image is damaged; re-dump the disc", emit)); }
@@ -147,7 +143,6 @@ pub fn extract(iso_path: &Path, out: &Path, builds: &[Build], opts: &Options, em
         ("disc", id.serial.as_str().into()),
         ("data_format", DATA_FORMAT.into()),
         ("extractor_version", EXTRACTOR_VERSION.into()),
-        ("ntsc_only", opts.ntsc_only.into()),
         ("files", summary.files.into()),
         ("bytes", summary.bytes.into()),
     ]) + "\n";
@@ -155,33 +150,15 @@ pub fn extract(iso_path: &Path, out: &Path, builds: &[Build], opts: &Options, em
     fs::write(&tmp, text).map_err(|e| workers::write_error(&tmp, e))?;
     fs::rename(&tmp, &info).map_err(|e| workers::write_error(&info, e))?;
 
-    // R&C2 has no Tier 1 cache yet (docs/plan/rac2_bringup.md).
-    if id.game != Game::Rac1 { return Ok((id, summary)); }
-    // Tier 1 after the Tier 0 archive is complete (its stamp hashes `extract-info.json`). The cache is optional and
-    // rebuilt from Tier 0 at any time (the game builds missing lumps itself), so a failure here does not fail the
-    // extraction: one info line says so. Cancelling still cancels.
-    if let Err(e) = crate::prepare::prepare(out, opts.threads, opts.cancel, emit) {
-        if opts.cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) { return Err(e); }
-        emit(Event::Info(format!(
-            "the engine cache was not built ({}); the game builds it on first start, or run `rerac-extract prepare --out {}`",
-            e.message, out.display())));
-    }
     Ok((id, summary))
 }
 
-/// The disc's Tier 0 files: RC1's from its table of contents, R&C2's from the ISO filesystem.
-fn plan(game: Game, iso: rc_formats::iso9660::IsoImage<File>) -> Result<Vec<Job>, Error> {
-    if game == Game::Rac2 { return Ok(archive::iso_jobs(&iso)); }
-    let disc = Disc::new(iso).map_err(|e| Error::new(Code::CannotRead, format!("cannot read the disc's table of contents: {e}")))?;
-    archive::disc_jobs(&disc)
-}
-
-/// `table`: hashes every archive file straight from an RC1 or R&C2 image (any build whose files can be listed;
-/// nothing is written) and returns the rows of its size/SHA-1 table.
+/// `table`: hashes every archive file straight from an image (any build whose files can be listed; nothing is
+/// written) and returns the rows of its size/SHA-1 table.
 pub fn table(iso_path: &Path, builds: &[Build], threads: usize, emit: Emit) -> Result<(Identified, Vec<TableEntry>), Error> {
     let (id, iso) = identify::probe(iso_path, builds, emit)?;
-    if !matches!(id.game, Game::Rac1 | Game::Rac2) { identify::require_supported(&id, builds, emit)?; }
-    let jobs = plan(id.game, iso)?;
+    if id.game != build_db::Game::Rac2 { identify::require_supported(&id, builds, emit)?; }
+    let jobs = archive::iso_jobs(&iso);
     let total = jobs.iter().map(|j| j.bytes).sum();
     let hashes = workers::run(
         jobs.len(), total, Stage::Copy, threads, None, emit,

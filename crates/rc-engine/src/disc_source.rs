@@ -259,7 +259,6 @@ mod tests {
         std::fs::create_dir_all(d.join("G")).unwrap();
         std::fs::write(d.join("G/LEVEL0.WAD"), b"abc").unwrap();
         assert_eq!(read(&d, "G/LEVEL0.WAD").unwrap(), b"abc");
-        assert_eq!(read_path(&d, &d.join("G/LEVEL0.WAD")).unwrap(), b"abc");
         assert!(read(&d, "RC2.HDR").is_err());
         std::fs::remove_dir_all(&d).unwrap();
     }

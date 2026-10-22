@@ -27,7 +27,7 @@ use crate::tfrag_light::ps2;
 use bytemuck::{Pod, Zeroable};
 
 /// Four VU lanes as raw f32 bits.
-pub type V4 = [u32; 4];
+pub(crate) type V4 = [u32; 4];
 /// A matrix as four VU rows (row i = image of axis i, row 3 = translation; `M·v = r0·x + r1·y + r2·z + r3`).
 pub type Rows = [[f32; 4]; 4];
 
@@ -57,12 +57,12 @@ pub struct MobySequenceHeader {
     /// 0x12: trigger count (→ moby+0x7e).
     pub trigger_count: u8,
     /// 0x13: always 0 on the disc.
-    pub pad: u8,
+    pub(crate) pad: u8,
     /// 0x14: trigger-data pointer (non-zero in 4 sequences on the disc); not read by the animation code (the level04
     /// leg walker reads it: [`gait_records`]).
     pub trigger_data: u32,
     /// 0x18: rate override: if ≠ 0 it replaces every frame's rate in `MobyAnimAdvance`.
-    pub rate_override: f32,
+    pub(crate) rate_override: f32,
 }
 const _: () = assert!(std::mem::size_of::<MobySequenceHeader>() == 0x1c);
 
@@ -99,7 +99,7 @@ pub struct ScaleRec {
 impl ScaleRec {
     /// Flag 0x80: the scale enters the local matrix (children see it); else it scales only this joint's
     /// final P_j after the chain. The game tests the sign of the 64-bit record (`bltz`).
-    pub fn inherited(&self) -> bool { self.flags & 0x80 != 0 }
+    pub(crate) fn inherited(&self) -> bool { self.flags & 0x80 != 0 }
     /// The value as `pextlh` / `psrlw 13` / `vitof15.xyz` produce it (= u16 / 4096, exact).
     pub fn value(&self) -> [f32; 3] { self.scale.map(|s| s as f32 / 4096.0) }
 }
@@ -149,11 +149,11 @@ pub struct MobySequence {
 }
 
 /// Quaternion component `s16 / 32768` (`vitof15`, exact).
-pub fn quat_f32(q: [i16; 4]) -> [f32; 4] { q.map(|c| c as f32 / 32768.0) }
+pub(crate) fn quat_f32(q: [i16; 4]) -> [f32; 4] { q.map(|c| c as f32 / 32768.0) }
 
 /// Parses a sequence at `offset` in `base`; frame pointers are relative to `base` (the class blob for
 /// class sequences, the sequence blob itself for `ratchet_seq`).
-pub fn parse_sequence(base: &[u8], offset: usize) -> Result<MobySequence> { parse_sequence_joints(base, offset, None) }
+pub(crate) fn parse_sequence(base: &[u8], offset: usize) -> Result<MobySequence> { parse_sequence_joints(base, offset, None) }
 
 /// [`parse_sequence`] for a class of `joints` joints: Going Commando's compressed frames (a frame pointer with the top
 /// nibble 0xf) are decoded into the plain frame layout ([`decode_compressed_frame`]); `None` (R&C1) rejects them.
@@ -187,7 +187,7 @@ pub fn parse_sequence_joints(base: &[u8], offset: usize, joints: Option<usize>) 
 /// sign-extended 10-bit field · 4 (three per word, read at bit 22, 12, 2), 3 a raw u16 — and w = √(1 − x² − y² − z²)
 /// (1.15 fixed point, ≤ 0x7fff) negated by its sign bit. Scale / translation records: one control byte (2 bits per
 /// component: 0 base, 1 base + `s8·4`, 2 a raw s16), w = the base's.
-pub fn decode_compressed_frame(b: Buf, table: usize, frame: usize, joints: usize) -> Result<Vec<u8>> {
+pub(crate) fn decode_compressed_frame(b: Buf, table: usize, frame: usize, joints: usize) -> Result<Vec<u8>> {
     let packed = b.u32(table)?;
     let (scales, trans) = (b.u8(table + 4 + joints * 6)? as usize, b.u8(table + 5 + joints * 6)? as usize);
     let rate_div = b.u16(frame)?;
@@ -289,26 +289,6 @@ pub fn parse_sequences(class_blob: &[u8], class: &MobyClass) -> Result<Vec<Optio
         .collect()
 }
 
-/// The 0x50-byte record a sequence header's +0x14 points to (class-relative), as words: the gait record of the level04
-/// leg walker (`rc_game::moby_update::creature::legs`: +0x00 the sequence id, +0x04 the stride, +0x18 / +0x1c and
-/// +0x28..+0x4c foot-contact key ranges; +0x08..+0x10 and +0x20..+0x3c are written by its set-up). Per sequence of the
-/// class's pointer list with a non-zero pointer: (sequence index, record).
-pub fn gait_records(class_blob: &[u8], class: &MobyClass) -> Vec<(u8, [u32; 20])> {
-    let b = Buf(class_blob);
-    class
-        .sequence_pointers
-        .iter()
-        .enumerate()
-        .filter(|(_, &p)| p > 0)
-        .filter_map(|(i, &p)| {
-            let h: MobySequenceHeader = b.pod(p as usize, "moby sequence header").ok()?;
-            if h.trigger_data == 0 { return None; }
-            let w: Vec<u32> = b.pod_slice(h.trigger_data as usize, 20, "gait record").ok()?;
-            Some((i as u8, w.try_into().ok()?))
-        })
-        .collect()
-}
-
 // ---------------------------------------------------------------------------------------------------
 // Class data the evaluator needs
 
@@ -318,11 +298,11 @@ pub fn gait_records(class_blob: &[u8], class: &MobyClass) -> Vec<(u8, [u32; 20])
 pub struct MobyAnimClass {
     pub joint_count: usize,
     /// Class `skeleton`, rows as stored (only the xyz of each row is read). Identity when absent.
-    pub skeleton: Vec<Rows>,
+    pub(crate) skeleton: Vec<Rows>,
     /// `common_trans[j].xyz`, the rest local translation (packed units).
     pub rest: Vec<[f32; 3]>,
     /// `common_trans[j]` word at +0xc: 0 for the root, else `0x70000000 + 0x40·parent`.
-    pub parent_word: Vec<u32>,
+    pub(crate) parent_word: Vec<u32>,
     pub sequences: Vec<Option<MobySequence>>,
 }
 
@@ -342,8 +322,6 @@ impl MobyAnimClass {
     pub fn sequence(&self, seq: u8) -> Option<&MobySequence> { self.sequences.get(seq as usize)?.as_ref() }
     pub fn frame(&self, seq: u8, index: u8) -> Option<&MobyFrame> { self.sequence(seq)?.frames.get(index as usize) }
 
-    /// Parent joint from the SPR word (None for 0 = root, or a word that is not a joint record address).
-    pub fn parent(&self, j: usize) -> Option<usize> { spr_record(*self.parent_word.get(j)?) }
 }
 
 fn spr_record(word: u32) -> Option<usize> {
@@ -484,7 +462,7 @@ pub const SNAPSHOT_SEQ: u8 = 0xff;
 /// rate = frame A's own rate word (the sequence's rate override is not consulted here); flag bit 1
 /// cleared; t and speed kept. Returns false, changing nothing, when the class has no sequence `seq` (the
 /// game would dereference a null pointer).
-pub fn hard_cut(s: &mut AnimState, class: &MobyAnimClass, seq: u8, frame: i32) -> bool {
+pub(crate) fn hard_cut(s: &mut AnimState, class: &MobyAnimClass, seq: u8, frame: i32) -> bool {
     let Some(q) = class.sequence(seq) else { return false };
     let fc = q.header.frame_count as i32;
     let a = if frame < fc { frame } else { fc - 1 } as u8;
@@ -521,7 +499,7 @@ pub fn set_sequence(s: &mut AnimState, class: &MobyAnimClass, seq: u8, frame: i3
 /// with `force` (its flag 4). Its flags 1 / 2 (the snapshot's 0x100 / 0x200: skip the pose-layer lists) change nothing
 /// here (the port's snapshots carry no layers). [L] The frame is clamped as the plain blend does (the game passes it
 /// through; every caller passes 0).
-pub fn set_sequence_ex(s: &mut AnimState, class: &MobyAnimClass, seq: u8, frame: i32, blend_ticks: i32, snapshot_frame: &mut Option<MobyFrame>, force: bool) -> bool {
+pub(crate) fn set_sequence_ex(s: &mut AnimState, class: &MobyAnimClass, seq: u8, frame: i32, blend_ticks: i32, snapshot_frame: &mut Option<MobyFrame>, force: bool) -> bool {
     let Some(q) = class.sequence(seq) else { return false };
     let fc = q.header.frame_count as i32;
     let b = if frame < fc { frame } else { fc - 1 } as u8;
@@ -763,7 +741,7 @@ const ID4: [V4; 4] = [[ONE, 0, 0, 0], [0, ONE, 0, 0], [0, 0, ONE, 0], [0, 0, 0, 
 /// so a joint already on the list from A is appended again and the node after it in the A chain is cut
 /// off. The terminator zeroes the last node's link. Returns the joints reachable from the head, in walk
 /// order (only membership matters: each node scales only its own joint).
-pub fn post_scale_list(a: &[u8], b: &[u8]) -> Vec<u8> {
+pub(crate) fn post_scale_list(a: &[u8], b: &[u8]) -> Vec<u8> {
     #[derive(Clone, Copy, PartialEq)]
     enum Link { Zero, Raw, To(u8) }
     let mut head = Link::Zero;
@@ -799,12 +777,7 @@ pub fn post_scale_list(a: &[u8], b: &[u8]) -> Vec<u8> {
 }
 
 /// Whether A and B are consecutive keys of one sequence (MobyProc job+0x12 = 0x400): plain lerp.
-pub fn consecutive(s: &AnimState) -> bool { s.seq_a == s.seq_b && s.frame_b as u32 == s.frame_a as u32 + 1 }
-
-/// `fun_0020e0e0` MobyAnimEval: the joint palette `F_j = P_j·S_j` for the state (one matrix per class
-/// joint; a single identity for a class without joints; identity rows for every joint when key A (or, for
-/// t ≠ 0, key B) does not exist, e.g. classes with joints but no sequence 0).
-pub fn evaluate(class: &MobyAnimClass, s: &AnimState) -> Vec<Rows> { evaluate_with_snapshot(class, s, None) }
+pub(crate) fn consecutive(s: &AnimState) -> bool { s.seq_a == s.seq_b && s.frame_b as u32 == s.frame_a as u32 + 1 }
 
 /// [`evaluate`] for a state whose key A may be a snapshot frame (`seq_a` = [`SNAPSHOT_SEQ`], see
 /// [`set_sequence`]): `snap` is then read as key A, exactly like a disc frame (MobyProc DMAs frame A from
@@ -902,7 +875,7 @@ fn layer_local(class: &MobyAnimClass, l: &PoseLayer, j: usize) -> Option<(V4, Op
 /// before the matrices (§6.4; `MobyAnimEvalChain` 0x268ee8 does the same for chains: [`evaluate_chains_layered`]):
 /// for each joint a layer covers, `q = nlerp_flip(q, q_layer, 1 − w, w)`, the translation lerped by `w` toward the
 /// layer's, and the inherited scale where the layer's keys carry one.
-pub fn evaluate_layered(class: &MobyAnimClass, s: &AnimState, snap: Option<&MobyFrame>, layers: &[PoseLayer]) -> Vec<Rows> {
+pub(crate) fn evaluate_layered(class: &MobyAnimClass, s: &AnimState, snap: Option<&MobyFrame>, layers: &[PoseLayer]) -> Vec<Rows> {
     evaluate_posed(class, s, snap, layers, &[])
 }
 
@@ -935,7 +908,7 @@ impl JointModifier {
 
 /// The joint a joint-modifier (or pose-layer) node made for a class joint list acts on: the first entry of the list's
 /// second byte list (`AttachManipulator` 0x264370: `pb[pb[0] + 4]`, `pb` = the list, `pb[0]` = the low byte of its
-/// first count). `second` = [`crate::gadget::joint_list`]`(..).1`.
+/// first count). `second` = [`crate::moby::joint_list`]`(..).1`.
 pub fn list_target(second: &[u8]) -> Option<u8> { second.first().copied() }
 
 /// The Hamilton product `a ⊗ b` (`fun_001fa3c0` 0x221d78 and the evaluator's composing modifier): xyz =
@@ -1174,7 +1147,7 @@ fn apply_layers(class: &MobyAnimClass, layers: &[PoseLayer], rec: &mut [[V4; 4]]
 }
 
 /// Quaternion rows as 0x20eb2c builds them (every product is `(q_a + q_a)·q_b`; w lanes 0).
-pub fn quat_rows(q: V4) -> [V4; 3] {
+pub(crate) fn quat_rows(q: V4) -> [V4; 3] {
     use ps2::{add, mul, sub};
     let [x, y, z, w] = q;
     let (x2, y2, z2) = (add(x, x), add(y, y), add(z, z));
@@ -1191,7 +1164,7 @@ pub fn quat_rows(q: V4) -> [V4; 3] {
 
 /// nlerp with hemisphere flip (0x20e5ac): `d = ((a.y·b.y + a.x·b.x) + 1·a.z·b.z) + 1·a.w·b.w`; if d's
 /// sign bit is set use −b; `q = a·u + b·t`; `q *= rsqrt(((x² + y²) + 1·z²) + 1·w²)`.
-pub fn nlerp_flip(a: V4, b: V4, u: u32, t: u32) -> V4 {
+pub(crate) fn nlerp_flip(a: V4, b: V4, u: u32, t: u32) -> V4 {
     use ps2::{add, mul};
     let p = lanes(|k| mul(a[k], b[k]));
     let nb = lanes(|k| mul(b[k], NEG_ONE));
@@ -1201,258 +1174,6 @@ pub fn nlerp_flip(a: V4, b: V4, u: u32, t: u32) -> V4 {
     let n = add(add(add(sq[0], sq[1]), mul(ONE, sq[2])), mul(ONE, sq[3]));
     let qq = ps2::rsqrt(ONE, n);
     lanes(|k| mul(q[k], qq))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn f(x: f32) -> u32 { x.to_bits() }
-    fn q4(v: V4) -> [f32; 4] { v.map(f32::from_bits) }
-    fn close(a: f32, b: f32, tol: f32) -> bool { (a - b).abs() <= tol }
-
-    /// Class 66, frame 1, joint 0: the doc's 8 bytes `000064e5 0000337d`.
-    const Q66_F1: [u8; 8] = [0x00, 0x00, 0x64, 0xe5, 0x00, 0x00, 0x33, 0x7d];
-    const Q_ID: [i16; 4] = [0, 0, 0, 0x7fff];
-
-    fn q66_f1() -> [i16; 4] { bytemuck::pod_read_unaligned(&Q66_F1) }
-
-    #[test]
-    fn class66_quaternion_decode_and_rows() {
-        let q = q66_f1();
-        assert_eq!(q, [0, -6812, 0, 32051]);
-        let v = quat_f32(q);
-        assert!(close(v[1], -0.207886, 1e-6) && close(v[3], 0.978119, 1e-6) && v[0] == 0.0 && v[2] == 0.0, "{v:?}");
-        let r = quat_rows(bits4(v)).map(q4);
-        assert!(close(r[0][0], 0.913567, 2e-6) && close(r[0][2], -0.406674, 2e-6), "{:?}", r[0]);
-        assert!(close(r[2][0], 0.406674, 2e-6) && close(r[2][2], 0.913567, 2e-6), "{:?}", r[2]);
-        // Identity quaternion (0x7fff = 0.99997) gives exact identity rows.
-        assert_eq!(quat_rows(quat_bits(Q_ID)), [[ONE, 0, 0, 0], [0, ONE, 0, 0], [0, 0, ONE, 0]]);
-    }
-
-    #[test]
-    fn plain_lerp_is_not_normalised_and_wrap_flips() {
-        let (a, b) = (quat_bits(Q_ID), quat_bits(q66_f1()));
-        let (u, t) = (f(0.5), f(0.5));
-        let q = q4(lerp(a, b, u, t, 4, a));
-        let n = (q.iter().map(|x| x * x).sum::<f32>()).sqrt();
-        assert!(close(q[1], -0.103943, 1e-6) && close(q[3], 0.989044, 1e-5), "{q:?}");
-        assert!(close(n, 0.99449, 1e-5), "|q| = {n}");
-        assert!(close(q4(quat_rows(bits4(q))[0])[0], 0.978392, 2e-6));
-        // Wrap 14 → 0: q14 = (0, −6812, 0, −32051), dot with q0 < 0 → flip → (0, −0.104519, 0, −0.994523).
-        let q14 = quat_bits([0, -6812, 0, -32051]);
-        let w = q4(nlerp_flip(q14, a, u, t));
-        assert!(close(w[1], -0.104519, 2e-6) && close(w[3], -0.994523, 2e-6) && w[0] == 0.0, "{w:?}");
-    }
-
-    fn frame(quats: Vec<[i16; 4]>, scales: Vec<ScaleRec>, trans: Vec<TransRec>, rate: f32) -> MobyFrame {
-        let mut payload: Vec<u8> = bytemuck::cast_slice(&quats).to_vec();
-        payload.extend_from_slice(bytemuck::cast_slice(&scales));
-        let to = payload.len();
-        payload.extend_from_slice(bytemuck::cast_slice(&trans));
-        while !payload.len().is_multiple_of(16) { payload.push(0); }
-        let header = MobyFrameHeader {
-            rate, time: 0, qwc: (payload.len() / 16) as u16, quat_bytes: (quats.len() * 8) as u16,
-            scale_count: scales.len() as u16, trans_offset: to as u16, trans_count: trans.len() as u16,
-        };
-        MobyFrame { header, quats, scales, trans, payload }
-    }
-
-    /// Class 747's numbers from the doc: 2 joints, j1's parent is j0, frame 1 has a post-scale on j0
-    /// and a translation on j1.
-    fn class747() -> MobyAnimClass {
-        let mut s0 = IDENTITY;
-        s0[3] = [0.0, 0.0, -831.386, 1.0];
-        let mut s1 = IDENTITY;
-        s1[3] = [0.0, 0.0, -27067.32, 1.0];
-        let f0 = frame(vec![Q_ID, Q_ID], vec![], vec![], 0.25);
-        let f1 = frame(
-            vec![Q_ID, Q_ID],
-            vec![ScaleRec { scale: [0x1000, 0x1000, 0x0cd6], joint: 0, flags: 0 }],
-            vec![TransRec { trans: [0, 0, 21048], joint: 1, pad: 0 }],
-            0.25,
-        );
-        let seq = MobySequence {
-            header: MobySequenceHeader { frame_count: 2, loop_sound: 0xff, rate_override: 0.0, ..Default::default() },
-            frames: vec![f0, f1],
-            triggers: vec![],
-        };
-        MobyAnimClass {
-            joint_count: 2,
-            skeleton: vec![s0, s1],
-            rest: vec![[0.0, 0.0, 831.386], [0.0, 0.0, 21119.06]],
-            parent_word: vec![0, 0x7000_0000],
-            sequences: vec![Some(seq)],
-        }
-    }
-
-    #[test]
-    fn class747_frame1_post_scale_and_chain() {
-        let c = class747();
-        let st = AnimState { seq_a: 0, frame_a: 1, seq_b: 0, frame_b: 1, t: 0.0, ..AnimState::spawn(&c) };
-        let f = evaluate(&c, &st);
-        assert!(close(f[0][2][2], 0.80225, 1e-4), "{:?}", f[0]);
-        assert!(close(f[0][3][2], 164.41, 1e-2), "F0 z = {}", f[0][3][2]);
-        assert!(close(f[1][3][2], -5187.94, 1e-2), "F1 z = {}", f[1][3][2]);
-        assert_eq!(f[1][0][..3], [1.0, 0.0, 0.0]);
-        assert_eq!(f[1][2][..3], [0.0, 0.0, 1.0], "the child ignores the parent's post-scale");
-    }
-
-    #[test]
-    fn advance_from_spawn_and_wrap() {
-        // 15 keys, rate override 0.125 (8 ticks per key): one cycle = 120 ticks, like class 66.
-        let frames = (0..15).map(|_| frame(vec![Q_ID], vec![], vec![], 0.125)).collect();
-        let seq = MobySequence { header: MobySequenceHeader { frame_count: 15, loop_sound: 0xff, rate_override: 0.125, ..Default::default() }, frames, triggers: vec![] };
-        let c = MobyAnimClass { joint_count: 1, skeleton: vec![IDENTITY], rest: vec![[0.0; 3]], parent_word: vec![0], sequences: vec![Some(seq)] };
-        let mut s = AnimState::spawn(&c);
-        assert_eq!(s.speed, 1.0);
-        advance(&mut s, &c);
-        assert_eq!((s.frame_a, s.frame_b, s.t, s.rate, s.flags), (0, 1, 0.0, 0.125, 1));
-        let mut wraps = 0;
-        for tick in 2..=121 {
-            advance(&mut s, &c);
-            if s.flags & 2 != 0 { wraps += 1; assert_eq!(tick, 1 + 14 * 8, "wrap when B steps past the last key"); }
-        }
-        // After 120 more ticks: back at key 0 → 1 with t = 0.
-        assert_eq!((s.frame_a, s.frame_b, s.t), (0, 1, 0.0));
-        assert_eq!(wraps, 1);
-        // Backwards: speed −1 from (0 → 1, t = 0) steps to (14 → 0).
-        s.speed = -1.0;
-        advance(&mut s, &c);
-        assert_eq!((s.frame_a, s.frame_b, s.flags), (14, 0, 3));
-        assert!(close(s.t, 0.875, 1e-6), "{}", s.t);
-        // Static class: one sequence with ≤ 1 frame and no loop sound → speed 0 and mode 0x40.
-        let st = MobySequence { header: MobySequenceHeader { frame_count: 1, loop_sound: 0xff, ..Default::default() }, frames: vec![frame(vec![Q_ID], vec![], vec![], 1.0)], triggers: vec![] };
-        let sc = MobyAnimClass { sequences: vec![Some(st)], ..c.clone() };
-        let s = AnimState::spawn(&sc);
-        assert!(s.speed == 0.0 && s.skip_advance);
-    }
-
-    #[test]
-    fn snap_window() {
-        let frames = (0..3).map(|_| frame(vec![Q_ID], vec![], vec![], 0.3)).collect();
-        let seq = MobySequence { header: MobySequenceHeader { frame_count: 3, ..Default::default() }, frames, triggers: vec![] };
-        let c = MobyAnimClass { joint_count: 1, skeleton: vec![IDENTITY], rest: vec![[0.0; 3]], parent_word: vec![0], sequences: vec![Some(seq)] };
-        // t' = 0.9975 lies in the snap window → exactly one key step with t = 0.
-        let mut s = AnimState { seq_a: 0, frame_a: 0, seq_b: 0, frame_b: 1, t: 0.6975, speed: 1.0, rate: 0.3, flags: 0, trigger_count: 0, skip_advance: false };
-        advance(&mut s, &c);
-        assert_eq!((s.frame_a, s.frame_b, s.t), (1, 2, 0.0));
-        // Below the window: no step.
-        let mut s2 = AnimState { t: 0.6, frame_a: 0, frame_b: 1, ..s };
-        advance(&mut s2, &c);
-        assert_eq!((s2.frame_a, s2.flags), (0, 0));
-    }
-
-    #[test]
-    fn post_scale_list_drops_a_only_joints() {
-        // Same joints in A and B: full set.
-        assert_eq!(post_scale_list(&[0, 1, 2], &[0, 1, 2]), [0, 1, 2]);
-        // Disjoint: A then B (true union).
-        assert_eq!(post_scale_list(&[0, 1], &[2, 3]), [0, 1, 2, 3]);
-        // A = [0, 1, 3], B = [0, 2]: the re-append of 0 cuts 1 and 3 off.
-        assert_eq!(post_scale_list(&[0, 1, 3], &[0, 2]), [0, 2]);
-        // A = [1, 0], B = [0, 1]: 1's link is overwritten last with the terminator → only 1 remains.
-        assert_eq!(post_scale_list(&[1, 0], &[0, 1]), [1]);
-        // Only A or only B.
-        assert_eq!(post_scale_list(&[4, 5], &[]), [4, 5]);
-        assert_eq!(post_scale_list(&[], &[7]), [7]);
-    }
-
-    /// class747 plus a second sequence (3 keys, rate 0.5; joint 0 turned 24° about y in key 2).
-    fn class747_two_seqs() -> MobyAnimClass {
-        let mut c = class747();
-        let q24 = bytemuck::pod_read_unaligned::<[i16; 4]>(&Q66_F1);
-        let frames = vec![
-            frame(vec![Q_ID, Q_ID], vec![], vec![], 0.5),
-            frame(vec![Q_ID, Q_ID], vec![], vec![], 0.5),
-            frame(vec![q24, Q_ID], vec![], vec![TransRec { trans: [0, 0, 21000], joint: 1, pad: 0 }], 0.75),
-        ];
-        c.sequences.push(Some(MobySequence { header: MobySequenceHeader { frame_count: 3, loop_sound: 0xff, ..Default::default() }, frames, triggers: vec![] }));
-        c
-    }
-
-    #[test]
-    fn hard_cut_clamps_and_takes_the_frame_rate() {
-        let c = class747_two_seqs();
-        let mut s = AnimState::spawn(&c);
-        s.t = 0.3;
-        s.flags = 3;
-        assert!(hard_cut(&mut s, &c, 1, 0));
-        assert_eq!((s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.rate, s.t, s.flags), (1, 0, 1, 1, 0.5, 0.3, 1));
-        // Past the end: A = last key, B clamped to it (no wrap).
-        assert!(hard_cut(&mut s, &c, 1, 7));
-        assert_eq!((s.frame_a, s.frame_b, s.rate), (2, 2, 0.75));
-        assert!(!hard_cut(&mut s, &c, 5, 0));
-    }
-
-    #[test]
-    fn blend_with_zero_ticks_lands_on_the_next_advance() {
-        let c = class747_two_seqs();
-        let mut s = AnimState::spawn(&c);
-        advance(&mut s, &c); // the load pass: (0,0) -> (0,1), t = 0
-        let mut snap = None;
-        assert!(set_sequence(&mut s, &c, 1, 0, 0, &mut snap));
-        assert!(snap.is_none(), "t = 0: no snapshot, key A kept");
-        assert_eq!((s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.t, s.speed), (0, 0, 1, 0, 0.0, 1.0));
-        assert_eq!(s.rate.to_bits(), ps2::MAX, "1 / 0 on the FPU");
-        advance(&mut s, &c);
-        assert_eq!((s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.t, s.rate), (1, 0, 1, 1, 0.5, 0.5));
-        // Five ticks: rate 1/5, t reaches 1 after five advances (then the target's own rate).
-        let mut s = AnimState::spawn(&c);
-        advance(&mut s, &c);
-        set_sequence(&mut s, &c, 1, 0, 5, &mut snap);
-        for _ in 0..4 { advance(&mut s, &c); assert_eq!(s.seq_a, 0); }
-        advance(&mut s, &c);
-        assert_eq!((s.seq_a, s.frame_a, s.frame_b), (1, 0, 1));
-    }
-
-    #[test]
-    fn snapshot_of_a_key_re_encodes_it_exactly() {
-        let c = class747_two_seqs();
-        let st = AnimState { seq_a: 0, frame_a: 1, seq_b: 0, frame_b: 0, t: 0.0, ..AnimState::spawn(&c) };
-        let f = snapshot(&c, &st, None).unwrap();
-        let disc = c.frame(0, 1).unwrap();
-        assert_eq!(f.quats, disc.quats);
-        assert_eq!(f.scales, disc.scales, "post-scale flag 0 kept");
-        assert_eq!(f.trans, disc.trans);
-        let snap_state = AnimState { seq_a: SNAPSHOT_SEQ, frame_a: 0, ..st };
-        assert_eq!(evaluate_with_snapshot(&c, &snap_state, Some(&f)), evaluate(&c, &st));
-        assert_eq!(evaluate(&c, &snap_state), vec![IDENTITY; 2], "no snapshot: identity");
-    }
-
-    #[test]
-    fn blend_from_mid_key_starts_from_the_snapshot() {
-        let c = class747_two_seqs();
-        // Mid-interval of seq 0 (0 -> 1, t = 0.5): j0 post-scale halfway, j1 translation halfway.
-        let mut s = AnimState { seq_a: 0, frame_a: 0, seq_b: 0, frame_b: 1, t: 0.5, rate: 0.25, ..AnimState::spawn(&c) };
-        let before = evaluate(&c, &s);
-        let mut snap = None;
-        assert!(set_sequence(&mut s, &c, 1, 2, 4, &mut snap));
-        let f = snap.clone().expect("t > 0.025 takes a snapshot");
-        assert_eq!((s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.t, s.rate), (SNAPSHOT_SEQ, 0, 1, 2, 0.0, 0.25));
-        assert_eq!(f.scales.len(), 1);
-        assert_eq!((f.scales[0].joint, f.scales[0].flags), (0, 0));
-        assert_eq!(f.trans.len(), 1);
-        assert_eq!((f.trans[0].joint, f.trans[0].trans[2]), (1, 21083)); // vftoi0(21083.53)
-        let after = evaluate_with_snapshot(&c, &s, Some(&f));
-        for (a, b) in before.iter().zip(&after) {
-            for (ra, rb) in a.iter().zip(b) {
-                for k in 0..3 { assert!(close(ra[k], rb[k], if ra[3] == 1.0 { 1.0 } else { 1e-3 }), "{before:?} vs {after:?}"); }
-            }
-        }
-        // Halfway through the blend the snapshot (key A) and seq 1 key 2 (key B) are nlerped.
-        advance(&mut s, &c);
-        advance(&mut s, &c);
-        assert_eq!((s.seq_a, s.t), (SNAPSHOT_SEQ, 0.5));
-        let mid = evaluate_with_snapshot(&c, &s, Some(&f));
-        let target = evaluate(&c, &AnimState { seq_a: 1, frame_a: 2, seq_b: 1, frame_b: 2, t: 0.0, ..s });
-        assert!(mid[0][0][2] < 0.0 && mid[0][0][2] > target[0][0][2] && close(mid[0][0][0], 0.978148, 1e-3), "12 of 24 degrees: {:?} {:?}", mid[0][0], target[0][0]);
-        // A second snapshot during the blend reads the first one as key A.
-        let mut s2 = s;
-        let mut snap2 = Some(f.clone());
-        assert!(set_sequence(&mut s2, &c, 0, 0, 3, &mut snap2));
-        assert_ne!(snap2.as_ref(), Some(&f));
-    }
 }
 
 // ===================================================================================================
@@ -1484,7 +1205,7 @@ fn rec_flag_word(r: u64) -> u32 { ((r >> 62) as u32).wrapping_sub(1) }
 
 /// `fun_00210850(moby, n, lists, out)`: the pose matrix `P_j` (joint local → packed model space, no
 /// skeleton factor) of the **last** joint of each chain, where a chain is the first byte list of one of
-/// the class's joint lists (spec 3.3, `gadget::joint_list`). It marks every joint of every chain in a
+/// the class's joint lists (spec 3.3, `moby::joint_list`). It marks every joint of every chain in a
 /// 0x80-byte buffer, sets the evaluation count to (largest last joint) + 1 and runs `fun_002109b8`, which
 /// is `MobyAnimEval` (`fun_0020e0e0`, [`evaluate`]) restricted to that range and to the marked joints:
 /// * channel decode and interpolation as in `fun_0020e0e0` (quaternions only for joints below the count),
@@ -1508,7 +1229,7 @@ pub fn evaluate_chains(class: &MobyAnimClass, s: &AnimState, snap: Option<&MobyF
 
 /// [`evaluate_chains`] with the moby's +0x60 pose layers blended in after the interpolation (`MobyAnimEvalChain`
 /// 0x268ee8 walks the list like `MobyProc`), e.g. Ratchet's hand under the weapon arm.
-pub fn evaluate_chains_layered(class: &MobyAnimClass, s: &AnimState, snap: Option<&MobyFrame>, chains: &[&[u8]], layers: &[PoseLayer]) -> Vec<Rows> {
+pub(crate) fn evaluate_chains_layered(class: &MobyAnimClass, s: &AnimState, snap: Option<&MobyFrame>, chains: &[&[u8]], layers: &[PoseLayer]) -> Vec<Rows> {
     evaluate_chains_posed(class, s, snap, chains, layers, &[])
 }
 
@@ -1661,11 +1382,6 @@ pub fn evaluate_chains_posed(class: &MobyAnimClass, s: &AnimState, snap: Option<
     chains.iter().map(|c| rec[(*c.last().unwrap() as usize).min(CHAIN_RECORDS - 1)].map(|r| r.map(f32::from_bits))).collect()
 }
 
-/// [`evaluate_chains`] for one chain (`fun_0020cca8`'s `fun_00210850(moby, 1, &list, out)`).
-pub fn evaluate_chain(class: &MobyAnimClass, s: &AnimState, snap: Option<&MobyFrame>, chain: &[u8]) -> Rows {
-    evaluate_chains(class, s, snap, &[chain])[0]
-}
-
 /// `fun_002646d0` (L01; `FUN_0022a940` calls it every frame for Ratchet with the 9 lists
 /// {0, 1, 2, 3, 4, 5, 6, 29, 30} into 0x13fe10 + 0x40·i) for one list: from the host's pose matrix `p`
 /// ([`evaluate_chains`]), rotation rows `rows` (moby+0xc0, w lanes as stored), position (moby+0x10) and
@@ -1699,227 +1415,3 @@ pub fn joint_translations(class: &MobyAnimClass, s: &AnimState, snap: Option<&Mo
     evaluate_chains(class, s, snap, chains).iter().map(|r| bits4(r[3])).collect()
 }
 
-/// `MobyGetBoneMatrix(moby, n, list_ids, out)` (L01 0x264630) after [`joint_translations`], per point `p`:
-/// `k = mul.s(moby+0x2c, 1/1024)`; `p.xyz *= k` (`vmulx.xyz`, 0x221210, w kept); `p = r0·p.x + r1·p.y +
-/// r2·p.z + vf0·p.w` (0x2215e0: `vmulax / vmadday / vmaddaz / vmaddw`, all four lanes, rows as stored at
-/// moby+0xc0); `p.xyz += moby+0x10` (`vadd.xyz`, 0x221188). World points (game units), w as computed.
-pub fn bone_points(points: &[V4], rows: &[V4; 3], position: [f32; 3], scale: f32) -> Vec<V4> {
-    use ps2::{add, mul};
-    let k = mul(scale.to_bits(), 0x3a80_0000);
-    let vf0: V4 = [0, 0, 0, ONE];
-    points
-        .iter()
-        .map(|p| {
-            let p = [mul(p[0], k), mul(p[1], k), mul(p[2], k), p[3]];
-            let r = lanes(|l| add(add(add(mul(rows[0][l], p[0]), mul(rows[1][l], p[1])), mul(rows[2][l], p[2])), mul(vf0[l], p[3])));
-            [add(r[0], position[0].to_bits()), add(r[1], position[1].to_bits()), add(r[2], position[2].to_bits()), r[3]]
-        })
-        .collect()
-}
-
-/// `FUN_00271030` (L01): normalises the three **columns** of rotation rows in place, each with
-/// `0x221410`: `n = (x² + y²) + 1·z²`, `v *= rsqrt(1, n)`, or `v = 0` when n's bits are 0.
-pub fn normalise_columns(rows: &mut [V4; 3]) {
-    use ps2::{add, mul};
-    for c in 0..3 {
-        let v = [rows[0][c], rows[1][c], rows[2][c]];
-        let sq = v.map(|x| mul(x, x));
-        let n = add(add(sq[0], sq[1]), mul(ONE, sq[2]));
-        let out = if n == 0 { [0; 3] } else { let q = ps2::rsqrt(ONE, n); v.map(|x| mul(x, q)) };
-        for (row, o) in rows.iter_mut().zip(out) { row[c] = o; }
-    }
-}
-
-#[cfg(test)]
-mod chain_tests {
-    use super::*;
-
-    /// A copy of `c` whose skeleton is identity, so [`evaluate`] returns `P_j` itself (`P·I` is exact on
-    /// the PS2 float model: products with 1 and sums with ±0 do not round).
-    fn unskinned(c: &MobyAnimClass) -> MobyAnimClass { MobyAnimClass { skeleton: vec![IDENTITY; c.joint_count], ..c.clone() } }
-
-    fn class747() -> MobyAnimClass {
-        let q_id: [i16; 4] = [0, 0, 0, 0x7fff];
-        let mk = |scales: Vec<ScaleRec>, trans: Vec<TransRec>| {
-            let quats = vec![q_id, [0, -6812, 0, 32051]];
-            let mut payload: Vec<u8> = bytemuck::cast_slice(&quats).to_vec();
-            payload.extend_from_slice(bytemuck::cast_slice(&scales));
-            let to = payload.len();
-            payload.extend_from_slice(bytemuck::cast_slice(&trans));
-            while !payload.len().is_multiple_of(16) { payload.push(0); }
-            let header = MobyFrameHeader {
-                rate: 0.25, time: 0, qwc: (payload.len() / 16) as u16, quat_bytes: 16,
-                scale_count: scales.len() as u16, trans_offset: to as u16, trans_count: trans.len() as u16,
-            };
-            MobyFrame { header, quats, scales, trans, payload }
-        };
-        let f0 = mk(vec![], vec![]);
-        // Frame 1: a post-scale on j0, an inherited scale on j0 and a translation on j1.
-        let f1 = mk(
-            vec![ScaleRec { scale: [0x1000, 0x1000, 0x0cd6], joint: 0, flags: 0 }, ScaleRec { scale: [0x1200, 0x1000, 0x1000], joint: 0, flags: 0x80 }],
-            vec![TransRec { trans: [0, 0, 21048], joint: 1, pad: 0 }],
-        );
-        let seq = MobySequence { header: MobySequenceHeader { frame_count: 2, loop_sound: 0xff, ..Default::default() }, frames: vec![f0, f1], triggers: vec![] };
-        let mut s1 = IDENTITY;
-        s1[3] = [0.0, 0.0, -27067.32, 1.0];
-        MobyAnimClass {
-            joint_count: 2,
-            skeleton: vec![IDENTITY, s1],
-            rest: vec![[0.0, 0.0, 831.386], [0.0, 0.0, 21119.06]],
-            parent_word: vec![0, 0x7000_0000],
-            sequences: vec![Some(seq)],
-        }
-    }
-
-    #[test]
-    fn chain_equals_full_pose_without_skeleton_and_post_scale() {
-        let c = unskinned(&class747());
-        for (fa, fb, t) in [(1u8, 1u8, 0.0f32), (0, 1, 0.5), (1, 0, 0.25), (1, 1, 0.75)] {
-            let st = AnimState { seq_a: 0, frame_a: fa, seq_b: 0, frame_b: fb, t, ..AnimState::spawn(&c) };
-            let full = evaluate(&c, &st);
-            let p1 = evaluate_chain(&c, &st, None, &[0, 1]);
-            if fa == fb && t != 0.0 {
-                // Equal key indices: fun_002109b8 lerps plainly, fun_0020e0e0 (`consecutive`) normalises.
-                assert_ne!(p1, full[1]);
-                assert_eq!(p1[3], full[1][3], "same translation");
-                continue;
-            }
-            // j1's P does not see j0's post-scale (children never do): equal bit for bit.
-            assert_eq!(p1, full[1], "state {fa}->{fb} t {t}");
-            // j0 itself: the full evaluator applies its post-scale (z row × 0.80225), the chain does not.
-            let p0 = evaluate_chain(&c, &st, None, &[0]);
-            if fa == 1 && t == 0.0 {
-                assert_ne!(p0, full[0]);
-                assert_eq!(p0[3], full[0][3], "translation row untouched by the post-scale");
-            }
-        }
-        // Two chains in one call: marks of both, count = max last + 1.
-        let st = AnimState { seq_a: 0, frame_a: 0, seq_b: 0, frame_b: 1, t: 0.5, ..AnimState::spawn(&c) };
-        let both = evaluate_chains(&c, &st, None, &[&[0], &[0, 1]]);
-        assert_eq!(both[1], evaluate_chain(&c, &st, None, &[0, 1]));
-    }
-
-    #[test]
-    fn attach_matrix_and_normalise() {
-        // Identity pose, rotation 90° about z, scale 0.1458333 → r3 = R·p3·s/1024 + pos.
-        let mut p = IDENTITY;
-        p[3] = [1024.0, 0.0, 0.0, 1.0];
-        let rows: [V4; 3] = [[0, ONE, 0, 0], [NEG_ONE, 0, 0, 0], [0, 0, ONE, 0]];
-        let w = attach_matrix(&p, &rows, [10.0, 20.0, 30.0], 0.5);
-        assert_eq!(w[0][..3], [0.0, 1.0, 0.0]);
-        assert_eq!(w[3][..3], [10.0, 20.5, 30.0]);
-        let mut r: [V4; 3] = [[f(2.0), 0, 0, 0], [0, f(0.5), 0, 0], [0, 0, 0, 0]];
-        normalise_columns(&mut r);
-        assert_eq!(r, [[ONE, 0, 0, 0], [0, ONE, 0, 0], [0, 0, 0, 0]], "zero column stays zero");
-    }
-    fn f(x: f32) -> u32 { x.to_bits() }
-
-    /// Ratchet (class 0) on Novalis with his `ratchet_seq` sequences: the hand chain (joint list 0, ending
-    /// at joint 56) evaluated by [`evaluate_chain`] equals the full evaluator's `P_56` (skeleton replaced by
-    /// identity) bit for bit on every tick of the first 400 of sequence 0 (none of which has a post-scale on
-    /// joint 56 or equal key indices). Needs `extracted/levels/01`; skipped without it.
-    #[test]
-    fn ratchet_hand_chain_matches_full_evaluator() {
-        let Some(core) = crate::test_data::core(1) else { eprintln!("skipped: no extracted level 01"); return };
-        let blob = core.block("moby_class/0000").unwrap().to_vec();
-        let class = crate::moby::parse_moby_class(&blob).unwrap();
-        let seqs: Vec<Option<MobySequence>> = (0..256)
-            .map(|i| core.block(&format!("ratchet_seq/{i:03}")).and_then(|b| parse_sequence(b, 0).ok()))
-            .collect();
-        let ac = MobyAnimClass::new(&class, seqs);
-        let (chain, _) = crate::gadget::joint_list(&blob, &class.header, crate::gadget::HAND_JOINT_LIST).unwrap();
-        assert_eq!(*chain.last().unwrap(), 56);
-        let bare = unskinned(&ac);
-        let mut s = AnimState::spawn(&ac);
-        let mut post56 = 0;
-        for _ in 0..400 {
-            advance(&mut s, &ac);
-            let full = evaluate(&bare, &s);
-            let p = evaluate_chain(&ac, &s, None, &chain);
-            let post = |f: Option<&MobyFrame>| f.is_some_and(|f| f.scales.iter().any(|r| r.joint == 56 && !r.inherited()));
-            if post(ac.frame(s.seq_a, s.frame_a)) || post(ac.frame(s.seq_b, s.frame_b)) { post56 += 1; continue; }
-            assert_eq!(p, full[56], "state {s:?}");
-        }
-        assert_eq!(post56, 0, "joint 56 has no post-scale keys in sequence 0");
-        // The spawn state (key 0, t = 0): P_56 (the chain) and F_56 = P_56·S_56 (the palette) share the
-        // rotation rows and differ in the translation, which S moves from joint space to bind-pose space.
-        let s0 = AnimState::spawn(&ac);
-        let (f, p) = (evaluate(&ac, &s0), evaluate_chain(&ac, &s0, None, &chain));
-        assert_eq!(p, evaluate(&bare, &s0)[56]);
-        assert_ne!(p[3], f[56][3]);
-    }
-}
-
-#[cfg(test)]
-mod modifier_tests {
-    use super::*;
-
-    fn rec(q: [f32; 4], s: Option<[f32; 3]>, t: [f32; 3]) -> [V4; 4] {
-        let sw = if s.is_some() { ONE } else { 0 };
-        let s = s.unwrap_or([1.0; 3]);
-        [q.map(f32::to_bits), bits3w(s, sw), bits3w(t, 0x7000_0040), [0; 4]]
-    }
-    fn q_of(r: &[V4; 4]) -> [f32; 4] { r[0].map(f32::from_bits) }
-    fn v3(v: V4) -> [f32; 3] { [0, 1, 2].map(|k| f32::from_bits(v[k])) }
-    fn close(a: &[f32], b: &[f32]) -> bool { a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6) }
-
-    /// Mode 0 composes: `q ⊗ q_m` (the node's rotation in the joint's own frame), scale ∘ (only where the joint has
-    /// an inherited scale, unless the chain evaluator marks it), translation added; the parent word is kept.
-    #[test]
-    fn compose_mode() {
-        let h = std::f32::consts::FRAC_1_SQRT_2;
-        let rz = [0.0, 0.0, h, h]; // 90° about z
-        let rx = [h, 0.0, 0.0, h]; // 90° about x
-        let mut r = [rec(rz, None, [1.0, 2.0, 3.0])];
-        let m = JointModifier { quat: rx, scale: [0.5; 3], trans: [1.0, 0.0, -1.0], ..JointModifier::compose(0) };
-        apply_modifiers(&[m], &mut r, 1, false);
-        assert!(close(&q_of(&r[0]), &quat_product(rz, rx)));
-        assert!(close(&q_of(&r[0]), &[0.5, 0.5, 0.5, 0.5]));
-        assert_eq!(r[0][1][3], 0, "no inherited scale: still absent");
-        assert!(close(&v3(r[0][2]), &[2.0, 2.0, 2.0]));
-        assert_eq!(r[0][2][3], 0x7000_0040, "parent word kept");
-        // With an inherited scale it multiplies; the chain evaluator marks the scale present either way.
-        let mut r = [rec(rz, Some([2.0, 2.0, 2.0]), [0.0; 3]), rec(rz, None, [0.0; 3])];
-        let m1 = JointModifier { joint: 1, ..m };
-        apply_modifiers(&[m, m1], &mut r, 2, true);
-        assert!(close(&v3(r[0][1]), &[1.0; 3]) && r[0][1][3] != 0);
-        assert!(close(&v3(r[1][1]), &[0.5; 3]) && r[1][1][3] != 0);
-        // Identity node: nothing moves.
-        let mut r = [rec(rz, None, [1.0, 2.0, 3.0])];
-        let before = r;
-        apply_modifiers(&[JointModifier::compose(0)], &mut r, 1, false);
-        assert!(close(&q_of(&r[0]), &q_of(&before[0])) && r[0][2] == before[0][2]);
-    }
-
-    /// Mode 1 blends by the weight: 0 keeps the pose, 1 takes the node's, the hemisphere of the node is flipped to
-    /// the pose's; a joint at or past the limit (MobyProc's joint count) is left alone.
-    #[test]
-    fn blend_mode_and_limit() {
-        let h = std::f32::consts::FRAC_1_SQRT_2;
-        let q = [0.0, 0.0, h, h];
-        let node = |w: f32, nq: [f32; 4]| JointModifier { joint: 0, mode: 1, weight: w, quat: nq, scale: [0.5, 1.0, 1.0], trans: [10.0, 0.0, 0.0] };
-        let mut r = [rec(q, Some([1.0; 3]), [0.0; 3])];
-        apply_modifiers(&[node(0.0, [0.0, 0.0, 0.0, 1.0])], &mut r, 1, false);
-        assert!(close(&q_of(&r[0]), &q));
-        let mut r = [rec(q, Some([1.0; 3]), [0.0; 3])];
-        apply_modifiers(&[node(1.0, [0.0, 0.0, 0.0, -1.0])], &mut r, 1, false);
-        assert!(close(&q_of(&r[0]), &[0.0, 0.0, 0.0, -1.0]));
-        let mut r = [rec(q, Some([1.0; 3]), [0.0; 3])];
-        apply_modifiers(&[node(0.5, [0.0, 0.0, 0.0, -1.0])], &mut r, 1, false);
-        // a = q/2, b = −id/2, a·b < 0 → a − b: the short way from q to the identity.
-        let e = [0.0, 0.0, h, h + 1.0];
-        let n = (e[2] * e[2] + e[3] * e[3]).sqrt();
-        assert!(close(&q_of(&r[0]), &e.map(|x| x / n)));
-        assert!(close(&v3(r[0][1]), &[0.75, 1.0, 1.0]) && close(&v3(r[0][2]), &[5.0, 0.0, 0.0]));
-        let mut r = [rec(q, None, [0.0; 3])];
-        let before = r;
-        apply_modifiers(&[node(1.0, [0.0, 0.0, 0.0, 1.0])], &mut r, 0, false);
-        assert_eq!(r, before);
-    }
-
-    #[test]
-    fn list_target_is_the_second_lists_first_joint() {
-        assert_eq!(list_target(&[18, 19]), Some(18));
-        assert_eq!(list_target(&[]), None);
-    }
-}

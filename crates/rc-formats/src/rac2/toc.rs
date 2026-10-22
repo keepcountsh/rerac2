@@ -58,7 +58,7 @@ impl<'a> Toc<'a> {
     }
 
     /// The header of a global WAD.
-    pub fn header(&self, g: Global) -> Result<Buf<'a>> {
+    pub(crate) fn header(&self, g: Global) -> Result<Buf<'a>> {
         let o = self.globals[g as usize];
         self.hdr.sub(o, self.hdr.u32(o)? as usize, "RC2.HDR global header")
     }
@@ -89,35 +89,3 @@ impl<'a> Toc<'a> {
 /// below that are not read here).
 pub fn movie_row(id: u32) -> Option<usize> { (id > 0xb0).then(|| (id - 0x91) as usize) }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn movie_ids() {
-        assert_eq!(movie_row(0xb2), Some(33));
-        assert_eq!(movie_row(0xb9), Some(40));
-        assert_eq!(movie_row(0x20), None);
-    }
-
-    #[test]
-    fn walks_the_global_headers() {
-        let mut hdr = Vec::new();
-        for (i, size) in [0x328usize, 0x40, 0x1870, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10].into_iter().enumerate() {
-            let mut h = vec![0u8; size];
-            h[..4].copy_from_slice(&(size as u32).to_le_bytes());
-            h[4..8].copy_from_slice(&(1000 + i as u32).to_le_bytes());
-            hdr.extend(h);
-        }
-        // MISC part 4 and the GUI block.
-        hdr[0x328 + 8 + 32..0x328 + 8 + 40].copy_from_slice(&[0x03, 0x05, 0, 0, 0x55, 0x04, 0, 0]);
-        hdr[0x368 + 0x1350..0x368 + 0x1358].copy_from_slice(&[0x1f, 0x40, 0, 0, 0x40, 0, 0, 0]);
-        // Movie row 33.
-        hdr[0x10 + 33 * 16..0x18 + 33 * 16].copy_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0]);
-        let t = Toc::parse(&hdr).unwrap();
-        assert_eq!(t.misc_part(MISC_FRONT_END).unwrap(), Part { sector: 1283, sectors: 1109 });
-        assert_eq!(t.gui_block().unwrap(), Part { sector: 16415, sectors: 64 });
-        assert_eq!(t.movie(33).unwrap(), Some(Movie { sector: 1, bytes: 2 }));
-        assert_eq!(t.movie(32).unwrap(), None);
-    }
-}

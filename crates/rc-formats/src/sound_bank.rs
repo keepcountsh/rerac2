@@ -1,7 +1,7 @@
 //! Sound data: the 989snd bank file (`sound_bank` lump), the game's `SoundDef` records and the core-index
 //! bank-id remap, the level header's music table, and the gameplay sections the sound code reads (sound
 //! instances, env sample points). Spec: docs/plan/audio.md §2 (bank, defs, remap), §3.3 (sound instances),
-//! §4 (music). Snapshot-tested in `tests/formats/golden.rs` (sound test).
+//! §4 (music).
 //!
 //! Bank file: `u32 type = 3, u32 nchunks = 2, {u32 off, u32 size}[2]`. Chunk 0 is an `SBlk` SFX block
 //! (version 1: 12-byte sound records, 0x28-byte grains), chunk 1 the raw SPU ADPCM the tones point into.
@@ -15,23 +15,23 @@ use bytemuck::{Pod, Zeroable};
 /// always locate the sounds through `first_sound`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SfxHeader {
-    pub version: u32,
+    pub(crate) version: u32,
     /// 0x100 names, 0x200 user data (neither is set on the disc).
-    pub flags: u32,
+    pub(crate) flags: u32,
     /// Four characters ("DAW\0" on Novalis) or 0.
-    pub bank_id: u32,
-    pub bank_num: i8,
-    pub n_sounds: i16,
-    pub n_grains: i16,
-    pub n_vags: i16,
+    pub(crate) bank_id: u32,
+    pub(crate) bank_num: i8,
+    pub(crate) n_sounds: i16,
+    pub(crate) n_grains: i16,
+    pub(crate) n_vags: i16,
     /// Block-relative byte offset of the sound records.
-    pub first_sound: u32,
+    pub(crate) first_sound: u32,
     /// Block-relative byte offset of the grain records.
-    pub first_grain: u32,
-    pub vags_in_sr: u32,
-    pub vag_data_size: u32,
-    pub sram_alloc_size: u32,
-    pub next_block: u32,
+    pub(crate) first_grain: u32,
+    pub(crate) vags_in_sr: u32,
+    pub(crate) vag_data_size: u32,
+    pub(crate) sram_alloc_size: u32,
+    pub(crate) next_block: u32,
 }
 
 /// One sound (12 bytes at `first_sound + 12·i`).
@@ -42,17 +42,13 @@ pub struct Sound {
     /// 989snd volume group (0 or 4 on the levels).
     pub vol_group: i8,
     pub pan: i16,
-    pub instance_limit: i8,
+    pub(crate) instance_limit: i8,
     /// Bit 0 = looped sound; 2 solo, 8/0x10/0x20 instance limit modes (989snd `SFXFlags`).
-    pub flags: u16,
+    pub(crate) flags: u16,
     /// Byte offset of the first grain, relative to `first_grain`.
-    pub first_grain: u32,
+    pub(crate) first_grain: u32,
     /// Index range into [`Bank::grains`].
     pub grains: std::ops::Range<usize>,
-}
-
-impl Sound {
-    pub fn looped(&self) -> bool { self.flags & 1 != 0 }
 }
 
 /// 989snd grain types (OpenGOAL `GrainType`; RAC1 uses 1, 4 and 20..43).
@@ -99,7 +95,7 @@ pub mod grain {
 pub struct Grain {
     pub kind: u32,
     pub delay: i32,
-    pub data: [u8; 32],
+    pub(crate) data: [u8; 32],
 }
 
 /// Tone parameters (grain types 1 and 9).
@@ -114,8 +110,8 @@ pub struct Tone {
     pub center_fine: i8,
     /// Degrees; negative values select registers like `vol`.
     pub pan: i16,
-    pub map_low: i8,
-    pub map_high: i8,
+    pub(crate) map_low: i8,
+    pub(crate) map_high: i8,
     /// Pitch-bend range in semitones (down, up).
     pub pb_low: i8,
     pub pb_high: i8,
@@ -125,7 +121,7 @@ pub struct Tone {
     pub flags: u16,
     /// Byte offset into the sample chunk.
     pub sample_offset: u32,
-    pub reserved: u32,
+    pub(crate) reserved: u32,
 }
 
 /// LFO settings (grain type 4).
@@ -133,7 +129,7 @@ pub struct Tone {
 pub struct LfoParams {
     pub which_lfo: u8,
     pub target: u8,
-    pub target_extra: u8,
+    pub(crate) target_extra: u8,
     pub shape: u8,
     pub duty_cycle: u16,
     pub depth: u16,
@@ -142,20 +138,11 @@ pub struct LfoParams {
     pub step_size: u32,
 }
 
-/// Child-sound / branch parameters (grain types 5, 6, 8).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PlaySoundParams {
-    pub vol: i32,
-    pub pan: i32,
-    pub reg_settings: [i8; 4],
-    pub sound_id: i32,
-}
-
 impl Grain {
     fn u16(&self, o: usize) -> u16 { u16::from_le_bytes([self.data[o], self.data[o + 1]]) }
     fn u32(&self, o: usize) -> u32 { u32::from_le_bytes(self.data[o..o + 4].try_into().unwrap()) }
 
-    pub fn is_tone(&self) -> bool { self.kind == grain::TONE || self.kind == grain::TONE2 }
+    pub(crate) fn is_tone(&self) -> bool { self.kind == grain::TONE || self.kind == grain::TONE2 }
 
     /// The tone parameters (meaningful for types 1/9 only).
     pub fn tone(&self) -> Tone {
@@ -199,14 +186,6 @@ impl Grain {
         }
     }
 
-    pub fn play_sound(&self) -> PlaySoundParams {
-        PlaySoundParams {
-            vol: self.u32(0) as i32,
-            pan: self.u32(4) as i32,
-            reg_settings: [self.data[8] as i8, self.data[9] as i8, self.data[10] as i8, self.data[11] as i8],
-            sound_id: self.u32(12) as i32,
-        }
-    }
 }
 
 /// A parsed bank file.
@@ -259,8 +238,6 @@ impl Bank {
         base
     }
 
-    /// The index into [`Bank::vags`] of the sample at `offset`.
-    pub fn vag_at(&self, offset: u32) -> Option<usize> { self.vags.binary_search_by_key(&(offset as usize), |v| v.offset).ok() }
     pub fn sound_grains(&self, sound: usize) -> &[Grain] { &self.grains[self.sounds[sound].grains.clone()] }
 }
 
@@ -356,7 +333,7 @@ pub struct LevelSounds {
     /// Level defs (the heap copy at 0x15f5f4, count 0x15f5f0) with `index` = bank sound id.
     pub level_defs: Vec<SoundDef>,
     /// The remap's map: bank sound id per def index.
-    pub map: Vec<u16>,
+    pub(crate) map: Vec<u16>,
     /// Per moby class, in core-index class order.
     pub classes: Vec<ClassSounds>,
 }
@@ -374,16 +351,11 @@ pub struct ClassSounds {
     pub header_count: Option<u8>,
 }
 
-/// Parses the remap block at core header +0x70 (index-relative `s16 defs_off, defs_count, map_off,
-/// map_count`, then one `{s16 off, s16 count}` per moby class) and applies it as the loader does.
-/// `core_data` is the decompressed core data (class blobs).
-pub fn parse_level_sounds(core_index: &[u8], core: &LevelCore, core_data: &[u8]) -> Result<LevelSounds> { parse_level_sounds_for(crate::Game::Rac1, core_index, core, core_data) }
-
-/// [`parse_level_sounds`] for `game`. Going Commando's per-class lists (`0x304660`) open with one more word, which
-/// the loader writes + 1 into each def's bank handle: def `j` takes the list's entry `j + 1`, the header count is the
+/// Reads a level's sound remap tables. The per-class lists (`0x304660`) open with one more word than R&C1's, which the
+/// loader writes + 1 into each def's bank handle: def `j` takes the list's entry `j + 1`, the header count is the
 /// list's count less one.
-pub fn parse_level_sounds_for(game: crate::Game, core_index: &[u8], core: &LevelCore, core_data: &[u8]) -> Result<LevelSounds> {
-    let skip = usize::from(game == crate::Game::Rac2);
+pub fn parse_level_sounds(core_index: &[u8], core: &LevelCore, core_data: &[u8]) -> Result<LevelSounds> {
+    let skip = 1;
     let idx = Buf(core_index);
     let base = core.header.sound_remap_offset;
     if base <= 0 { return Ok(LevelSounds::default()); }
@@ -425,31 +397,6 @@ pub fn parse_level_sounds_for(game: crate::Game, core_index: &[u8], core: &Level
     Ok(LevelSounds { level_defs, map, classes })
 }
 
-/// The hand items' class sound defs: a gadget class (the wrench, the Swingshot, every weapon: the core's gadget table,
-/// `crate::gadget`) has no blob in the level's class table, so [`parse_level_sounds`] leaves its defs empty and the
-/// loader parks the first `min(count, 15)` ids of its remap list at 0x1b02e0 (`LoadLevelCoreData` 0x258128; the rest
-/// −1). When the gadget is loaded (`select_world_object_resource_tables` 0x259788) its blob's defs (header +0x0d
-/// count, +0x28 pointer) take them: def j's `index` = parked id j when that is not negative (s16), else the blob's
-/// own. `gadgets` = `(o_class, decompressed blob)` of every gadget class; classes that have a level blob are left
-/// alone.
-pub fn apply_gadget_defs(sounds: &mut LevelSounds, gadgets: &[(i32, &[u8])]) -> Result<()> {
-    for &(o, blob) in gadgets {
-        let Some(c) = sounds.classes.iter_mut().find(|c| c.o_class == o && c.header_count.is_none()) else { continue };
-        let b = Buf(blob);
-        let n = b.u8(0x0d)?;
-        let ptr = b.i32(0x28)?;
-        let mut defs: Vec<SoundDef> = if n > 0 && ptr > 0 { b.pod_slice(ptr as usize, n as usize, "gadget sound defs")? } else { Vec::new() };
-        let parked = c.bank_ids.len().min(15);
-        for (j, d) in defs.iter_mut().enumerate().take(parked) {
-            let id = c.bank_ids[j];
-            if (id as i16) >= 0 { d.index = id; }
-        }
-        c.defs = defs;
-        c.header_count = Some(n);
-    }
-    Ok(())
-}
-
 /// Who owns a sound id request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SoundOwner {
@@ -460,15 +407,6 @@ pub enum SoundOwner {
 }
 
 impl LevelSounds {
-    /// `resolve_sound(owner, local) -> bank id`: level def `local`'s bank sound, or the class's `local`-th
-    /// class sound. `None` for an out-of-range index or an unmapped (0xffff) id.
-    pub fn resolve_sound(&self, owner: SoundOwner, local: usize) -> Option<u16> {
-        let id = match owner {
-            SoundOwner::Level => self.level_defs.get(local)?.index,
-            SoundOwner::Class(o) => *self.classes.iter().find(|c| c.o_class == o)?.bank_ids.get(local)?,
-        };
-        (id != 0xffff).then_some(id)
-    }
 
     /// The def a play of `(owner, local)` uses (level def, or the class blob's def).
     pub fn def(&self, owner: SoundOwner, local: usize) -> Option<&SoundDef> {
@@ -482,18 +420,8 @@ impl LevelSounds {
 // ---------------------------------------------------------------------------------------------------
 // Music table (level header `music[15]`, in memory at 0x13a628): track k = `levels/NN/music/k`.
 
-/// The level header's music sectors (0 = no track). Tracks come in `(Start, Loop)` pairs.
-pub fn music_table(level_header: &[u8]) -> Result<[i32; 15]> {
-    Ok(crate::toc::parse_level_header(level_header)?.music)
-}
-
 // ---------------------------------------------------------------------------------------------------
 // Gameplay sections read by the sound code.
-
-/// Gameplay header pointer of the sound instances.
-pub const SOUND_INSTANCES_POINTER: usize = 0x0c;
-/// Gameplay header pointer of the env sample points.
-pub const ENV_SAMPLE_POINTS_POINTER: usize = 0x88;
 
 /// A sound instance (0x90 bytes; docs/formats/wad_layouts_rac1.md §3.13). The runtime copy keeps the
 /// same offsets: `+0x40` = matrix row 3 = the position, `+0x50` = the inverse rows the boxes test with.
@@ -501,13 +429,13 @@ pub const ENV_SAMPLE_POINTS_POINTER: usize = 0x88;
 pub struct SoundInstance {
     /// Class: 0 sphere, 1 box volume, 2 box one-shot, 3 reverb box, 5 underwater loop, 6 music box.
     pub o_class: i16,
-    pub m_class: i16,
+    pub(crate) m_class: i16,
     pub pvar_index: i32,
     pub range: f32,
     pub matrix: [[f32; 4]; 4],
     /// Three rows; `[3][3]` of the forward matrix is 0.01 on the disc (collision_rac1.md).
     pub inverse: [[f32; 4]; 3],
-    pub rotation: [f32; 3],
+    pub(crate) rotation: [f32; 3],
 }
 
 impl SoundInstance {
@@ -518,13 +446,6 @@ impl SoundInstance {
         let r = &self.inverse;
         std::array::from_fn(|k| v[0] * r[0][k] + v[1] * r[1][k] + v[2] * r[2][k])
     }
-}
-
-/// Reads section 0x0c: `s32 count, pad[3]`, then `count` 0x90-byte records.
-pub fn parse_sound_instances(gameplay: &[u8]) -> Result<Vec<SoundInstance>> {
-    let p = Buf(gameplay).u32(SOUND_INSTANCES_POINTER)? as usize;
-    if p == 0 { return Ok(Vec::new()); }
-    parse_sound_instances_at(gameplay, p)
 }
 
 /// The sound instance records at `p` in `gameplay` (`s32 count, pad[3]`, then the records): R&C1's section 0x0c,
@@ -552,17 +473,6 @@ pub fn parse_sound_instances_at(gameplay: &[u8], p: usize) -> Result<Vec<SoundIn
         .collect())
 }
 
-/// A pvar block by index straight from the pvar table (0x54) and data (0x58): sound instances and cameras
-/// share the table with the mobys, so this does not depend on the moby pass.
-pub fn pvar_block(gameplay: &[u8], index: i32) -> Result<Option<Vec<u8>>> {
-    let g = Buf(gameplay);
-    let (table, data) = (g.u32(crate::gameplay::PVAR_TABLE_POINTER)? as usize, g.u32(crate::gameplay::PVAR_DATA_POINTER)? as usize);
-    if index < 0 || table == 0 || data == 0 { return Ok(None); }
-    let (ofs, size) = (g.i32(table + 8 * index as usize)?, g.i32(table + 8 * index as usize + 4)?);
-    if ofs < 0 || size < 0 { return invalid(format!("pvar {index}: negative table entry")); }
-    Ok(Some(g.sub(data + ofs as usize, size as usize, "pvar block")?.bytes().to_vec()))
-}
-
 /// Env sample point (0x30 bytes, section 0x88): the fields the sound code reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct EnvSamplePoint {
@@ -578,117 +488,3 @@ pub struct EnvSamplePoint {
     pub music_track: i32,
 }
 
-pub fn parse_env_sample_points(gameplay: &[u8]) -> Result<Vec<EnvSamplePoint>> {
-    let g = Buf(gameplay);
-    let p = g.u32(ENV_SAMPLE_POINTS_POINTER)? as usize;
-    if p == 0 { return Ok(Vec::new()); }
-    let n = g.i32(p)?;
-    if n < 0 { return invalid("negative env sample point count"); }
-    (0..n as usize)
-        .map(|i| {
-            let o = p + 0x10 + 0x30 * i;
-            Ok(EnvSamplePoint {
-                position: [g.f32(o)?, g.f32(o + 4)?, g.f32(o + 8)?],
-                reverb_depth: g.i32(o + 0x20)?,
-                reverb_type: g.u8(o + 0x24)?,
-                reverb_delay: g.u8(o + 0x25)?,
-                reverb_feedback: g.u8(o + 0x26)?,
-                reverb_enable: g.u8(o + 0x27)?,
-                music_track: g.i32(o + 0x28)?,
-            })
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A two-sound bank: sound 0 = one tone (looped sample), sound 1 = marker, rand delay, tone (one-shot).
-    fn synthetic_bank() -> Vec<u8> {
-        let mut samples = Vec::new();
-        for flags in [6u8, 2, 3, 0, 1, 7] {
-            let mut f = [0u8; 16];
-            f[1] = flags;
-            samples.extend(f);
-        }
-        let mut block = vec![0u8; 0x3c];
-        block[..4].copy_from_slice(b"SBlk");
-        block[4..8].copy_from_slice(&1u32.to_le_bytes());
-        block[0x16..0x18].copy_from_slice(&2i16.to_le_bytes());
-        block[0x18..0x1a].copy_from_slice(&4i16.to_le_bytes());
-        block[0x1a..0x1c].copy_from_slice(&2i16.to_le_bytes());
-        block[0x1c..0x20].copy_from_slice(&0x3cu32.to_le_bytes());
-        block[0x20..0x24].copy_from_slice(&0x54u32.to_le_bytes());
-        // Sounds at 0x3c: {vol, group, pan, n, limit, flags, first}.
-        block.extend([127u8, 0, 0, 0, 1, 0, 1, 0]);
-        block.extend(0u32.to_le_bytes());
-        block.extend([90u8, 4, 0, 0, 3, 0, 0, 0]);
-        block.extend(0x28u32.to_le_bytes());
-        assert_eq!(block.len(), 0x54);
-        let tone = |off: u32, note: i8| {
-            let mut g = vec![0u8; 0x28];
-            g[..4].copy_from_slice(&1u32.to_le_bytes());
-            g[8] = 90;
-            g[9] = 127;
-            g[10] = note as u8;
-            g[18..20].copy_from_slice(&0x80ffu16.to_le_bytes());
-            g[20..22].copy_from_slice(&0x9fc0u16.to_le_bytes());
-            g[24..28].copy_from_slice(&off.to_le_bytes());
-            g
-        };
-        block.extend(tone(0, -60));
-        let mut marker = vec![0u8; 0x28];
-        marker[..4].copy_from_slice(&35u32.to_le_bytes());
-        block.extend(marker);
-        let mut rd = vec![0u8; 0x28];
-        rd[..4].copy_from_slice(&26u32.to_le_bytes());
-        rd[4..8].copy_from_slice(&1800i32.to_le_bytes());
-        rd[8..12].copy_from_slice(&2400i32.to_le_bytes());
-        block.extend(rd);
-        block.extend(tone(0x30, 72));
-        let mut file = Vec::new();
-        for w in [3u32, 2, 0x18, block.len() as u32, 0x18 + block.len() as u32, samples.len() as u32] { file.extend(w.to_le_bytes()); }
-        file.extend(block);
-        file.extend(samples);
-        file
-    }
-
-    #[test]
-    fn parses_a_synthetic_bank() {
-        let b = parse_bank(&synthetic_bank()).unwrap();
-        assert_eq!(b.header.n_sounds, 2);
-        assert_eq!(b.sounds.len(), 2);
-        assert!(b.sounds[0].looped());
-        assert_eq!((b.sounds[1].vol, b.sounds[1].vol_group), (90, 4));
-        assert_eq!(b.grains.len(), 4);
-        assert_eq!(b.sound_grains(1).iter().map(|g| g.kind).collect::<Vec<_>>(), vec![35, 26, 1]);
-        assert_eq!(b.sound_grains(1)[1].rand_delay_amount(), 2400);
-        assert_eq!(b.sound_grains(1)[1].delay, 1800);
-        let t = b.sound_grains(1)[2].tone();
-        assert_eq!((t.priority, t.vol, t.center_note, t.adsr1, t.adsr2, t.sample_offset), (90, 127, 72, 0x80ff, 0x9fc0, 0x30));
-        assert_eq!(b.vags.len(), 2);
-        assert!(b.vags[0].looped && !b.vags[1].looped);
-        assert_eq!(b.vags[1].next_flags, Some(7));
-        assert_eq!(b.vag_at(0x30), Some(1));
-        let mut bad = synthetic_bank();
-        bad[0] = 4;
-        assert!(parse_bank(&bad).is_err());
-    }
-
-    #[test]
-    fn resolve_sound_by_owner() {
-        let def = |index| SoundDef { index, ..Default::default() };
-        let s = LevelSounds {
-            level_defs: vec![def(0), def(21), def(0xffff)],
-            map: vec![0, 21],
-            classes: vec![ClassSounds { o_class: 688, bank_ids: vec![220], defs: vec![def(220)], header_count: Some(1) }],
-        };
-        assert_eq!(s.resolve_sound(SoundOwner::Level, 1), Some(21));
-        assert_eq!(s.resolve_sound(SoundOwner::Level, 2), None);
-        assert_eq!(s.resolve_sound(SoundOwner::Level, 3), None);
-        assert_eq!(s.resolve_sound(SoundOwner::Class(688), 0), Some(220));
-        assert_eq!(s.resolve_sound(SoundOwner::Class(1), 0), None);
-        assert_eq!(s.def(SoundOwner::Class(688), 0).map(|d| d.index), Some(220));
-    }
-}

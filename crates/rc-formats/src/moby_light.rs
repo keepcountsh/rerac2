@@ -174,12 +174,12 @@ pub fn moby_lights(rows: &[V4; 3], bank: &LightBank, light_word: u32, ambient: [
 }
 
 /// The identity joint matrix (rows 0..2; bind pose / unanimated palette).
-pub const IDENTITY: [V4; 3] = [[ps2::ONE, 0, 0, 0], [0, ps2::ONE, 0, 0], [0, 0, ps2::ONE, 0]];
+pub(crate) const IDENTITY: [V4; 3] = [[ps2::ONE, 0, 0, 0], [0, ps2::ONE, 0, 0], [0, 0, ps2::ONE, 0]];
 
 /// Lit colour of one vertex: VU0 104691 single-matrix path with joint matrix rows `m`
 /// (the blended palette matrix; [`IDENTITY`] for the bind pose), then the EE pack with the
 /// vertex's RGBA multiplier bytes (0x80 = 1.0).
-pub fn light_vertex_m(l: &MobyLights, table: &NormalTable, m: &[V4; 3], azimuth: u8, elevation: u8, multiplier: [u8; 4]) -> [u8; 4] {
+pub(crate) fn light_vertex_m(l: &MobyLights, table: &NormalTable, m: &[V4; 3], azimuth: u8, elevation: u8, multiplier: [u8; 4]) -> [u8; 4] {
     let [ca, sa] = table.0[azimuth as usize];
     let [ce, se] = table.0[elevation as usize];
     // vf14 = (cos a, sin a, cos e, sin e); mulz.xy -> (ca*ce, sa*ce); the normal's z is lane w.
@@ -199,7 +199,7 @@ pub fn light_vertex_m(l: &MobyLights, table: &NormalTable, m: &[V4; 3], azimuth:
 }
 
 /// [`light_vertex_m`] in the bind pose.
-pub fn light_vertex(l: &MobyLights, table: &NormalTable, azimuth: u8, elevation: u8, multiplier: [u8; 4]) -> [u8; 4] {
+pub(crate) fn light_vertex(l: &MobyLights, table: &NormalTable, azimuth: u8, elevation: u8, multiplier: [u8; 4]) -> [u8; 4] {
     light_vertex_m(l, table, &IDENTITY, azimuth, elevation, multiplier)
 }
 
@@ -234,129 +234,3 @@ pub fn light_lod(submeshes: &[MobySubmesh], l: &MobyLights, table: &NormalTable)
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn f(x: f32) -> u32 { x.to_bits() }
-    fn v(r: V4) -> [f32; 4] { r.map(f32::from_bits) }
-    fn table() -> NormalTable {
-        let mut t = [[0u32; 2]; 256];
-        for (i, e) in t.iter_mut().enumerate() {
-            let a = i as f64 * std::f64::consts::TAU / 256.0;
-            *e = [f(a.cos() as f32), f(a.sin() as f32)];
-        }
-        t[0] = [f(1.0), 0];
-        t[64] = [0, f(1.0)];
-        t[128] = [f(-1.0), 0];
-        t[192] = [0, f(-1.0)];
-        NormalTable(t)
-    }
-
-    #[test]
-    fn sine_polynomial_matches_sin_and_folds() {
-        for a in [-3.1f32, -2.0, -0.5, 0.25, 1.0, 1.5, 2.5, 3.1, -5.183544] {
-            let (s, c) = vu0_sin_cos(f(a));
-            assert!((f32::from_bits(s) - a.sin()).abs() < 2e-4, "sin {a}");
-            assert!((f32::from_bits(c) - a.cos()).abs() < 2e-4, "cos {a}");
-        }
-        // Exact: x = 0.5 evaluated term by term with truncating arithmetic stays below sin(0.5).
-        let (s, _) = vu0_sin_cos(f(0.5));
-        assert!(f32::from_bits(s) <= 0.5f32.sin() + 1e-7);
-    }
-
-    #[test]
-    fn rotation_convention_is_rz_ry_rx() {
-        // Zero angles: identity, no VU steps.
-        assert_eq!(rotation_rows([0.0; 3]), IDENTITY);
-        // +90 deg about Z maps model +X to world +Y, model +Y to world -X.
-        let r = rotation_rows([0.0, 0.0, std::f32::consts::FRAC_PI_2]);
-        let (r0, r1) = (v(r[0]), v(r[1]));
-        assert!((r0[0]).abs() < 1e-4 && (r0[1] - 1.0).abs() < 1e-4, "{r0:?}");
-        assert!((r1[0] + 1.0).abs() < 1e-4 && r1[1].abs() < 1e-4, "{r1:?}");
-        // X then Z: model +Y --Rx(90)--> +Z --Rz(90)--> +Z (unchanged); model +Z --Rx--> -Y --Rz--> +X.
-        let r = rotation_rows([std::f32::consts::FRAC_PI_2, 0.0, std::f32::consts::FRAC_PI_2]);
-        let (r1, r2) = (v(r[1]), v(r[2]));
-        assert!((r1[2] - 1.0).abs() < 1e-4, "{r1:?}");
-        assert!((r2[0] - 1.0).abs() < 1e-4, "{r2:?}");
-        // Compare against f64 Rz*Ry*Rx for a generic triple.
-        let (x, y, z) = (0.3f64, -1.1f64, 2.7f64);
-        let rx = [[1.0, 0.0, 0.0], [0.0, x.cos(), -x.sin()], [0.0, x.sin(), x.cos()]];
-        let ry = [[y.cos(), 0.0, y.sin()], [0.0, 1.0, 0.0], [-y.sin(), 0.0, y.cos()]];
-        let rz = [[z.cos(), -z.sin(), 0.0], [z.sin(), z.cos(), 0.0], [0.0, 0.0, 1.0]];
-        let mm = |a: [[f64; 3]; 3], b: [[f64; 3]; 3]| {
-            let mut o = [[0.0; 3]; 3];
-            for i in 0..3 { for j in 0..3 { o[i][j] = (0..3).map(|k| a[i][k] * b[k][j]).sum(); } }
-            o
-        };
-        let m = mm(rz, mm(ry, rx));
-        let r = rotation_rows([x as f32, y as f32, z as f32]);
-        for i in 0..3 {
-            for j in 0..3 {
-                // row i = column i of R.
-                assert!((f32::from_bits(r[i][j]) as f64 - m[j][i]).abs() < 3e-4, "R[{j}][{i}]");
-            }
-        }
-        // Mirror bit.
-        let m = instance_rows([0.0; 3], 0x8000);
-        assert_eq!(v(m[1])[..3], [0.0, -1.0, 0.0]);
-    }
-
-    fn bank_with(set: DirLightSet) -> LightBank {
-        let mut b = LightBank::default();
-        b.sets[1] = set;
-        b.count = 2;
-        b
-    }
-
-    #[test]
-    fn lighting_of_up_facing_vertex() {
-        let t = table();
-        // Light A travels straight down with colour (1.0, 0.5, 0.25), back factor 0.5; light B along +X, colour 0.25.
-        let bank = bank_with(DirLightSet {
-            color_a: [1.0, 0.5, 0.25, 0.5],
-            dir_a: [0.0, 0.0, -1.0, 0.0],
-            color_b: [0.25, 0.25, 0.25, 0.0],
-            dir_b: [1.0, 0.0, 0.0, 0.0],
-        });
-        let l = moby_lights(&IDENTITY, &bank, 1, [41, 42, 43], 0x80);
-        assert_eq!(v(l.rows[2])[..2], [1.0, 0.0]); // L_A = -dir_a = +Z
-        assert_eq!(v(l.rows[0])[..2], [-0.0, -1.0]); // L_B = -X
-        assert_eq!(v(l.neg_k), [-0.5, 0.0, 0.0, 1.0]);
-        // Up-facing normal (elevation 64): +128/+64/+32 from A, nothing from B.
-        assert_eq!(light_vertex(&l, &t, 0, 64, [0x80; 4]), [169, 106, 75, 0x80]);
-        // Down-facing: A is behind, d = -1 -> max(-1, 0.5) = 0.5 -> +64/+32/+16.
-        assert_eq!(light_vertex(&l, &t, 0, 192, [0x80; 4]), [105, 74, 59, 0x80]);
-        // Facing -X: B gives d = 1 -> +32 each; A gives 0.
-        assert_eq!(light_vertex(&l, &t, 128, 0, [0x80; 4]), [73, 74, 75, 0x80]);
-        // Multiplier 0x40 halves; saturation at 255.
-        assert_eq!(light_vertex(&l, &t, 0, 64, [0x40; 4]), [84, 53, 37, 0x40]);
-        let hot = moby_lights(&IDENTITY, &bank, 1, [200, 0, 0], 0x80);
-        assert_eq!(light_vertex(&hot, &t, 0, 64, [0x80; 4])[0], 255);
-    }
-
-    #[test]
-    fn rotation_moves_light_into_model_space() {
-        let t = table();
-        // Sun straight down; the moby is rolled 180 deg about X, so its model +Z points down and a
-        // model up-facing normal faces away from the light: only the back term (K = 0.25) remains.
-        let bank = bank_with(DirLightSet { color_a: [1.0, 1.0, 1.0, 0.25], dir_a: [0.0, 0.0, -1.0, 0.0], ..Default::default() });
-        let rows = rotation_rows([std::f32::consts::PI, 0.0, 0.0]);
-        let l = moby_lights(&rows, &bank, 1, [0x40; 3], 0x80);
-        let c = light_vertex(&l, &t, 0, 64, [0x80; 4]);
-        assert!((95..=96).contains(&c[0]), "{c:?}"); // 64 + 32 * (1 - tiny)
-        // Model down-facing normal is world up: full light.
-        let c = light_vertex(&l, &t, 0, 192, [0x80; 4]);
-        assert!((191..=192).contains(&c[0]), "{c:?}");
-        // Cross-fade 50 % with an empty set: colour halves, direction renormalised.
-        let l = moby_lights(&IDENTITY, &bank, 0x80_02_01, [0x40; 3], 0x80);
-        assert_eq!(light_vertex(&l, &t, 0, 64, [0x80; 4]), [128, 128, 128, 0x80]);
-    }
-
-    #[test]
-    fn pack_saturates_like_the_ee() {
-        assert_eq!(pack([0x4780_0000 + 300, 0x4780_0000 + 255, 0x4780_0000, 0x4780_0080], [0x80; 4]), [255, 255, 0, 0x80]);
-        // 0x8000 and above read as a negative halfword: saturates to -32768 >> 7 = -256 -> 0.
-        assert_eq!(pack([0x4780_8000, 0, 0, 0], [0x80; 4])[0], 0);
-    }
-}

@@ -13,30 +13,28 @@
 use crate::buf::{invalid, Buf, Result};
 use crate::texture::Texture;
 
-pub const MAGIC: &[u8; 4] = b"2FIP";
+pub(crate) const MAGIC: &[u8; 4] = b"2FIP";
 /// PSMT8 with a CT32 palette.
-pub const FORMAT_PSMT8: u32 = 0x13;
-pub const PALETTE_OFFSET: usize = 0x20;
-pub const PIXELS_OFFSET: usize = 0x420;
+pub(crate) const FORMAT_PSMT8: u32 = 0x13;
+pub(crate) const PALETTE_OFFSET: usize = 0x20;
+pub(crate) const PIXELS_OFFSET: usize = 0x420;
 
 /// One PIF image (borrowed from its file).
 #[derive(Clone, Copy, Debug)]
 pub struct Pif<'a> {
-    pub width: u32,
-    pub height: u32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     pub format: u32,
     /// 0x400 bytes, CSM1 order.
-    pub palette: &'a [u8],
+    pub(crate) palette: &'a [u8],
     /// `width · height` indices.
-    pub pixels: &'a [u8],
+    pub(crate) pixels: &'a [u8],
 }
 
 impl<'a> Pif<'a> {
-    /// The PIF at the start of `b` (a decompressed lump).
-    pub fn parse(b: &'a [u8]) -> Result<Pif<'a>> { Pif::parse_at(b, 0) }
 
     /// The PIF at byte `at` of `b`.
-    pub fn parse_at(b: &'a [u8], at: usize) -> Result<Pif<'a>> {
+    pub(crate) fn parse_at(b: &'a [u8], at: usize) -> Result<Pif<'a>> {
         let g = Buf(b);
         if g.sub(at, 4, "PIF magic")?.bytes() != MAGIC { return invalid(format!("no PIF at {at:#x}")); }
         let (width, height, format) = (g.u32(at + 8)?, g.u32(at + 0xc)?, g.u32(at + 0x10)?);
@@ -49,32 +47,7 @@ impl<'a> Pif<'a> {
         Ok(Pif { width, height, format, palette, pixels })
     }
 
-    /// RGBA with the GS alpha kept raw (0..0x80), as the HUD atlas samples it (`hud::decode_indexed8_raw`).
-    pub fn decode_raw(&self) -> Result<Texture> { crate::hud::decode_indexed8_raw(self.pixels, self.width, self.height, self.palette) }
-
     /// RGBA with the alpha scaled to 0..0xff (`texture::decode_indexed8`), for inspection.
-    pub fn decode(&self) -> Result<Texture> { crate::texture::decode_indexed8(self.pixels, self.width, self.height, self.palette) }
+    pub(crate) fn decode(&self) -> Result<Texture> { crate::texture::decode_indexed8(self.pixels, self.width, self.height, self.palette) }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_a_synthetic_pif() {
-        let mut b = vec![0u8; PIXELS_OFFSET + 4];
-        b[..4].copy_from_slice(MAGIC);
-        b[8..12].copy_from_slice(&2u32.to_le_bytes());
-        b[12..16].copy_from_slice(&2u32.to_le_bytes());
-        b[16..20].copy_from_slice(&FORMAT_PSMT8.to_le_bytes());
-        b[PALETTE_OFFSET + 4..PALETTE_OFFSET + 8].copy_from_slice(&[10, 20, 30, 0x80]);
-        b[PIXELS_OFFSET] = 1;
-        let p = Pif::parse(&b).unwrap();
-        assert_eq!((p.width, p.height), (2, 2));
-        let t = p.decode_raw().unwrap();
-        assert_eq!(&t.rgba[..4], &[10, 20, 30, 0x80]);
-        assert!(Pif::parse(&b[4..]).is_err());
-        b[16] = 0x14;
-        assert!(Pif::parse(&b).is_err());
-    }
-}

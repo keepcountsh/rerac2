@@ -514,7 +514,7 @@ pub struct AudioSystem {
     /// The reverb commands sent, when logging (`RC_AUDIO_TRACE`): `(frame, command)`.
     pub reverb_log: Option<Vec<(u64, SndCommand)>>,
     /// The underwater flag 0x167494 as the camera update last left it (the engine's `UnderwaterTest` 0x20e9f0,
-    /// crate::base::fog_zones::UnderwaterState): the tick's sound step puts it into the listener
+    /// rerac:rc_game::fog_zones::UnderwaterState): the tick's sound step puts it into the listener
     /// ([`class_sounds::sound_step`]).
     pub underwater: bool,
     /// The checkpoint record's music track 0x1bc304 ([`AudioSystem::checkpoint_saved`]); None: no record this visit.

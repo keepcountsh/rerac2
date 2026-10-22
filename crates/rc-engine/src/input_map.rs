@@ -234,7 +234,6 @@ mod tests {
         assert_eq!(s.at(60), PadInput::neutral().stick(0.0, -1.0).press(button::CROSS | button::R1));
         assert_eq!(s.at(121), PadInput::neutral());
         assert_eq!(s.at(201).rx, PadInput::axis_byte(1.0));
-        assert_eq!(s.end(), 201);
         assert!(Script::parse("5-1:press X").is_err());
         assert!(Script::parse("1:press Y").is_err());
         assert!(Script::parse("1:jump").is_err());

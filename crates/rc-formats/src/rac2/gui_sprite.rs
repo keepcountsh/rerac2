@@ -14,13 +14,13 @@ use crate::buf::{invalid, Buf, Result};
 use std::collections::HashMap;
 
 /// `FUN_003014a8`: the header's scale is multiplied by this at load.
-pub const SCALE_UNIT: f32 = 0.003_211_601_6;
+pub(crate) const SCALE_UNIT: f32 = 0.003_211_601_6;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Vertex {
     pub pos: [f32; 3],
     pub bone: usize,
-    pub uv: [f32; 2],
+    pub(crate) uv: [f32; 2],
     /// GS RGBA bytes (alpha 0x80 = 1.0).
     pub rgba: [u8; 4],
 }
@@ -119,18 +119,3 @@ fn sprite(b: &Buf) -> Result<Sprite> {
     Ok(Sprite { scale, vertices, prims, frames, textures: nt })
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn packed_vertex_fields() {
-        // bone 1, x = −64 (bits 0..13 = 0x3ff0), z = −225 (bits 12..27).
-        let x_bits = (-16i32 & 0x3fff) as u32;
-        let z = -225i32 as u32 & 0xffff;
-        let w = (1u32 << 28) | ((z << 12) & 0x0fff_f000) | x_bits;
-        let w = w as i32;
-        assert_eq!((w << 18) >> 16, -64);
-        assert_eq!((w >> 28) & 0xf, 1);
-        // z shares bits 12, 13 with x's top bits (the game reads them so); here they agree.
-        assert_eq!((w << 4) >> 16, -225);
-    }
-}

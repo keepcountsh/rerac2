@@ -20,8 +20,6 @@ bevy = "0.19"
 rc-formats = { path = "../rc-formats" }
 # Going Commando's game logic (crate::rac2).
 rc-game = { path = "../rc-game" }
-# Decompressed lumps through the Tier 1 engine cache (once per process).
-rc-data = { path = "../rc-data" }
 # The movies (FMV): MPEG-2 video decoder and PSS player core, ours (docs/formats/pss.md).
 rc-video = { path = "../rc-video" }
 anyhow.workspace = true

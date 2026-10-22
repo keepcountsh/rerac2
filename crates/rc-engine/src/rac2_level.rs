@@ -10,7 +10,7 @@
 use crate::level_load::{LoadTimings, LoadedLevel};
 use anyhow::{Context, Result};
 use rc_formats::rac2::level::{LevelWad, Lump, Part};
-use rc_formats::{level, texture, tfrag, Game};
+use rc_formats::{level, texture, tfrag};
 use std::path::Path;
 use std::time::Instant;
 
@@ -32,7 +32,7 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
     let part = *parts.get(row).with_context(|| format!("no armour row {row}"))?;
     let a = ar::read(&crate::disc_source::read(root, "G/ARMOR.WAD")?, part)?;
     let class = mobys.classes.iter_mut().find(|c| c.o_class == o_class).with_context(|| format!("no class {o_class} in the level"))?;
-    rc_formats::moby::attach_packets(Game::Rac2, &mut class.class, &a.mesh)?;
+    rc_formats::moby::attach_packets(&mut class.class, &a.mesh)?;
     let base = core.moby_textures.len().max(textures.iter().filter(|t| t.table == texture::TextureTable::Moby).map(|t| t.index + 1).max().unwrap_or(0));
     for (k, t) in a.textures.into_iter().enumerate() {
         let index = base + k;
@@ -52,7 +52,7 @@ pub const GADGETS: [i32; 1] = [rc_game::hero::items::LANCER_CLASS as i32];
 fn attach_gadget(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, o_class: i32) -> Result<()> {
     let blob = gadget_blob(root, o_class)?;
     let (blob, tex) = blob;
-    let class = rc_formats::moby::parse_moby_class_for(Game::Rac2, &blob).with_context(|| format!("gadget {o_class:#x}: class"))?;
+    let class = rc_formats::moby::parse_moby_class(&blob).with_context(|| format!("gadget {o_class:#x}: class"))?;
     let seqs = rc_formats::moby_anim::parse_sequences(&blob, &class).with_context(|| format!("gadget {o_class:#x}: sequences"))?;
     let base = core.moby_textures.len().max(textures.iter().filter(|t| t.table == texture::TextureTable::Moby).map(|t| t.index + 1).max().unwrap_or(0));
     let mut slots = [0xffu8; 16];
@@ -115,7 +115,7 @@ pub fn class_blobs(root: &Path, index: u32) -> Result<ClassBlobs> {
     let wad = LevelWad::parse(&file).with_context(|| name.clone())?;
     let core_index = wad.lump(Lump::CoreIndex)?.context("no core index")?;
     let core_data = rc_formats::wad::decompress(wad.lump(Lump::CoreData)?.context("no core data")?)?;
-    let core = level::parse_level_core_for(Game::Rac2, core_index, core_data.len())?;
+    let core = level::parse_level_core(core_index, core_data.len())?;
     let collision = rc_formats::moby_collision::parse_level(&core, &core_data)?;
     let mut blobs: std::collections::HashMap<i32, Vec<u8>> = core
         .moby_classes
@@ -159,7 +159,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     t.decompress = t0.elapsed();
 
     let t0 = Instant::now();
-    let core = level::parse_level_core_for(Game::Rac2, core_index, core_data.len()).context("parsing the core index")?;
+    let core = level::parse_level_core(core_index, core_data.len()).context("parsing the core index")?;
     t.parse_core = t0.elapsed();
 
     let t0 = Instant::now();
@@ -281,7 +281,7 @@ fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &leve
         let part = wad.part_bytes(Part::CoreBank)?.context("no core sound bank part")?;
         let bank = if rc_formats::wad::is_wad(part) { rc_formats::wad::decompress(part)? } else { part.to_vec() };
         let mut bank = rc_formats::sound_bank::parse_bank(&bank)?;
-        let mut sounds = rc_formats::sound_bank::parse_level_sounds_for(Game::Rac2, core_index, core, core_data)?;
+        let mut sounds = rc_formats::sound_bank::parse_level_sounds(core_index, core, core_data)?;
         gadget_sounds(root, &mut bank, &mut sounds);
         let bank = std::sync::Arc::new(bank);
         let music = music(root, index).unwrap_or_else(|e| {

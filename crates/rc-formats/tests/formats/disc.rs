@@ -1,17 +1,17 @@
 //! `rac2` on the Going Commando disc files (`SCUS_972.68` v2.00): the table of contents, the front-end blob, the GUI
 //! sprites and the boot ELF's tables, against the values read in Ghidra (docs/plan/rac2_bringup.md §5). Skipped
-//! without `extracted-rac2/`.
+//! without the data folder (`extracted/`, or `RC_EXTRACTED`).
 
 use rc_formats::rac2::boot::{BootElf, GLYPHS, MAIN_MENU};
 use rc_formats::rac2::front_end::FrontEnd;
 use rc_formats::rac2::gui_sprite::{self, Prim};
 use rc_formats::rac2::toc::{movie_row, Toc, MISC_FRONT_END};
 
-fn read(rel: &str) -> Option<Vec<u8>> { std::fs::read(rc_formats::test_data::rac2_root().join(rel)).ok() }
+fn read(rel: &str) -> Option<Vec<u8>> { std::fs::read(rc_formats::test_data::root().join(rel)).ok() }
 
 #[test]
 fn front_end_and_main_menu() {
-    let Some(hdr) = read("RC2.HDR") else { eprintln!("skipped: no extracted-rac2/"); return };
+    let Some(hdr) = read("RC2.HDR") else { eprintln!("skipped: no RC2.HDR in the data folder"); return };
     let toc = Toc::parse(&hdr).unwrap();
     let part = toc.misc_part(MISC_FRONT_END).unwrap();
     assert_eq!((part.sector, part.sectors), (1283, 1109));
@@ -41,7 +41,7 @@ fn front_end_and_main_menu() {
 
 #[test]
 fn gui_sprites_and_movies() {
-    let Some(hdr) = read("RC2.HDR") else { eprintln!("skipped: no extracted-rac2/"); return };
+    let Some(hdr) = read("RC2.HDR") else { eprintln!("skipped: no RC2.HDR in the data folder"); return };
     let toc = Toc::parse(&hdr).unwrap();
     let block = toc.gui_block().unwrap();
     assert_eq!((block.sector, block.sectors), (16415, 64));

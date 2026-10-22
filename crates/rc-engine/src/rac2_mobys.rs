@@ -60,7 +60,7 @@ pub struct Rac2Mobys {
     pub hero_seconds: Vec<Vec<u8>>,
     /// The holding classes 1 / 2 (rc_game::hero::layers: his first 0x17 sequences with the arm holding the item).
     pub hold: [Option<Arc<rc_game::hero::anim::HoldClass>>; 2],
-    /// Every class's joint lists (class header `+0x1c`, [`rc_formats::gadget::joint_list`]'s chains): what the
+    /// Every class's joint lists (class header `+0x1c`, [`rc_formats::moby::joint_list`]'s chains): what the
     /// joint queries take as their joint (`0x3175f8(m, 1, [list], out)`: the last joint of list `list`).
     pub chains: Chains,
     /// The level's grind paths (the gameplay's section 31).
@@ -504,14 +504,14 @@ impl Rac2Mobys {
             .iter()
             .find(|c| c.o_class == 0)
             .and_then(|c| blobs.blobs.get(&0).map(|b| (c, b)))
-            .map(|(c, b)| (0..31).map(|l| rc_formats::gadget::joint_list(b, &c.class.header, l).unwrap_or_default()).collect())
+            .map(|(c, b)| (0..31).map(|l| rc_formats::moby::joint_list(b, &c.class.header, l).unwrap_or_default()).collect())
             .unwrap_or_default();
         let hero_targets = lists.iter().map(|(_, second)| rc_formats::moby_anim::list_target(second).unwrap_or(0xff)).collect();
         let hero_seconds = lists.iter().map(|(_, second)| second.clone()).collect();
         let hero_chains = lists.into_iter().map(|(chain, _)| chain).collect();
         let hold = [1i32, 2].map(|o| {
             let b = blobs.blobs.get(&o)?;
-            let c = rc_formats::moby::parse_moby_class_for(rc_formats::Game::Rac2, b).ok()?;
+            let c = rc_formats::moby::parse_moby_class(b).ok()?;
             let map = moby_anim::retarget_map(b, &c.header)?;
             let seqs = moby_anim::parse_sequences(b, &c).ok()?;
             Some(Arc::new(rc_game::hero::anim::HoldClass { anim: MobyAnimClass::new(&c, seqs), map }))
@@ -524,7 +524,7 @@ impl Rac2Mobys {
                 let h = &c.class.header;
                 if h.joints <= 0 { return None; }
                 let n = i32::from_le_bytes(b.get(h.joints as usize..h.joints as usize + 4)?.try_into().ok()?).clamp(0, 0x100) as usize;
-                Some((c.o_class as i16, (0..n).map(|l| rc_formats::gadget::joint_list(b, h, l).map(|x| x.0).unwrap_or_default()).collect()))
+                Some((c.o_class as i16, (0..n).map(|l| rc_formats::moby::joint_list(b, h, l).map(|x| x.0).unwrap_or_default()).collect()))
             })
             .collect();
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
