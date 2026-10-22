@@ -872,7 +872,7 @@ fn draw_hud(
         }
         // On the main camera's UI, as crate::hud_render's HUD is.
         let Some(cam) = flycams.iter().next() else { return };
-        let scaling = crate::hud_render::scaling(crate::graphics::Hud::Original);
+        let scaling = crate::hud_render::scaling(crate::graphics::Hud::High);
         let layer = crate::hud_render::Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &textures, scaling, cam);
         commands.insert_resource(GameHud { layer, data, icons, fx });
         return;

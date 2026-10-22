@@ -312,7 +312,7 @@ fn setup(
     let keep = crate::level_switch::KeepAcrossLevels;
     let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() }, keep, Name::new("front end camera"))).id();
     fe.camera = Some(cam);
-    let scaling = hud_render::scaling(crate::graphics::Hud::Original);
+    let scaling = hud_render::scaling(crate::graphics::Hud::High);
     let layer = Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &fe.data.textures, scaling, cam);
     for e in layer.entities { commands.entity(e).insert(keep); }
     fe.layer = Some(layer);

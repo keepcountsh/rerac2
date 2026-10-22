@@ -5,7 +5,7 @@
 //! | Option | Values | Consumer |
 //! |---|---|---|
 //! | [`AntiAliasing`] | Original (the game's own softening passes: the AA blit and the display copy), Off, 2x / 4x / 8x multisampling | crate::aa_blit, crate::render_settings (the samples) |
-//! | [`Hud`] | Original (the 512×416 HUD scaled up smoothly, as the TV showed it), Sharp pixels | crate::hud_render composite |
+//! | [`Hud`] | Original (the 512×416 HUD scaled up smoothly, as the TV showed it), Sharp pixels, High resolution (drawn at the frame's resolution, as an emulator's upscaled render shows it; the default) | crate::hud_render |
 //! | [`Textures`] | Original (the GS mip rule, one level per pixel), Smooth (blended levels), Sharp (the GPU's own choice, anisotropic) | the world shaders, through crate::game_camera's shared fog buffer |
 //! | [`Detail`] | Original (the game's LOD distances), Far (×2), Farther (×4), Maximum (the full model whenever it is drawn) | crate::tfrag_lod, crate::tie_lod, crate::moby_render, crate::shrub_render (drawing only: the game logic keeps its own decisions) |
 //!
@@ -83,15 +83,19 @@ pub enum Hud {
     Original,
     /// Each game pixel a hard square (integer-looking pixel doubling).
     SharpPixels,
+    /// Drawn at the frame's resolution (a whole multiple of 512×416): thin lines and text stay whole and sharp, as an
+    /// emulator's upscaled render shows them.
+    High,
 }
 
 impl GfxOption for Hud {
-    const ALL: &'static [Self] = &[Hud::Original, Hud::SharpPixels];
+    const ALL: &'static [Self] = &[Hud::Original, Hud::SharpPixels, Hud::High];
     const KEY: &'static str = "hud";
     fn key(self) -> &'static str {
         match self {
             Hud::Original => "original",
             Hud::SharpPixels => "sharp",
+            Hud::High => "high",
         }
     }
 }
@@ -168,8 +172,9 @@ pub enum Preset {
 impl Preset {
 }
 
-/// The graphics options (module docs).
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// The graphics options (module docs). The default is the Original preset with the HUD at high resolution: at 512×416
+/// the menus' and the HUD's thin sprite lines lose pixels, which a TV hid and a window shows.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GraphicsSettings {
     pub aa: AntiAliasing,
     pub hud: Hud,
@@ -177,13 +182,20 @@ pub struct GraphicsSettings {
     pub detail: Detail,
 }
 
+impl Default for GraphicsSettings {
+    fn default() -> Self { GraphicsSettings { hud: Hud::High, ..GraphicsSettings::original() } }
+}
+
 impl GraphicsSettings {
+    /// Every option at its first value, `Original`.
+    pub fn original() -> Self { GraphicsSettings { aa: AntiAliasing::default(), hud: Hud::Original, textures: Textures::default(), detail: Detail::default() } }
+
     /// The options of a preset (`Custom` keeps `self`).
     pub fn with_preset(self, p: Preset) -> Self {
         match p {
-            Preset::Original => GraphicsSettings::default(),
+            Preset::Original => GraphicsSettings::original(),
             // 4x: the best count every GPU offers (crate::render_settings clamps a count a device lacks).
-            Preset::Enhanced => GraphicsSettings { aa: AntiAliasing::X4, hud: Hud::Original, textures: Textures::Smooth, detail: Detail::Far },
+            Preset::Enhanced => GraphicsSettings { aa: AntiAliasing::X4, hud: Hud::High, textures: Textures::Smooth, detail: Detail::Far },
             Preset::Custom => self,
         }
     }
@@ -265,7 +277,7 @@ mod tests {
 
     #[test]
     fn presets_round_trip() {
-        let o = GraphicsSettings::default();
+        let o = GraphicsSettings::original();
         assert_eq!(o.preset(), Preset::Original);
         let e = o.with_preset(Preset::Enhanced);
         assert_eq!(e.preset(), Preset::Enhanced);

@@ -16,10 +16,11 @@
 //! `A = At·Af >> 7` (clamped to 0xff). Blend ALPHA_1 0x44 `(Cs − Cd)·As/128 + Cd` ([`GsPass::Hud`]: one blended
 //! draw is exact). Untextured rectangles use the vertex RGBA. Scissor per primitive.
 //!
-//! **Where it draws.** A layer's primitives render in submission (painter's) order into an offscreen 512×416
-//! `Rgba16Float` target on a dedicated `Camera2d` (order −10, [`HUD_LAYER`]), at the game's own resolution:
-//! the GS's bilinear filter works on 512×416 pixels, so filtering at the window's 2× resolution would be a
-//! different (smoother) image. Blending there runs in display bytes / 255 without clamping, premultiplied
+//! **Where it draws.** A layer's primitives render in submission (painter's) order into an offscreen
+//! `Rgba16Float` target on a dedicated `Camera2d` (order −10, [`HUD_LAYER`]): 512×416, the game's own resolution
+//! (the HUD options Original and Sharp pixels: the GS's bilinear filter works on 512×416 pixels), or a whole
+//! multiple of it near the frame's height (High resolution, [`size_layers`]: the primitives cover the same game
+//! pixels, sampled finer, as an emulator's upscaled render draws them; the scissor stays in game pixels). Blending there runs in display bytes / 255 without clamping, premultiplied
 //! (the target keeps `Σ Cs·As` in RGB and the coverage in A). The result is composited onto the frame by a Bevy UI
 //! node ([`HudComposite`], `UiMaterial`) on the frame's 4:3 box, sampled as the HUD option says (crate::graphics:
 //! Original bilinear half a pixel to the left, as the game's display copy and the TV showed the 512×416 picture,
@@ -172,12 +173,15 @@ const ADD_FIX_BLEND: BlendState = BlendState {
     alpha: BlendComponent { src_factor: BlendFactor::Zero, dst_factor: BlendFactor::One, operation: BlendOperation::Add },
 };
 
-/// The 2D primitives' material: the atlas; `additive` = ALPHA_1 0x68 (FIX = the vertex alpha) instead of 0x44.
+/// The 2D primitives' material: the atlas; `additive` = ALPHA_1 0x68 (FIX = the vertex alpha) instead of 0x44;
+/// `target.x` the target's pixels per game pixel ([`size_layers`]).
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 #[bind_group_data(HudMaterialKey)]
 pub struct HudMaterial {
     #[texture(0)]
     pub atlas: Handle<Image>,
+    #[uniform(1)]
+    pub target: Vec4,
     pub additive: bool,
 }
 
@@ -238,14 +242,49 @@ impl UiMaterial for HudComposite {
 }
 
 /// The composites' scaling uniform for the HUD option (crate::graphics): x = 1 bilinear (Original: the TV showed the
-/// 512×416 image smoothed), 0 nearest (Sharp pixels).
-pub fn scaling(h: crate::graphics::Hud) -> Vec4 { Vec4::new(if h == crate::graphics::Hud::Original { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0) }
+/// 512×416 image smoothed), 0 nearest (Sharp pixels), 2 plain bilinear (High resolution: the image is near the
+/// frame's size already).
+pub fn scaling(h: crate::graphics::Hud) -> Vec4 {
+    use crate::graphics::Hud;
+    Vec4::new(match h { Hud::Original => 1.0, Hud::SharpPixels => 0.0, Hud::High => 2.0 }, 0.0, 0.0, 0.0)
+}
 
-/// Applies a changed HUD option to the composites.
+/// The HUD option on every composite (a layer spawned after a change too).
 fn apply_scaling(gfx: Res<crate::graphics::GraphicsSettings>, mut a: ResMut<Assets<HudComposite>>) {
-    if !gfx.is_changed() { return; }
     let v = scaling(gfx.hud);
-    for (_, m) in a.iter_mut() { if m.scaling != v { m.scaling = v; } }
+    let stale: Vec<_> = a.iter().filter(|(_, m)| m.scaling != v).map(|(id, _)| id).collect();
+    for id in stale { if let Some(mut m) = a.get_mut(id) { m.scaling = v; } }
+}
+
+/// A layer's target and material, on its camera ([`size_layers`]).
+#[derive(Component)]
+pub struct LayerTarget {
+    image: Handle<Image>,
+    material: Handle<HudMaterial>,
+}
+
+/// The layers' target size: 512×416 times the HUD option's scale (High resolution: the frame's height over 416,
+/// rounded, 1..=8; else 1).
+fn size_layers(
+    gfx: Res<crate::graphics::GraphicsSettings>,
+    frame: Option<Res<crate::display::GameFrame>>,
+    layers: Query<&LayerTarget>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<HudMaterial>>,
+) {
+    let k = match (gfx.hud, frame) {
+        (crate::graphics::Hud::High, Some(f)) => (f.size.y as f32 / H as f32).round().clamp(1.0, 8.0) as u32,
+        _ => 1,
+    };
+    let size = Extent3d { width: W as u32 * k, height: H as u32 * k, depth_or_array_layers: 1 };
+    for l in &layers {
+        if images.get(&l.image).is_some_and(|i| i.texture_descriptor.size != size) {
+            if let Some(mut i) = images.get_mut(&l.image) { i.resize(size); }
+        }
+        if materials.get(&l.material).is_some_and(|m| m.target.x != k as f32) {
+            if let Some(mut m) = materials.get_mut(&l.material) { m.target.x = k as f32; }
+        }
+    }
 }
 
 /// A 2D layer with its own textures and primitive list (the front end, the game's HUD): an atlas, material, mesh
@@ -283,7 +322,9 @@ impl Layer {
         img.sampler = bevy::image::ImageSampler::nearest();
         let atlas_handle = images.add(img);
         let target = images.add(Image::new_target_texture(W as u32, H as u32, TextureFormat::Rgba16Float, None));
+        let material = materials.add(HudMaterial { atlas: atlas_handle.clone(), target: Vec4::new(1.0, 0.0, 0.0, 0.0), additive: false });
         let camera = commands.spawn((
+            LayerTarget { image: target.clone(), material: material.clone() },
             Camera2d,
             Camera { order: -10, clear_color: ClearColorConfig::Custom(Color::NONE), ..default() },
             RenderTarget::Image(target.clone().into()),
@@ -292,12 +333,12 @@ impl Layer {
             Tonemapping::None,
             DebandDither::Disabled,
             RenderLayers::layer(HUD_LAYER),
-            Name::new("2d layer camera (512x416 offscreen)"),
+            Name::new("2d layer camera (offscreen)"),
         )).id();
         let mesh = meshes.add(empty_mesh());
         let prims = commands.spawn((
             Mesh2d(mesh.clone()),
-            MeshMaterial2d(materials.add(HudMaterial { atlas: atlas_handle.clone(), additive: false })),
+            MeshMaterial2d(material),
             Transform::IDENTITY,
             NoFrustumCulling,
             RenderLayers::layer(HUD_LAYER),
@@ -336,7 +377,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((Material2dPlugin::<HudMaterial>::default(), UiMaterialPlugin::<HudComposite>::default())).add_systems(PostUpdate, apply_scaling);
+        app.add_plugins((Material2dPlugin::<HudMaterial>::default(), UiMaterialPlugin::<HudComposite>::default())).add_systems(PostUpdate, (apply_scaling, size_layers));
     }
 }
 

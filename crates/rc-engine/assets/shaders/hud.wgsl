@@ -16,6 +16,8 @@
 #ifdef HUD_PRIMS
 // Material2d bind group (MATERIAL_2D_BIND_GROUP_INDEX).
 @group(2) @binding(0) var atlas: texture_2d<f32>;
+// x: the target's pixels per game pixel (1 at 512×416; more at the HUD option High resolution).
+@group(2) @binding(1) var<uniform> target_scale: vec4<f32>;
 
 struct HudVertex {
     @location(0) position: vec3<f32>,
@@ -61,7 +63,8 @@ fn texel(t: vec4<u32>, p: vec2<i32>) -> vec4<f32> {
 
 @fragment
 fn fragment(in: HudVarying) -> @location(0) vec4<f32> {
-    let px = vec2<u32>(floor(in.position.xy));
+    // The scissor is in game pixels.
+    let px = vec2<u32>(floor(in.position.xy / target_scale.x));
     if px.x < in.scissor.x || px.x > in.scissor.y || px.y < in.scissor.z || px.y > in.scissor.w {
         discard;
     }
@@ -113,6 +116,18 @@ fn fragment(in: HudVarying) -> @location(0) vec4<f32> {
 // resolution that is the bilinear sample half a pixel left. Down, the copy's stretch is centred (the plain sample).
 fn sample_layer(uv: vec2<f32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(hud_image));
+    if scaling.x > 1.5 {
+        // High resolution: the plain bilinear sample.
+        let q = uv * vec2<f32>(size) - vec2<f32>(0.5);
+        let p0 = vec2<i32>(floor(q));
+        let f = q - floor(q);
+        let hi = size - vec2<i32>(1);
+        let a = textureLoad(hud_image, clamp(p0, vec2<i32>(0), hi), 0);
+        let b = textureLoad(hud_image, clamp(p0 + vec2<i32>(1, 0), vec2<i32>(0), hi), 0);
+        let c = textureLoad(hud_image, clamp(p0 + vec2<i32>(0, 1), vec2<i32>(0), hi), 0);
+        let d = textureLoad(hud_image, clamp(p0 + vec2<i32>(1, 1), vec2<i32>(0), hi), 0);
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
     if scaling.x < 0.5 {
         let p = clamp(vec2<i32>(floor(uv * vec2<f32>(size))), vec2<i32>(0), size - vec2<i32>(1));
         return textureLoad(hud_image, p, 0);
