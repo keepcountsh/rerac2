@@ -28,7 +28,7 @@ use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureFormat, TextureUsages};
+use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::render::view::Msaa;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode, WindowRef};
 
@@ -124,6 +124,9 @@ impl Default for DisplaySettings {
 }
 
 impl DisplaySettings {
+    /// The window mode of [`DisplaySettings::fullscreen`] (the window also opens in it, crate's `main`).
+    pub fn window_mode(&self) -> WindowMode { if self.fullscreen { WindowMode::BorderlessFullscreen(MonitorSelection::Primary) } else { WindowMode::Windowed } }
+
     /// The settings file's values, then `RC_ASPECT` / `RC_RESOLUTION` / `RC_FULLSCREEN` over them.
     pub fn startup() -> Self {
         let mut s = DisplaySettings::default();
@@ -198,11 +201,7 @@ impl Plugin for DisplayPlugin {
     /// The frame exists from `build` on, so plugins built later (crate::determinism's capture) can use it.
     fn build(&self, app: &mut App) {
         let size = UVec2::new(1024, 768);
-        let mut img = Image::new_target_texture(size.x, size.y, TextureFormat::Bgra8UnormSrgb, None);
-        img.asset_usage = RenderAssetUsages::RENDER_WORLD;
-        img.texture_descriptor.usage |= TextureUsages::COPY_SRC;
-        img.sampler = ImageSampler::linear();
-        let image = app.world_mut().resource_mut::<Assets<Image>>().add(img);
+        let image = app.world_mut().resource_mut::<Assets<Image>>().add(frame_image(size));
         let settings = DisplaySettings::startup();
         println!("display: aspect {:?}, render resolution {:?}, fullscreen {} (Port Options; RC_ASPECT / RC_RESOLUTION / RC_FULLSCREEN)", settings.aspect, settings.resolution, settings.fullscreen);
         app.insert_resource(GameFrame { image, size })
@@ -251,14 +250,42 @@ fn spawn_present(mut commands: Commands, frame: Res<GameFrame>, mut meshes: ResM
     ));
 }
 
-/// Keeps the frame at the size the settings and the window ask for.
-fn sync_frame(mut frame: ResMut<GameFrame>, settings: Res<DisplaySettings>, window: Option<Single<&Window, With<PrimaryWindow>>>, mut images: ResMut<Assets<Image>>) {
+/// The game frame's image at `size`: the swapchain's format, copyable (the captures), sampled linearly.
+fn frame_image(size: UVec2) -> Image {
+    let mut img = Image::new_target_texture(size.x, size.y, TextureFormat::Bgra8UnormSrgb, None);
+    img.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    img.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+    img.sampler = ImageSampler::linear();
+    img
+}
+
+/// Keeps the frame at the size the settings and the window ask for. A new size is a new image, and every camera
+/// rendering to the frame and the present quad move to it: an image resized in place while the game ran left the
+/// window black (a Fullscreen or Resolution change from the menus).
+#[allow(clippy::too_many_arguments)]
+fn sync_frame(
+    mut frame: ResMut<GameFrame>,
+    settings: Res<DisplaySettings>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    mut images: ResMut<Assets<Image>>,
+    mut targets: Query<&mut RenderTarget>,
+    mut sprites: Query<&mut MeshMaterial2d<ColorMaterial>, With<PresentSprite>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     let Some(w) = window else { return };
     let ws = w.physical_size();
     if ws.x == 0 || ws.y == 0 { return; }
     let want = frame_size(settings.resolution, settings.aspect, ws);
     if want == frame.size { return; }
-    if let Some(mut img) = images.get_mut(&frame.image) { img.resize(Extent3d { width: want.x, height: want.y, depth_or_array_layers: 1 }); }
+    let image = images.add(frame_image(want));
+    for mut t in &mut targets {
+        if matches!(&*t, RenderTarget::Image(i) if i.handle == frame.image) { *t = RenderTarget::Image(image.clone().into()); }
+    }
+    for mut m in &mut sprites {
+        m.0 = materials.add(ColorMaterial { texture: Some(image.clone()), alpha_mode: bevy::sprite_render::AlphaMode2d::Opaque, ..default() });
+    }
+    images.remove(&frame.image);
+    frame.image = image;
     frame.size = want;
 }
 
@@ -287,10 +314,10 @@ fn toggle_fullscreen(keys: Res<ButtonInput<KeyCode>>, mut settings: ResMut<Displ
     settings.save();
 }
 
-/// The window mode follows the setting.
-fn apply_mode(settings: Res<DisplaySettings>, mut window: Option<Single<&mut Window, With<PrimaryWindow>>>) {
-    let Some(w) = window.as_deref_mut() else { return };
-    let want = if settings.fullscreen { WindowMode::BorderlessFullscreen(MonitorSelection::Current) } else { WindowMode::Windowed };
+/// The window mode follows the setting (the window is written, and so marked changed, only when it differs).
+fn apply_mode(settings: Res<DisplaySettings>, mut window: Query<&mut Window, With<PrimaryWindow>>) {
+    let Ok(mut w) = window.single_mut() else { return };
+    let want = settings.window_mode();
     if w.mode != want { w.mode = want; }
 }
 

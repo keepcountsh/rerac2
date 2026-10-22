@@ -120,8 +120,8 @@ struct FrameShot {
     retry: Arc<AtomicBool>,
     /// Set by the capture observer once it has saved (or given up on) the image.
     saved: Arc<AtomicBool>,
-    /// The offscreen image the cameras render to (None with `RC_CAPTURE_WINDOW=1`).
-    target: Option<Handle<Image>>,
+    /// Whether the capture is of the game frame (crate::display::GameFrame; false with `RC_CAPTURE_WINDOW=1`).
+    target: bool,
 }
 
 /// `RC_DUMP_FRAMES`: the range, the folder and the number of frames saved so far.
@@ -129,7 +129,7 @@ struct FrameShot {
 struct FrameDump {
     dir: PathBuf,
     range: (u64, u64),
-    target: Option<Handle<Image>>,
+    target: bool,
     saved: Arc<AtomicU64>,
 }
 
@@ -193,8 +193,8 @@ impl Plugin for DeterminismPlugin {
         }
         // The game frame (crate::display: every game camera renders into it, at its size); RC_CAPTURE_WINDOW=1 captures
         // the window (the frame presented on black).
-        let target = (env("RC_CAPTURE_WINDOW").as_deref() != Some("1")).then(|| app.world().resource::<crate::display::GameFrame>().image.clone());
-        if target.is_some() { println!("determinism: capturing the game frame (RC_CAPTURE_WINDOW=1 captures the window)"); }
+        let target = env("RC_CAPTURE_WINDOW").as_deref() != Some("1");
+        if target { println!("determinism: capturing the game frame (RC_CAPTURE_WINDOW=1 captures the window)"); }
         let status = PipelineStatus::default();
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.insert_resource(status.clone()).add_systems(Render, record_pipelines.in_set(RenderSystems::Cleanup));
@@ -283,16 +283,13 @@ fn exit_before_capture(mut exits: MessageReader<AppExit>, shot: Res<FrameShot>, 
 }
 
 /// `RC_DUMP_FRAMES`: one capture per frame of the range, saved as `frame_NNNNN.png`; exit once the last is saved.
-fn dump_frame(mut commands: Commands, dump: Res<FrameDump>, frame: Res<FrameNumber>, status: Res<PipelineStatus>) {
+fn dump_frame(mut commands: Commands, dump: Res<FrameDump>, frame: Res<FrameNumber>, status: Res<PipelineStatus>, game: Res<crate::display::GameFrame>) {
     let (a, b) = dump.range;
     let n = frame.0;
     if n < a || n > b { return; }
     let (total, waiting) = status.get();
     if waiting != 0 || total == 0 { eprintln!("determinism: RC_DUMP_FRAMES: frame {n} captured with {waiting} of {total} pipelines still compiling"); }
-    let request = match &dump.target {
-        Some(image) => Screenshot::image(image.clone()),
-        None => Screenshot::primary_window(),
-    };
+    let request = if dump.target { Screenshot::image(game.image.clone()) } else { Screenshot::primary_window() };
     let (path, saved, count) = (dump.dir.join(format!("frame_{n:05}.png")), dump.saved.clone(), b - a + 1);
     commands.spawn(request).observe(move |shot: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
         match shot.image.clone().try_into_dynamic() {
@@ -313,6 +310,7 @@ fn frame_screenshot(
     shot: Res<FrameShot>,
     frame: Res<FrameNumber>,
     status: Res<PipelineStatus>,
+    game: Res<crate::display::GameFrame>,
     mut done: Local<bool>,
     mut warned: Local<bool>,
 ) {
@@ -329,10 +327,7 @@ fn frame_screenshot(
     *done = true;
     let (path, n, want, retry, saved) = (shot.path.clone(), frame.0, shot.frame, shot.retry.clone(), shot.saved.clone());
     let give_up = n >= want + MAX_RETRY_FRAMES;
-    let request = match &shot.target {
-        Some(image) => Screenshot::image(image.clone()),
-        None => Screenshot::primary_window(),
-    };
+    let request = if shot.target { Screenshot::image(game.image.clone()) } else { Screenshot::primary_window() };
     commands.spawn(request).observe(
         move |shot: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
             let mut status = 0;

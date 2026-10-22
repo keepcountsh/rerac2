@@ -111,7 +111,9 @@ fn main() -> anyhow::Result<()> {
         DefaultPlugins
             .set(WindowPlugin {
                 // 4:3, as the TV showed the 512x416 GS draw buffer (crate::display; docs/plan/render_pipeline.md).
-                primary_window: Some(Window { title: "ReRAC2".into(), resolution: (1024u32, 768u32).into(), ..default() }),
+                // Opened in the saved mode (crate::display): switched to fullscreen a few frames in, macOS put the window
+                // back to its windowed size while it kept the fullscreen mode, and the picture stayed on a dead frame.
+                primary_window: Some(Window { title: "ReRAC2".into(), resolution: (1024u32, 768u32).into(), mode: display::DisplaySettings::startup().window_mode(), ..default() }),
                 ..default()
             })
             .set(AssetPlugin { file_path: asset_dir(), ..default() })

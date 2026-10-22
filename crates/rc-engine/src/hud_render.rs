@@ -265,21 +265,30 @@ pub struct LayerTarget {
 
 /// The layers' target size: 512×416 times the HUD option's scale (High resolution: the frame's height over 416,
 /// rounded, 1..=8; else 1).
+/// A new size is a new target: the layer's camera and composite move to it (a target resized in place while the
+/// game ran kept the composite on the old texture: the front end froze on a Resolution or Fullscreen change).
 fn size_layers(
     gfx: Res<crate::graphics::GraphicsSettings>,
     frame: Option<Res<crate::display::GameFrame>>,
-    layers: Query<&LayerTarget>,
+    mut layers: Query<(&mut LayerTarget, &mut RenderTarget)>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<HudMaterial>>,
+    mut composites: ResMut<Assets<HudComposite>>,
 ) {
     let k = match (gfx.hud, frame) {
         (crate::graphics::Hud::High, Some(f)) => (f.size.y as f32 / H as f32).round().clamp(1.0, 8.0) as u32,
         _ => 1,
     };
     let size = Extent3d { width: W as u32 * k, height: H as u32 * k, depth_or_array_layers: 1 };
-    for l in &layers {
+    for (mut l, mut t) in &mut layers {
         if images.get(&l.image).is_some_and(|i| i.texture_descriptor.size != size) {
-            if let Some(mut i) = images.get_mut(&l.image) { i.resize(size); }
+            let new = images.add(Image::new_target_texture(size.width, size.height, TextureFormat::Rgba16Float, None));
+            let old = l.image.id();
+            let ids: Vec<_> = composites.iter().filter(|(_, c)| c.image.id() == old).map(|(id, _)| id).collect();
+            for id in ids { if let Some(mut c) = composites.get_mut(id) { c.image = new.clone(); } }
+            *t = RenderTarget::Image(new.clone().into());
+            images.remove(old);
+            l.image = new;
         }
         if materials.get(&l.material).is_some_and(|m| m.target.x != k as f32) {
             if let Some(mut m) = materials.get_mut(&l.material) { m.target.x = k as f32; }
