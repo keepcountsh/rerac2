@@ -25,6 +25,7 @@ pub mod paths;
 pub mod point_lights;
 pub mod ps2v;
 pub mod rng;
+pub mod save;
 pub mod scene;
 pub mod scene_camera;
 pub mod sky;

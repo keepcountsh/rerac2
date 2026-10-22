@@ -58,7 +58,7 @@ and aliases are the same).
 
 | Area (aliases) | Integration binary | Unit tests |
 |---|---|---|
-| game (hero, classes, mobys, camera, audio, particles) | none | rc-game lib |
+| game (hero, classes, mobys, camera, audio, particles, save) | `save` (rc-game: the blank save through the game state) | rc-game lib |
 | formats | `formats` (rc-formats: `disc`, the disc's own files against the values read in Ghidra) | rc-formats lib |
 | engine (render, input) | none | rc-engine bin |
 | repo (guards, layout) | `guards` (tools/repo-checks) | — |

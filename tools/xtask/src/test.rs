@@ -34,7 +34,7 @@ pub struct Area {
 use Part::Bin;
 
 pub const AREAS: &[Area] = &[
-    Area { name: "game", aliases: &["hero", "classes", "mobys", "camera", "audio", "particles"], parts: &[] },
+    Area { name: "game", aliases: &["hero", "classes", "mobys", "camera", "audio", "particles", "save"], parts: &[Bin("rc-game", "save")] },
     Area { name: "formats", aliases: &[], parts: &[Bin("rc-formats", "formats")] },
     Area { name: "engine", aliases: &["render", "input"], parts: &[] },
     Area { name: "repo", aliases: &["guards", "layout"], parts: &[Bin("repo-checks", "guards")] },
@@ -394,13 +394,13 @@ mod tests {
     #[test]
     fn integration_bins_are_found_on_disk() {
         let b = integration_bins();
-        for x in ["formats", "guards"] { assert!(b.contains(&x.to_string()), "{x}: {b:?}"); }
+        for x in ["formats", "guards", "save"] { assert!(b.contains(&x.to_string()), "{x}: {b:?}"); }
     }
 
     #[test]
     fn job_steps_nextest_one_run_with_a_filterset() {
         let s = job_steps(Runner::Nextest, &[area("formats").unwrap(), area("game").unwrap()], &[], &Sel::default());
-        assert_eq!(args(&s), [format!("{N} --lib --bins --test formats -E kind(lib) | kind(bin) | binary_id(rc-formats::formats)")]);
+        assert_eq!(args(&s), [format!("{N} --lib --bins --test formats --test save -E kind(lib) | kind(bin) | binary_id(rc-formats::formats) | binary_id(rc-game::save)")]);
     }
 
     #[test]

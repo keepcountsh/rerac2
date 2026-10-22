@@ -39,10 +39,10 @@ RC_AUDIO=0; cargo-nextest when installed, else `cargo test --workspace --feature
       just that crate's (without nextest every crate runs: a single one would rebuild).
   test-job <area>... [--test <binary>]...
       The per-job tier: the unit tests plus the integration binaries of each area. Areas (aliases):
-        game (hero, classes, mobys, camera, audio, particles: unit tests only), formats, engine (render, input:
-        unit tests only), repo (guards, layout).
+        game (hero, classes, mobys, camera, audio, particles, save), formats, engine (render, input: unit tests
+        only), repo (guards, layout).
       --test <binary>     also run this integration binary whole (repeatable); with no area, only the binaries
-                          (no unit tests). Binaries: formats guards.
+                          (no unit tests). Binaries: formats guards save.
   test-full
       The full suite (on merge to main, or when the coordinator asks), then `sweep` (a failure only warns).
     Targeting options of test-quick and test-job (the same meaning under both runners):
