@@ -16,14 +16,15 @@ cargo xtask <command> [options]    dev chores, one command each (tools/xtask/REA
 commands:
   regen-data [--iso <image>] [--data-dir <dir>] [--force] [--check]
       Rebuild the dev game data folder (extracted/, or RC_EXTRACTED) from your disc image with the dev build of
-      rerac-extract: extract into a staging folder, verify it, then swap it in and delete the old folder.
-      The retired C++ extractor's leftovers are listed and removed; any unknown file stops it unless --force.
+      rerac2-extract: extract into a staging folder, verify it, then swap it in and delete the old folder.
+      Known leftovers (an interrupted extract, .DS_Store) are listed and removed; any unknown file stops it unless
+      --force.
         --iso <image>     the disc image (default: RC_ISO)
         --data-dir <dir>  the folder to rebuild (default: RC_EXTRACTED, else <repo>/extracted)
         --force           also delete unknown files
         --check           only list what the folder holds; change nothing (no disc needed)
   package [--no-build]
-      Release packaging: runs tools/package/package.sh (dist/rerac-<version>-<os>-<arch>/ and its .zip).
+      Release packaging: runs tools/package/package.sh (dist/rerac2-<version>-<os>-<arch>/ and its .zip).
   sweep [--limit <size>] [--dry-run]
       Keep target/ under a size limit (default 30GB; sizes like 30GB, 20G, 500MB, 2GiB) with cargo-sweep: the
       least recently used build units go first (never incremental/; `cargo clean` is the full reset). Refuses while
@@ -38,25 +39,16 @@ RC_AUDIO=0; cargo-nextest when installed, else `cargo test --workspace --feature
       just that crate's (without nextest every crate runs: a single one would rebuild).
   test-job <area>... [--test <binary>]...
       The per-job tier: the unit tests plus the integration binaries of each area. Areas (aliases):
-        hero, weapons, classes (creatures, mobys), world (levels, collision, water), ui (menus, hud, map, save,
-        vendor), audio, formats, data, extract, video (movies), engine (render, input: unit tests only), particles
-        (fx: the ported classes' particle consumers), trace,
-        repo (guards, layout), shared (for shared code: the all-levels smoke, and the NO_IDLE hero digest
-        compared with work/test-results/hero_digest_no_idle.txt).
+        game (hero, classes, mobys, camera, audio, particles: unit tests only), formats, engine (render, input:
+        unit tests only), repo (guards, layout).
       --test <binary>     also run this integration binary whole (repeatable); with no area, only the binaries
-                          (no unit tests, no digest). Binaries: hero weapons classes world ui formats data extract
-                          movies trace guards.
+                          (no unit tests). Binaries: formats guards.
   test-full
-      The full suite (on merge to main, or when the coordinator asks), then the NO_IDLE hero digest compared
-      with the baseline; a mismatch fails. It never rewrites the baseline. Then `sweep` (a failure only warns).
-  digest-baseline
-      The only command that writes the NO_IDLE hero digest baseline, and prints what changed: for a human who
-      has decided a digest change is intended, or before a job's first edit when there is none.
+      The full suite (on merge to main, or when the coordinator asks), then `sweep` (a failure only warns).
     Targeting options of test-quick and test-job (the same meaning under both runners):
-      --filter <name>     only tests whose path contains <name> (repeatable: any), e.g. hero_novalis:: or a fn name;
-                          a filtered test-job skips the digest
+      --filter <name>     only tests whose path contains <name> (repeatable: any), e.g. disc:: or a fn name
       --exact             the filters are full paths, <module>::<test_fn>
-      --ignored           only the ignored tests (surveys, printers); a filtered test-job skips the digest
+      --ignored           only the ignored tests (surveys, printers)
       --nocapture         show the tests' output
     Options of the test commands:
       --cargo-test        use `cargo test --workspace --features rc-engine/dev` even when nextest is installed
@@ -87,7 +79,6 @@ fn main() -> ExitCode {
         "test-quick" => test::quick(rest),
         "test-job" => test::job(rest),
         "test-full" => test::full(rest),
-        "digest-baseline" => test::baseline(rest),
         "sweep" => sweep::main(rest),
         "help" | "--help" | "-h" => { println!("{HELP}"); ExitCode::SUCCESS }
         other => {

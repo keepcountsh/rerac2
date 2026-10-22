@@ -8,7 +8,7 @@ Dev only, never ships. No dependencies; it exists for its tests. Rules: `docs/pl
   1. No product crate (`crates/*/Cargo.toml`) depends on anything under `tools/` (every `path = "..."` is resolved,
      and no manifest names a tool package: `rc-trace`, `repo-checks`, `xtask`).
   2. No test relies on personal files (docs/workflows/testing.md §10). Every file under `crates/` and every tool's
-     `tests/` folder is free of `.p2s`, `~/PS2`, `PS2/ratchet1`, `work/`, `/traces/`, `RC_PERSONAL`, `.mov` and
+     `tests/` folder is free of `.p2s`, `~/PS2`, `PS2/ratchet2`, `work/`, `/traces/`, `RC_PERSONAL`, `.mov` and
      `Screen Recording`; files under a `tests/` folder also never read `RC_ISO` or `HOME` (`home_dir`,
      `Application Support`). There is no allow-list. Tool sources (`tools/*/src`) are not scanned: the dev tools read
      personal material on purpose (`src/lib.rs` `guarded_dirs`).

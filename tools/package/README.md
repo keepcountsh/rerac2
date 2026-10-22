@@ -6,7 +6,7 @@ Dev only, never ships itself. Workflow: `docs/workflows/release.md`.
   zips it.
 * **Command:** `tools/package/package.sh` (release build, then package); `--no-build` packages the binaries already in
   `target/release`.
-* **Inputs:** `target/release/rerac` and `rerac-extract`, `crates/rc-engine/assets/shaders/*.wgsl`, the workspace version
+* **Inputs:** `target/release/rerac` and `rerac2-extract`, `crates/rc-engine/assets/shaders/*.wgsl`, the workspace version
   (`version` under `[workspace.package]` in `Cargo.toml`).
 * **Outputs:** `dist/rerac-<version>-<os>-<arch>/` and its `.zip` (git-ignored). The folder is checked against an
   exact allow-list (the two binaries, `assets/shaders/*.wgsl`, `rerac-manifest.json`, `README.txt`), so nothing

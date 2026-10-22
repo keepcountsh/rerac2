@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Builds a ReRAC version folder and zips it (launcher contract: docs/plan/launcher_contract.md).
 #
-#   tools/package/package.sh              release build of `rerac` + `rerac-extract`, then package
+#   tools/package/package.sh              release build of `rerac` + `rerac2-extract`, then package
 #   tools/package/package.sh --no-build   package the binaries already in target/release
 #
 # Output: dist/rerac-<version>-<os>-<arch>/ and dist/rerac-<version>-<os>-<arch>.zip, holding
 #   rerac[.exe]              the runtime (crate rc-engine; plain release build, never `--features dev`)
-#   rerac-extract[.exe]      the extractor (crate rc-extract)
+#   rerac2-extract[.exe]      the extractor (crate rc-extract)
 #   assets/shaders/*.wgsl    the runtime's shaders (found next to the executable; rc-engine main.rs `asset_dir`)
 #   rerac-manifest.json      the version manifest, version taken from [workspace.package] in Cargo.toml
 #   README.txt
@@ -56,18 +56,18 @@ if [ "$build" = 1 ]; then
   cargo build --release --locked -p rc-engine -p rc-extract --bins
   echo "build: $(( $(date +%s) - start )) s"
 fi
-for b in rerac rerac-extract; do
+for b in rerac rerac2-extract; do
   [ -x "$target/$b$exe" ] || { echo "missing $target/$b$exe (run without --no-build)" >&2; exit 1; }
 done
 
 rm -rf "$out" "$dist/$name.zip"
 mkdir -p "$out/assets"
-cp "$target/rerac$exe" "$target/rerac-extract$exe" "$out/"
+cp "$target/rerac$exe" "$target/rerac2-extract$exe" "$out/"
 cp -R crates/rc-engine/assets/. "$out/assets/"
 find "$out/assets" -name '.*' -type f -delete
 
 cat > "$out/rerac-manifest.json" <<EOF
-{"schema":1,"name":"rerac","version":"$version","game":"rac1","runtime":"rerac$exe","extractor":"rerac-extract$exe","supported_discs":["SCUS_971.99"],"data_format":1}
+{"schema":1,"name":"rerac","version":"$version","game":"rac1","runtime":"rerac$exe","extractor":"rerac2-extract$exe","supported_discs":["SCUS_971.99"],"data_format":1}
 EOF
 
 cat > "$out/README.txt" <<EOF
@@ -79,11 +79,11 @@ Normal use: add this folder as a version in the ReRAC launcher. The launcher run
 extractor and starts the game.
 
 By hand:
-  ./rerac-extract identify --iso <your disc>.iso
-  ./rerac-extract extract --iso <your disc>.iso --out <data folder>
+  ./rerac2-extract identify --iso <your disc>.iso
+  ./rerac2-extract extract --iso <your disc>.iso --out <data folder>
   ./rerac --data-dir <data folder>
 
-Files: rerac (the game), rerac-extract (the extractor), assets/ (shaders, must stay next
+Files: rerac (the game), rerac2-extract (the extractor), assets/ (shaders, must stay next
 to rerac), rerac-manifest.json (the launcher's version manifest).
 Exit codes of rerac: 2 bad arguments, 3 data folder missing or incomplete, 4 data made for
 another version (re-extract).
@@ -94,7 +94,7 @@ fi
 
 # Allow-list: exactly the files above, and only .wgsl under assets/. Anything else fails the package.
 unexpected="$(cd "$out" && find . -type f \
-  ! -path "./rerac$exe" ! -path "./rerac-extract$exe" ! -path ./rerac-manifest.json ! -path ./README.txt \
+  ! -path "./rerac$exe" ! -path "./rerac2-extract$exe" ! -path ./rerac-manifest.json ! -path ./README.txt \
   ! -path './assets/shaders/*.wgsl')"
 if [ -n "$unexpected" ]; then
   echo "unexpected files in the package (allow-list in tools/package/package.sh):" >&2

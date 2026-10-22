@@ -77,7 +77,7 @@ fn personal_patterns_match_segments_only() {
     let (w, ps2, p2s) = ("work", "PS2", "p2s");
     assert_eq!(personal_hits(&format!("see {w}/decomp/level01.elf")), [PERSONAL_PATTERNS[3]]);
     assert!(personal_hits("the framework/ folder and network/io").is_empty());
-    assert_eq!(personal_hits(&format!("~/{ps2}/ratchet1/savestates/x.{p2s}")), PERSONAL_PATTERNS[..3]);
+    assert_eq!(personal_hits(&format!("~/{ps2}/ratchet2/savestates/x.{p2s}")), PERSONAL_PATTERNS[..3]);
     assert_eq!(personal_hits(&format!("{} {} 2026-09-29.{}", "Screen", "Recording", "mov")), PERSONAL_PATTERNS[6..]);
     assert!(personal_hits("self.moved[i] = true; m.movie").is_empty());
     let (iso, home) = ("RC_ISO", "HOME");

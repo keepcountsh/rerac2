@@ -1,5 +1,5 @@
 //! SHA-1 (FIPS 180-4), in-workspace so the extractor stays dependency-free. Used only to identify builds, to check
-//! files against the committed size/SHA-1 table (`rerac-extract`, re-exported as `rc_extract::sha1`); not for anything
+//! files against the committed size/SHA-1 table (`rerac2-extract`, re-exported as `rc_extract::sha1`); not for anything
 //! security-relevant.
 
 #[derive(Clone)]

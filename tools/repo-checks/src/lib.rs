@@ -20,7 +20,7 @@ pub const TOP_LEVEL_FILES: &[&str] = &["Cargo.toml", "Cargo.lock", "README.md", 
 
 /// Text no product or test file may contain: savestates, the personal folder, dev output, recordings, the personal
 /// env var. `work/`, `/traces/` and `.mov` count only as a path segment / extension ([`personal_hits`]).
-pub const PERSONAL_PATTERNS: &[&str] = &[".p2s", "~/PS2", "PS2/ratchet1", "work/", "/traces/", "RC_PERSONAL", ".mov", "Screen Recording"];
+pub const PERSONAL_PATTERNS: &[&str] = &[".p2s", "~/PS2", "PS2/ratchet2", "work/", "/traces/", "RC_PERSONAL", ".mov", "Screen Recording"];
 
 /// Also forbidden in test files (a `tests/` folder): reading the disc image or anything under the home folder. The
 /// product reads them on purpose (the extractor's `RC_ISO`, the port settings file under `HOME`); a test never does.

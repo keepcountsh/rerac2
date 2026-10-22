@@ -59,3 +59,7 @@ the system belongs to.
   (R&C2's ports took what applied; R&C1's stay the map for the rest, cited as `rerac:rc_game::…`).
 - **R&C1's data plumbing**: its disc tables (`SCUS_971.99`), the Tier 1 export, the `rc-data` crate, the golden
   snapshot tests, and the extractor and trace commands for R&C1's files.
+- **R&C1's Ghidra tooling**: its name tables (`tools/ghidra/names/`: Lombyte's boot names, the overlay clusters, the
+  names from the docs) and the scripts that apply them to R&C1's project. They are the source for naming Going
+  Commando's functions by Version Tracking; `tools/ghidra/scripts/crossgame_diff.py` reads R&C1's overlay and
+  decompiler export from R&C1's own folder.

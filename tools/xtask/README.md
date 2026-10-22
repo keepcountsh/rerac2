@@ -89,17 +89,17 @@ What it does, in order:
      them too.
    `--check` stops here and changes nothing (no disc needed). It never replaces `/`, your home folder, the repository
    or a folder holding `.git` / `Cargo.toml`; inside the repo only `extracted/` or a folder under `work/`.
-3. **Extract into staging.** It builds `rerac-extract` with the normal dev profile (`cargo build -p rc-extract`,
+3. **Extract into staging.** It builds `rerac2-extract` with the normal dev profile (`cargo build -p rc-extract`,
    never `--release`) and runs `extract` (which ends with `prepare`, the engine cache) into a staging folder on the
    same filesystem: `work/data-staging` for `<repo>/extracted`, else `.<name>.xtask-staging` next to the folder.
-4. **Verify** the staging folder (`rerac-extract verify`: every Tier 0 file's size and SHA-1).
+4. **Verify** the staging folder (`rerac2-extract verify`: every Tier 0 file's size and SHA-1).
 5. **Swap.** The old folder is renamed aside (`work/data-old`, or `.<name>.xtask-old`), the new one renamed in, the
    old one deleted. Any failure before the swap deletes the staging folder and leaves the old folder untouched; a run
    killed mid-swap is repaired by the next run (the aside folder is restored or deleted).
 6. **Summary:** files, bytes, engine cache lumps and size, and the time of each step.
 
 Timing on the author's Mac (2026-09-27, ISO in the page cache): extract + prepare 4.3 s, verify 3 s, a no-op build
-0.1 s, swap 0.2 s; about 8 s in all, plus a few seconds when `rerac-extract` needs rebuilding. The dev profile builds the
+0.1 s, swap 0.2 s; about 8 s in all, plus a few seconds when `rerac2-extract` needs rebuilding. The dev profile builds the
 workspace crates at `opt-level = 1`, which is enough: the extractor is I/O-bound, as fast as the release build.
 It needs free space for the new data (about 4.4 GiB) while the old folder still exists.
 

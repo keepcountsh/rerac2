@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
 """Going Commando's census tag table (docs/plan/rac2_class_census.md, "Method" step 4).
 
-Writes tools/ghidra/names/census_systems_rac2.tsv from:
-  * work/census-rac2/shared.tsv (a census run without tags: every shared function and global the unported units use);
+Writes tools/ghidra/names/census_systems.tsv from:
+  * work/census/shared.tsv (a census run without tags: every shared function and global the unported units use);
   * the citations of each address in R&C2's port and docs (crates/rc-game, crates/rc-engine/src/rac2*,
     crates/rc-formats/src/rac2, docs/plan/rac2*): each citing line is read; a line that says the thing is not ported
     (not ported / not yet / later / not drawn / not modelled / waits / stub) counts against, any other line of code
     for. One line of code for: has (the port names it as its model); only lines against: missing; only doc mentions:
     left for the manual table. The citing file names the system;
-  * the manual rows of tools/census/rac2_tags_manual.tsv (read in the decomp: they win over the generated ones).
+  * the manual rows of tools/census/tags_manual.tsv (read in the decomp: they win over the generated ones).
 Uncited functions stay untagged unless a manual row or a range rule (the vector maths 0x2ee000..0x2f0200: trivial)
-places them. Run from the repo root:  python3 tools/census/rac2_tags.py [path/to/shared.tsv]
+places them. Run from the repo root:  python3 tools/census/tags.py [path/to/shared.tsv]
 """
 import os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CITES = ["crates/rc-game/", "crates/rc-engine/src/rac2", "crates/rc-formats/src/rac2", "docs/plan/rac2"]
+# Files that came from R&C1's port with its level01 / boot addresses (docs/plan/porting_from_rac1.md): their numbers
+# are not Going Commando's.
+RAC1_ADDRESSED = ["crates/rc-game/src/audio", "crates/rc-game/src/collision", "crates/rc-game/src/hero/anim.rs",
+                  "crates/rc-game/src/hero/quat.rs", "crates/rc-game/src/pad.rs", "crates/rc-game/src/particles/pool.rs",
+                  "crates/rc-game/src/particles/type23.rs", "crates/rc-game/src/particles/type48.rs",
+                  "crates/rc-game/src/point_lights.rs", "crates/rc-game/src/ps2v.rs", "crates/rc-game/src/scene_camera.rs",
+                  "crates/rc-game/src/spline.rs"]
 NEG = re.compile(r"not ported|not yet|\blater\b|not drawn|not modell?ed|waits? for|\bstub|isn't ported|not read yet|left out|not wired|unported", re.I)
 
 # The system a citing file stands for (first match).
@@ -50,7 +57,7 @@ def files():
                 if not (f.endswith(".rs") or f.endswith(".md")):
                     continue
                 p = os.path.relpath(os.path.join(d, f), ROOT)
-                if any(p.startswith(c) for c in CITES):
+                if any(p.startswith(c) for c in CITES) and not any(p.startswith(x) for x in RAC1_ADDRESSED):
                     yield p
 
 
@@ -105,12 +112,10 @@ def infer(shared, rows):
 
 
 def main():
-    shared = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "work/census-rac2/shared.tsv")
-    if not os.path.exists(shared):
-        shared = "/Users/aslanhud/Repos/randcre/work/census-rac2/shared.tsv"
+    shared = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "work/census/shared.tsv")
     cites = citations()
     manual = {}
-    mpath = os.path.join(ROOT, "tools/census/rac2_tags_manual.tsv")
+    mpath = os.path.join(ROOT, "tools/census/tags_manual.tsv")
     if os.path.exists(mpath):
         for l in open(mpath):
             if l.startswith("#") or not l.strip() or l.startswith("key\t"):
@@ -152,9 +157,9 @@ def main():
         if k not in seen:
             rows.append(c)
     infer(shared, rows)
-    out = os.path.join(ROOT, "tools/ghidra/names/census_systems_rac2.tsv")
+    out = os.path.join(ROOT, "tools/ghidra/names/census_systems.tsv")
     with open(out, "w") as fh:
-        fh.write("# Going Commando census tags (tools/census/rac2_tags.py; manual rows: tools/census/rac2_tags_manual.tsv).\n")
+        fh.write("# Going Commando census tags (tools/census/tags.py; manual rows: tools/census/tags_manual.tsv).\n")
         fh.write("# conf: cite = from the port's citing lines; range = the vector maths range; L = read in the decomp, inferred;\n")
         fh.write("#   leaf = a leaf of at most 12 words; near = a level copy's L00 twin; wrap = a thin wrapper's callee;\n")
         fh.write("#   calls = at most 40 words whose callees are all placed, with at most one system past the maths.\n")

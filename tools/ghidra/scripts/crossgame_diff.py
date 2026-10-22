@@ -14,12 +14,13 @@ and the %lo that completes them, $gp-relative offsets), plus two looser tiers:
 `--similar NAME...` finds the closest Ratchet 2 function for a changed one and says how much of it survives.
 A match needs a unique counterpart; ambiguous hashes (tiny functions) count as `?` unless the names say otherwise.
 
-    crossgame_diff.py [--rc1 extracted/levels/01/overlay.bin] [--rc1-index work/decomp/level01.elf/index.tsv]
-                      [--rc2 work/ghidra-import/rc2/level01.overlay.bin] [--rc2-funcs work/ghidra-import/rc2/level01_functions.json]
+    crossgame_diff.py --rc1 <R&C1 extracted/levels/01/overlay.bin> --rc1-index <R&C1 work/decomp/level01.elf/index.tsv>
+                      [--rc2 work/ghidra-import/level01.overlay.bin] [--rc2-funcs work/ghidra-import/level01_functions.json]
                       [--out work/crossgame/level01.tsv] [--cite crates/rc-game/src/hero]
 
 Writes a TSV (rc1 address, name, status, rc2 address, words) and prints the totals, plus the status of every
-function the Rust sources under --cite mention by address.
+function the Rust sources under --cite mention by address. The Ratchet 1 inputs are R&C1's (its data folder and its
+decompiler export, docs/plan/porting_from_rac1.md).
 """
 import argparse, glob, json, os, re, struct, sys
 from collections import Counter, defaultdict
@@ -143,10 +144,10 @@ def functions(text_start, text, starts):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--rc1", default="extracted/levels/01/overlay.bin")
-    ap.add_argument("--rc1-index", default="work/decomp/level01.elf/index.tsv")
-    ap.add_argument("--rc2", default="work/ghidra-import/rc2/level01.overlay.bin")
-    ap.add_argument("--rc2-funcs", default="work/ghidra-import/rc2/level01_functions.json")
+    ap.add_argument("--rc1", required=True, help="R&C1's level 01 overlay.bin")
+    ap.add_argument("--rc1-index", required=True, help="R&C1's decompiler export index of level01.elf")
+    ap.add_argument("--rc2", default="work/ghidra-import/level01.overlay.bin")
+    ap.add_argument("--rc2-funcs", default="work/ghidra-import/level01_functions.json")
     ap.add_argument("--out", default="work/crossgame/level01.tsv")
     ap.add_argument("--cite", action="append", default=[], help="Rust source folder whose 0x addresses to report")
     ap.add_argument("--similar", nargs="*", default=[], help="Ratchet 1 function names: print the closest Ratchet 2 function by masked-sequence similarity (slow: a few seconds each)")

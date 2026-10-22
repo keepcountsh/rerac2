@@ -1,10 +1,10 @@
 //! `cargo xtask regen-data`: rebuild the dev game data folder from the user's disc image with the dev build of
-//! `rerac-extract`, without ever leaving the user without data.
+//! `rerac2-extract`, without ever leaving the user without data.
 //!
 //! 1. The disc: `--iso` or `RC_ISO`; when missing, print how to set `RC_ISO` once (fish, bash/zsh).
 //! 2. The folder (`--data-dir`, else `RC_EXTRACTED`, else `<repo>/extracted`) may hold only what the extractor writes
-//!    (the Tier 0 table's files, `extract-info.json`, `cache/`, `exports/`) and the retired C++ extractor's known
-//!    leftovers ([`classify::LEFTOVER_KINDS`], listed with counts and deleted). Anything else stops the run unless
+//!    (the Tier 0 table's files, `extract-info.json`, `cache/`, `exports/`) and known leftovers
+//!    ([`classify::LEFTOVER_KINDS`], listed with counts and deleted). Anything else stops the run unless
 //!    `--force`.
 //! 3. Extract into a staging folder (`work/data-staging` for `<repo>/extracted`, else a hidden sibling), verify it,
 //!    then rename the old folder aside, rename the new one in and delete the old one. A failure before the swap
@@ -134,10 +134,10 @@ fn print_missing_iso() {
 
 fn print_report(d: &Path, r: &Report) {
     println!("regen-data: data folder {}", d.display());
-    println!("  written by rerac-extract:            {:>7} files  {:>10}", count(r.extractor.files), gib(r.extractor.bytes));
+    println!("  written by rerac2-extract:           {:>7} files  {:>10}", count(r.extractor.files), gib(r.extractor.bytes));
     let lt = r.leftover_total();
     if lt.files > 0 {
-        println!("  known C++ extractor leftovers:       {:>7} files  {:>10}  (stale; deleted with the old folder)", count(lt.files), gib(lt.bytes));
+        println!("  known leftovers:                     {:>7} files  {:>10}  (stale; deleted with the old folder)", count(lt.files), gib(lt.bytes));
         for (kind, t) in LEFTOVER_KINDS.iter().zip(&r.leftovers).filter(|(_, t)| t.files > 0) {
             println!("      {:<33}{:>7} files  {:>10}", kind, count(t.files), gib(t.bytes));
         }
@@ -234,7 +234,7 @@ pub fn run(argv: &[OsString]) -> ExitCode {
         eprintln!("error: {what}; {} is unchanged (the staging folder was deleted)", d.display());
         ExitCode::FAILURE
     };
-    println!("regen-data: building rerac-extract (dev profile)");
+    println!("regen-data: building rerac2-extract (dev profile)");
     let t = Instant::now();
     match cargo().args(["build", "-q", "-p", "rc-extract"]).current_dir(&repo).status() {
         Ok(s) if s.success() => {}
@@ -248,7 +248,7 @@ pub fn run(argv: &[OsString]) -> ExitCode {
     let t = Instant::now();
     match extractor(&["extract".as_ref(), "--iso".as_ref(), iso.as_os_str(), "--out".as_ref(), staging.as_os_str()]) {
         Ok(s) if s.success() => {}
-        Ok(s) => return fail(&format!("rerac-extract extract failed ({s})")),
+        Ok(s) => return fail(&format!("rerac2-extract extract failed ({s})")),
         Err(e) => return fail(&format!("cannot run cargo: {e}")),
     }
     let t_extract = t.elapsed().as_secs_f64();
@@ -257,7 +257,7 @@ pub fn run(argv: &[OsString]) -> ExitCode {
     let t = Instant::now();
     match extractor(&["verify".as_ref(), "--out".as_ref(), staging.as_os_str()]) {
         Ok(s) if s.success() => {}
-        Ok(s) => return fail(&format!("rerac-extract verify failed ({s})")),
+        Ok(s) => return fail(&format!("rerac2-extract verify failed ({s})")),
         Err(e) => return fail(&format!("cannot run cargo: {e}")),
     }
     let t_verify = t.elapsed().as_secs_f64();
@@ -294,7 +294,7 @@ pub fn run(argv: &[OsString]) -> ExitCode {
     if let Some(r) = before {
         let lt = r.leftover_total();
         println!(
-            "  removed:  the old folder: {} extractor files, {} C++ leftovers ({}){}",
+            "  removed:  the old folder: {} extractor files, {} leftovers ({}){}",
             count(r.extractor.files), count(lt.files), gib(lt.bytes),
             if r.unknown.is_empty() { String::new() } else { format!(", {} unknown files (--force)", count(r.unknown.len() as u64)) }
         );

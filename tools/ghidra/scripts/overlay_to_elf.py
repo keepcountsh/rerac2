@@ -2,15 +2,14 @@
 """Turn Insomniac "Ratchet executable" level overlays into ELFs Ghidra can load.
 
 The overlay (docs/formats/wad_layouts_rac1.md §4) is a bare run of `[16-byte header][data]` sections with no
-names. This writes the same ELF the retired C++ extractor wrote for Ratchet 1 (`work/ghidra-import/levelNN.elf`):
-one PT_LOAD per PROGBITS section, the seven donor section names, e_flags 0x20924001 so the Emotion Engine module
+names. This writes the ELF R&C1's retired C++ extractor wrote for its levels: one PT_LOAD per PROGBITS section, the seven donor section names, e_flags 0x20924001 so the Emotion Engine module
 picks r5900.
 
 Usage:
-  overlay_to_elf.py --overlay extracted/levels/01/overlay.bin --out level01.elf
-  overlay_to_elf.py --rc2-dir "<extracted RC2 disc folder with G/LEVELn.WAD>" --out-dir work/ghidra-import/rc2
+  overlay_to_elf.py [--disc extracted] [--out-dir work/ghidra-import]
+  overlay_to_elf.py --overlay <overlay.bin> --out <levelNN.elf>
 
-The RC2 path reads `G/LEVELn.WAD` directly: the level WAD header (0x60 bytes: data SectorRange at 0x10; 0x68 bytes:
+The disc form reads `G/LEVELn.WAD` directly: the level WAD header (0x60 bytes: data SectorRange at 0x10; 0x68 bytes:
 at 0x0c), then the level data WAD whose header starts with the overlay ByteRange. It also copies the boot ELF and
 writes `overlay.bin` next to each ELF.
 """
@@ -130,28 +129,26 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--overlay", help="one overlay.bin to convert")
     ap.add_argument("--out", help="output ELF for --overlay")
-    ap.add_argument("--rc2-dir", help="extracted Ratchet 2 disc folder (holds G/LEVELn.WAD and the boot ELF)")
-    ap.add_argument("--out-dir", help="output folder for --rc2-dir")
+    ap.add_argument("--disc", default="extracted", help="the disc's files (G/LEVELn.WAD and the boot ELF)")
+    ap.add_argument("--out-dir", default="work/ghidra-import", help="output folder for the disc form")
     a = ap.parse_args()
     if a.overlay:
         convert(open(a.overlay, "rb").read(), a.out or os.path.splitext(a.overlay)[0] + ".elf", a.overlay)
-    elif a.rc2_dir:
-        out_dir = a.out_dir or "work/ghidra-import/rc2"
+    else:
+        out_dir = a.out_dir
         os.makedirs(out_dir, exist_ok=True)
-        boots = [n for n in os.listdir(a.rc2_dir) if n.startswith("SCUS_") or n.startswith("SCES_")]
+        boots = [n for n in os.listdir(a.disc) if n.startswith("SCUS_") or n.startswith("SCES_")]
         for b in boots:
-            shutil.copyfile(os.path.join(a.rc2_dir, b), os.path.join(out_dir, b))
+            shutil.copyfile(os.path.join(a.disc, b), os.path.join(out_dir, b))
             print(f"boot ELF {b} copied")
         n = 0
-        while os.path.exists(os.path.join(a.rc2_dir, "G", f"LEVEL{n}.WAD")):
-            blob = rc2_level_overlay(os.path.join(a.rc2_dir, "G", f"LEVEL{n}.WAD"))
+        while os.path.exists(os.path.join(a.disc, "G", f"LEVEL{n}.WAD")):
+            blob = rc2_level_overlay(os.path.join(a.disc, "G", f"LEVEL{n}.WAD"))
             with open(os.path.join(out_dir, f"level{n:02d}.overlay.bin"), "wb") as f:
                 f.write(blob)
             convert(blob, os.path.join(out_dir, f"level{n:02d}.elf"), f"LEVEL{n}")
             n += 1
         print(f"{n} levels")
-    else:
-        ap.error("give --overlay or --rc2-dir")
 
 
 if __name__ == "__main__":

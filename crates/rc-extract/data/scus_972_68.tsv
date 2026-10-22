@@ -1,6 +1,6 @@
-# ReRAC Tier 0 table: SCUS_972.68 v2.00. 96 files, 3807638923 bytes.
+# ReRAC2 Tier 0 table: SCUS_972.68 v2.00. 96 files, 3807638923 bytes.
 # Sizes and SHA-1 hashes only (no disc bytes). Columns: path<TAB>size<TAB>sha1.
-# Regenerate: rerac-extract table --iso <image> --output crates/rc-extract/data/<serial>.tsv
+# Regenerate: rerac2-extract table --iso <image> --output crates/rc-extract/data/<serial>.tsv
 SYSTEM.CNF	60	dc7cc255c05f0f26808d521dc642c4744f0138e9
 RC2.HDR	408444	e134158b5ba10bf8c049e3ada809d45909220fda
 SCUS_972.68	2621256	4124a79c1e5a1ceb56f514df0dbbc11f072af56f
