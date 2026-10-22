@@ -43,13 +43,66 @@ impl Plugin for PlayPlugin {
             .init_resource::<CanopyDraw>()
             .init_resource::<ShotDraw>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
-            .add_systems(FixedUpdate, tick)
+            .add_systems(FixedUpdate, (tick, pause_tick).chain().after(crate::card::CardStep))
             .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created)))
             .add_systems(PostUpdate, draw_canopy.before(bevy::asset::AssetEventSystems))
             .add_systems(PostUpdate, draw_shots.before(bevy::asset::AssetEventSystems))
             .add_systems(PostUpdate, occlusion_mode.before(crate::occlusion::OcclusionSet))
             .add_systems(RunFixedMainLoop, play_camera::apply.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop))
             .add_systems(crate::level_switch::LevelUnload, (unload, crate::level_switch::remove::<GameHud>, crate::level_switch::remove::<crate::mobys::CreatedDraw>, crate::level_switch::reset::<CanopyDraw>, crate::level_switch::reset::<ShotDraw>));
+    }
+}
+
+/// Quit Game: the front end comes back (crate::front_end), the running game ends.
+#[derive(Resource)]
+pub(crate) struct ReturnToFrontEnd;
+
+/// The pause's pages, after the game's tick read the pad (rc_game::menus: the pause list, Options, the save and load
+/// pages, Port Options, Quit Game).
+#[allow(clippy::too_many_arguments)]
+fn pause_tick(
+    mut commands: Commands,
+    play: Option<ResMut<Play>>,
+    card: Option<ResMut<crate::card::Card>>,
+    mut gfx: ResMut<crate::graphics::GraphicsSettings>,
+    mut display: ResMut<crate::display::DisplaySettings>,
+) {
+    let Some(mut play) = play else { return };
+    let p = &mut *play;
+    if p.pause.is_none() { return; }
+    let Some(mut card) = card else {
+        p.pause = None;
+        return;
+    };
+    let c = &mut *card;
+    if std::mem::take(&mut p.pause_opened) { p.game.store(&mut c.save); }
+    let mut port = crate::port_options::values(&gfx, &display);
+    let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
+    let mut cx = rc_game::menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut port, option_rows: &[] };
+    let Some(m) = p.pause.as_mut() else { return };
+    let outs = m.tick((p.pad.pressed & 0xffff) as u16, &mut cx);
+    use rc_game::menus::Out;
+    for o in outs {
+        match o {
+            Out::Resume | Out::MainMenu | Out::Close => p.pause = None,
+            Out::Port(s, v) => crate::port_options::apply(s, v, &mut gfx, &mut display),
+            Out::Loaded { level } => {
+                // The loaded game, on its level (the level change carries it: [`unload`]).
+                let mut g = rc_game::game::GameState::default();
+                g.load(&c.save);
+                p.game = g;
+                p.game.next_level = Some(level.max(0));
+                p.pause = None;
+            }
+            Out::Quit => {
+                println!("play: Quit Game: back to the front end");
+                commands.insert_resource(ReturnToFrontEnd);
+                commands.remove_resource::<Play>();
+                commands.remove_resource::<Carry>();
+                p.pause = None;
+            }
+            Out::NewGame | Out::Sound(_) => {}
+        }
     }
 }
 
@@ -109,6 +162,10 @@ pub(crate) struct Play {
     movie_started: bool,
     /// His looping sounds' slots per channel (`0x18c24c`).
     hero_loops: [i32; 9],
+    /// The pause's pages (rc_game::menus) while the game is stopped, and its first frame (the game state is stored
+    /// into the card's save data then, for the save page).
+    pause: Option<rc_game::menus::Menus>,
+    pause_opened: bool,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -219,6 +276,11 @@ fn tick(
         None => rc_game::pad::PadInput::neutral(),
     };
     p.pad.update(Some(&input.bytes()), false);
+    // The pause: the game stops while its pages run ([`pause_tick`]); the frame count goes on (the pad script reads it).
+    if p.pause.is_some() {
+        p.ticks += 1;
+        return;
+    }
     p.game.frame += 1;
     match p.game.scenes.mode {
         rc_game::scene::SCENE => {
@@ -244,6 +306,13 @@ fn tick(
             return;
         }
         _ => {}
+    }
+    // Start (level 00 `0x3706f0`: mode 3 kind 1, after the level's first 8 frames, not while dying or in a vehicle's
+    // states 0x6f / 0x31).
+    if p.pad.pressed & rc_game::pad::button::START != 0 && 7 < p.game.frame && !matches!(p.hero.state, 0x6f | 0x31) {
+        p.pause = Some(rc_game::menus::Menus::pause(0).0);
+        p.pause_opened = true;
+        return;
     }
     let lv = &level.0;
     let Some(coll) = lv.collision.as_ref() else { return };
@@ -841,6 +910,9 @@ fn draw_hud(
     mut composites: ResMut<Assets<crate::hud_render::HudComposite>>,
     flycams: Query<Entity, With<crate::fly_cam::FlyCam>>,
     level: Res<crate::Level>,
+    card: Option<Res<crate::card::Card>>,
+    gfx: Res<crate::graphics::GraphicsSettings>,
+    display: Res<crate::display::DisplaySettings>,
 ) {
     let Some(p) = play.as_mut() else { return };
     let Some(hud) = hud else {
@@ -858,6 +930,15 @@ fn draw_hud(
                     let f = h.icon_frame(id, 0);
                     if let Ok(t) = h.decode_frame_raw(f) {
                         icons.insert((id, 0), (textures.len(), [t.width as f32, t.height as f32]));
+                        textures.push(t);
+                    }
+                }
+                // The pause's pages (rc_game::menus): the Options icons, the save slots' icons and picture.
+                let menu = (0..8).map(|f| (0xea9eu16, f)).chain([(rc_game::menus::ICON_SLOT, 2), (rc_game::menus::ICON_SLOT, 3), (rc_game::menus::ICON_SLOT, 4), (rc_game::menus::ICON_PICTURE, 0)]);
+                for (id, f) in menu {
+                    if !h.has_icon(id) || icons.contains_key(&(id, f)) { continue; }
+                    if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {
+                        icons.insert((id, f), (textures.len(), [t.width as f32, t.height as f32]));
                         textures.push(t);
                     }
                 }
@@ -880,7 +961,14 @@ fn draw_hud(
     let p: &mut Play = p;
     let mut quads = Vec::new();
     if let Some(pic) = p.movie_picture.take() { hud.layer.write(&mut images, crate::front_end::MOVIE, &pic); }
-    if p.game.scenes.mode == rc_game::scene::MOVIE {
+    if let (Some(m), Some(c)) = (p.pause.as_ref(), card.as_deref()) {
+        // The page loop's picture (`0x2ccc18`): the stopped game darkened, then the pages.
+        rc_game::gui::fill(&mut quads, [0, 0, 0, 0x38]);
+        let port = crate::port_options::values(&gfx, &display);
+        let view = rc_game::menus::View { card: &c.mc, save: &c.save, port: &port, option_rows: &[] };
+        let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+        quads.extend(m.draw(hud.data.assets(), &view, &icon));
+    } else if p.game.scenes.mode == rc_game::scene::MOVIE {
         rc_game::gui::picture(&mut quads, rc_game::gui::Picture::Movie);
     } else if p.game.scenes.mode != rc_game::scene::SCENE {
         // In a scene the HUD and the help are not drawn (`0x2e6d88`).
@@ -1159,7 +1247,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
-        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9],
+        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false,
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })

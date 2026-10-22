@@ -146,6 +146,93 @@ pub enum Page {
     Options,
     Toggle(Toggle),
     Port,
+    /// In the game: the pause list (mode 3 kind 1, level 00 page `0x281d48`), its Options (`0x2844b0`), the save
+    /// page (kind 4) and the quit question (mode 4 kind 9).
+    Pause,
+    PauseOptions,
+    Save,
+    Quit,
+}
+
+/// The pause list's rows (`0x345740`, on foot: the texts `0x1abb30`) and the port's Port Options after Options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseRow {
+    Weapons,
+    Gadgets,
+    QuickSelect,
+    Items,
+    Help,
+    Options,
+    Port,
+    Special,
+}
+
+impl PauseRow {
+    pub const ALL: [PauseRow; 8] =
+        [PauseRow::Weapons, PauseRow::Gadgets, PauseRow::QuickSelect, PauseRow::Items, PauseRow::Help, PauseRow::Options, PauseRow::Port, PauseRow::Special];
+    fn text(self) -> u32 {
+        match self {
+            PauseRow::Weapons => 0x2be7,
+            PauseRow::Gadgets => 0x2be8,
+            PauseRow::QuickSelect => 0x2be9,
+            PauseRow::Items => 0x2bea,
+            PauseRow::Help => 0x2beb,
+            PauseRow::Options | PauseRow::Port => 0x2bec,
+            PauseRow::Special => 0x2c49,
+        }
+    }
+}
+
+/// The in-game Options rows (`0x28a0b8`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseOption {
+    HelpDesk,
+    Save,
+    Load,
+    Controls,
+    Sound,
+    Camera,
+    Subtitles,
+    Quit,
+}
+
+impl PauseOption {
+    pub const ALL: [PauseOption; 8] =
+        [PauseOption::HelpDesk, PauseOption::Save, PauseOption::Load, PauseOption::Controls, PauseOption::Sound, PauseOption::Camera, PauseOption::Subtitles, PauseOption::Quit];
+    fn text(self) -> u32 {
+        match self {
+            PauseOption::HelpDesk => 0x2c29,
+            PauseOption::Save => 0x2c2a,
+            PauseOption::Load => 0x2c2b,
+            PauseOption::Controls => 0x2bf7,
+            PauseOption::Sound => 0x2c2d,
+            PauseOption::Camera => 0x2c2e,
+            PauseOption::Subtitles => 0x2c2f,
+            PauseOption::Quit => 0x2c31,
+        }
+    }
+}
+
+/// The pause list (`0x43f3f8` / `0x43fc18`, button rows) and the in-game Options list (`0x438148` / `0x438b48`).
+mod pause {
+    pub const AT: [f32; 2] = [250.0, 190.0];
+    /// Row i's button at (x, y0 + step·i + dy), keyframe 0.37; its label 11 lower; y0 centres the rows on 208 with a
+    /// row height of 46.
+    pub const BUTTON: [f32; 3] = [-126.0, -11.0, 50.0];
+    pub const LABEL: [f32; 3] = [0.0, 0.0, 50.0];
+    pub const BUTTON_KEY: f32 = 0.37;
+    pub const ROW_HEIGHT: f32 = 46.0;
+    pub const FILL: (u32, u32) = (0x73, 0x6044_2d00);
+    pub const FRAME: u32 = 0x74;
+    pub const OPTIONS_AT: [f32; 2] = [251.0, 170.0];
+    /// The frame sprites (keyframe 1: eight rows, but 0x94's) and the title's offset.
+    pub const OPTIONS_SPRITES: [(u32, u32, f32); 4] = [(0x91, 0x6044_2d00, 1.0), (0x94, 0x80ff_de8d, 0.0), (0x92, 0x55f0_c070, 1.0), (0x93, 0x55f0_c070, 1.0)];
+    pub const OPTIONS_TITLE: [f32; 2] = [0.0, -144.0];
+    /// Options' row icons: 0xea9e frames 0..7 (`0x28edf0`).
+    pub const OPTIONS_ICON: u16 = 0xea9e;
+    /// "Options" (`0x2bec`), "Are you sure you want to quit your current game?" (`0x2c63`).
+    pub const OPTIONS_TEXT: u32 = 0x2bec;
+    pub const QUIT_TEXT: u32 = 0x2c63;
 }
 
 /// The Options page's toggles: the game's option byte, the page's title, the setting's text, the window's keyframe.
@@ -252,6 +339,10 @@ pub enum Out {
     Loaded { level: i32 },
     /// A Port Options row (or the 16:9 toggle) changed its setting.
     Port(Setting, u8),
+    /// In the game: the pause closes (the game goes on).
+    Resume,
+    /// In the game: Quit Game was answered yes (back to the front end).
+    Quit,
 }
 
 /// Mode 4, kind 1 (`0x286270(1, page)`): the card dialog in front of a page.
@@ -293,6 +384,11 @@ pub struct Menus {
     row: usize,
     port_row: usize,
     port_top: usize,
+    /// The pages run in the game (the pause), not the front end: the parents and the card's variants differ.
+    in_game: bool,
+    /// The pause list's and its Options list's rows.
+    pause_row: usize,
+    options_row: usize,
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -335,8 +431,49 @@ impl Menus {
             row: 0,
             port_row: 0,
             port_top: 0,
+            in_game: false,
+            pause_row: 0,
+            options_row: 0,
         }
     }
+
+    /// In the game, Start (level 00 `0x3706f0`: mode 3 kind 1): the pause list.
+    pub fn pause(slot: usize) -> (Menus, Out) {
+        let mut m = Menus::open(Page::Pause, false);
+        m.dialog = None;
+        m.fading = true;
+        m.in_game = true;
+        m.slot = slot;
+        (m, Out::Sound(0x12))
+    }
+
+    /// The page a page's △ goes back to (None: out of the menus: the main menu, or the game).
+    fn parent(&self, page: Page) -> Option<Page> {
+        if self.in_game {
+            match page {
+                Page::Pause => None,
+                Page::PauseOptions | Page::Port => Some(Page::Pause),
+                _ => Some(Page::PauseOptions),
+            }
+        } else {
+            match page {
+                Page::Toggle(_) | Page::Port => Some(Page::Options),
+                Page::Overwrite => Some(Page::NewGame),
+                _ => None,
+            }
+        }
+    }
+
+    /// △: the parent page, or out of the menus.
+    fn back(&mut self, out: &mut Vec<Out>) {
+        match self.parent(self.page) {
+            Some(p) => self.go(p, out),
+            None => out.push(if self.in_game { Out::Resume } else { Out::MainMenu }),
+        }
+    }
+
+    /// Start / Select: the menus close (the title, or back to the game).
+    fn close(&self, out: &mut Vec<Out>) { out.push(if self.in_game { Out::Resume } else { Out::Close }); }
 
     /// The main menu's Options (kind 3, page `0x259568`).
     pub fn options() -> (Menus, Out) {
@@ -398,15 +535,157 @@ impl Menus {
             Page::Options => self.options_tick(pressed, cx, &mut out),
             Page::Toggle(t) => self.toggle_tick(t, pressed, cx, &mut out),
             Page::Port => self.port_tick(pressed, cx, &mut out),
+            Page::Pause => self.pause_tick(pressed, &mut out),
+            Page::PauseOptions => self.pause_options_tick(pressed, cx, &mut out),
+            Page::Save => self.save_tick(pressed, cx, &mut out),
+            Page::Quit => self.quit_tick(pressed, &mut out),
         }
         out
+    }
+
+    /// The pause list (`0x347938` / `0x43f740`): Up / Down wrap past disabled rows (sound 3), ✕ the row's page
+    /// (Options, Port Options; the others are not ported: nothing happens); △, Start, Select back to the game.
+    fn pause_tick(&mut self, keys: u16, out: &mut Vec<Out>) {
+        let rows = pause_rows();
+        let n = rows.len();
+        if keys & (pad::TRIANGLE | pad::START | pad::SELECT) != 0 {
+            out.push(Out::Resume);
+        } else if keys & (pad::UP | pad::DOWN) != 0 {
+            out.push(Out::Sound(3));
+            let step = if keys & pad::UP != 0 { n - 1 } else { 1 };
+            let start = self.pause_row;
+            loop {
+                self.pause_row = (self.pause_row + step) % n;
+                if pause_enabled(rows[self.pause_row]) || self.pause_row == start { break; }
+            }
+        } else if keys & pad::CROSS != 0 {
+            match rows[self.pause_row] {
+                PauseRow::Options => self.go(Page::PauseOptions, out),
+                PauseRow::Port => {
+                    self.port_row = 0;
+                    self.port_top = 0;
+                    self.go(Page::Port, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The in-game Options list: Save (the card dialog, then the save page), Load, Subtitles, Quit Game; the others
+    /// are not ported.
+    fn pause_options_tick(&mut self, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
+        let n = PauseOption::ALL.len();
+        if keys & pad::TRIANGLE != 0 {
+            self.back(out);
+        } else if keys & (pad::START | pad::SELECT) != 0 {
+            self.close(out);
+        } else if keys & (pad::UP | pad::DOWN) != 0 {
+            out.push(Out::Sound(3));
+            self.options_row = if keys & pad::UP != 0 { (self.options_row + n - 1) % n } else { (self.options_row + 1) % n };
+        } else if keys & pad::CROSS != 0 {
+            match PauseOption::ALL[self.options_row] {
+                PauseOption::Save => {
+                    // `0x2d67c0` kind 4.
+                    out.push(Out::Sound(4));
+                    cx.card.flags = (cx.card.flags & !4) | 2;
+                    self.load = false;
+                    self.previous = Some(self.page);
+                    self.page = Page::Save;
+                    self.dialog = Some(Dialog { next: Page::Save, over_page: false, frames: 0, fail_wait: 0 });
+                }
+                PauseOption::Load => {
+                    out.push(Out::Sound(4));
+                    cx.card.flags = (cx.card.flags & !2) | 4;
+                    self.load = true;
+                    self.previous = Some(self.page);
+                    self.page = Page::Load;
+                    self.dialog = Some(Dialog { next: Page::Load, over_page: false, frames: 0, fail_wait: 0 });
+                }
+                PauseOption::Subtitles => self.go(Page::Toggle(Toggle::Subtitles), out),
+                PauseOption::Quit => {
+                    out.push(Out::Sound(4));
+                    self.previous = Some(self.page);
+                    self.page = Page::Quit;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Mode 4 kind 9 (`0x287140`): ✕ yes, △ no.
+    fn quit_tick(&mut self, keys: u16, out: &mut Vec<Out>) {
+        if keys & pad::CROSS != 0 {
+            out.push(Out::Quit);
+        } else if keys & pad::TRIANGLE != 0 {
+            self.page = Page::PauseOptions;
+        }
+    }
+
+    /// The in-level save page's slots (`0x2dd888`): an empty slot is saved at once, a used one asks first; the
+    /// game's state (stored into the save data when the pause opened) is written whole into the slot.
+    fn save_tick(&mut self, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
+        if self.panel == 0 && self.previous == Some(Page::Overwrite) && std::mem::take(&mut self.overwrite) { self.panel = 1; }
+        if self.panel == 1 {
+            // `0x2df668`: the clock, the save written whole.
+            save::set_clock(cx.save, cx.clock);
+            cx.card.save_whole(cx.save, self.slot as i32);
+            self.waiting = true;
+            self.idle = 0;
+            self.message = text::SAVING;
+        }
+        self.panel = 2;
+        if self.waiting {
+            if !(cx.card.idle() && 10 < self.idle) { return; }
+            self.waiting = false;
+            let card = &mut *cx.card;
+            if card.error == 0 && card.cards[0].info == 0 {
+                card.checked = true;
+                let s = &*cx.save;
+                if let Some(p) = card.cards[0].previews.get_mut(self.slot) {
+                    *p = Preview {
+                        level: s.i32(Scope::Global, 0x1a79f8),
+                        bolts: s.i32(Scope::Global, 0x1a7a00),
+                        byte_12: s.u8(Scope::Global, 0x1a7a12) as i32,
+                        word_bc8: s.i32(Scope::Global, 0x1a7bc8),
+                        clock: cx.clock,
+                        bad: false,
+                    };
+                }
+            } else {
+                card.flags |= 0x80;
+                card.checked = false;
+                self.dialog_for(Page::Save);
+            }
+            return;
+        }
+        if keys & (pad::START | pad::SELECT) != 0 {
+            self.close(out);
+            return;
+        }
+        if keys & pad::TRIANGLE != 0 {
+            self.back(out);
+            return;
+        }
+        if self.check_status(cx, out) { return; }
+        if !self.ready_card(cx.card) { return; }
+        let was = self.slot;
+        self.move_slot(keys);
+        if keys & pad::CROSS != 0 {
+            out.push(Out::Sound(4));
+            if cx.card.cards[0].previews[self.slot].level == -1 {
+                self.panel = 1;
+                return;
+            }
+            self.go(Page::Overwrite, out);
+        }
+        if self.slot != was { out.push(Out::Sound(3)); }
     }
 
     /// `0x2d6408` / `0x348cb8`: Up / Down wrap (sound 3), ✕ opens the row's page, △ the main menu, Start / Select close.
     fn options_tick(&mut self, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
         let n = cx.option_rows.len();
         if keys & pad::TRIANGLE != 0 {
-            out.push(Out::MainMenu);
+            self.back(out);
         } else if keys & (pad::START | pad::SELECT) != 0 {
             out.push(Out::Close);
         } else if keys & (pad::UP | pad::DOWN) != 0 && n > 0 {
@@ -428,9 +707,9 @@ impl Menus {
     /// The toggle pages' update (`0x33d320` …): ✕ flips the byte (sound 4); △ back to Options.
     fn toggle_tick(&mut self, t: Toggle, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
         if keys & pad::TRIANGLE != 0 {
-            self.go(Page::Options, out);
+            self.back(out);
         } else if keys & (pad::START | pad::SELECT) != 0 {
-            out.push(Out::Close);
+            self.close(out);
         } else if keys & pad::CROSS != 0 {
             out.push(Out::Sound(4));
             let on = !toggle_on(t, cx);
@@ -443,9 +722,9 @@ impl Menus {
     fn port_tick(&mut self, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
         let n = ENTRIES.len();
         if keys & pad::TRIANGLE != 0 {
-            self.go(Page::Options, out);
+            self.back(out);
         } else if keys & (pad::START | pad::SELECT) != 0 {
-            out.push(Out::Close);
+            self.close(out);
         } else if keys & (pad::UP | pad::DOWN) != 0 {
             out.push(Out::Sound(3));
             self.port_row = if keys & pad::UP != 0 { (self.port_row + n - 1) % n } else { (self.port_row + 1) % n };
@@ -574,11 +853,11 @@ impl Menus {
             return;
         }
         if keys & (pad::START | pad::SELECT) != 0 {
-            out.push(Out::Close);
+            self.close(out);
             return;
         }
         if keys & pad::TRIANGLE != 0 {
-            out.push(Out::MainMenu);
+            self.back(out);
             return;
         }
         if self.check_status(cx, out) { return; }
@@ -601,16 +880,18 @@ impl Menus {
 
     /// `0x2dc8a8`.
     fn overwrite_tick(&mut self, pressed: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
+        // The page it asks for (in the game, the save page `0x25e850`'s).
+        let slots = if self.in_game { Page::Save } else { Page::NewGame };
         if !cx.card.ready() {
-            self.go(Page::NewGame, out);
+            self.go(slots, out);
             return;
         }
         if pressed & pad::CIRCLE != 0 {
             self.overwrite = true;
-            self.go(Page::NewGame, out);
+            self.go(slots, out);
         } else if pressed & pad::TRIANGLE != 0 {
             self.overwrite = false;
-            self.go(Page::NewGame, out);
+            self.go(slots, out);
         }
     }
 
@@ -633,10 +914,22 @@ impl Menus {
                     m.fading = true;
                     m.panel = 0;
                 }
+                None if m.in_game => {
+                    m.page = Page::PauseOptions;
+                    m.fading = true;
+                }
                 None => out.push(Out::MainMenu),
             }
         };
+        // Continue without saving: a new game from the blank save (the front end only; in the game it goes back).
         let start_blank = |m: &mut Menus, cx: &mut Ctx, out: &mut Vec<Out>| {
+            if m.in_game {
+                cx.card.flags &= !6;
+                m.dialog = None;
+                m.page = Page::PauseOptions;
+                m.fading = true;
+                return;
+            }
             reset_to_blank(cx.save, cx.blank, cx.card);
             cx.card.flags = (cx.card.flags & !6) | 0x20;
             m.dialog = None;
@@ -776,6 +1069,13 @@ impl Menus {
             Page::Options => return self.draw_options(out, a, v, icon),
             Page::Toggle(t) => return draw_toggle(out, a, t, toggle_shown(t, v)),
             Page::Port => return self.draw_port(out, a, v),
+            Page::Pause => return self.draw_pause(out, a),
+            Page::PauseOptions => return self.draw_pause_options(out, a, icon),
+            Page::Quit => {
+                self.draw_pause_options(out, a, icon);
+                gui::fill(out, [0, 0, 0, 0x30]);
+                return dialog_box(out, a, a.strings.get(pause::QUIT_TEXT), &[text::YES_CROSS, text::NO_TRIANGLE]);
+            }
             _ => {}
         }
         self.draw_window(out, a);
@@ -796,7 +1096,64 @@ impl Menus {
                 draw_question(out, a);
                 draw_answers(out, a);
             }
-            Page::Options | Page::Toggle(_) | Page::Port => {}
+            Page::Save => {
+                self.draw_slots(out, a, card, icon);
+                self.draw_planet(out, a, card);
+                self.draw_message(out, a, card);
+            }
+            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit => {}
+        }
+    }
+
+    /// The pause list (`0x43fc18`, button rows): per row the main menu's two button sprites (keyframe 0.37; the
+    /// selected frame pulsing `0x20fffeed`..`0x70fffeed`) and the label centred 11 below (font 1: grey when
+    /// disabled, yellow when selected); the rows centred on the screen.
+    fn draw_pause(&self, out: &mut Vec<Quad>, a: &Assets) {
+        use pause::*;
+        let rows = pause_rows();
+        let n = rows.len() as f32;
+        let y0 = (208.0 - (ROW_HEIGHT + 0.5).floor() * n * 0.5) as i32 as f32;
+        let k = self.pulse % 40;
+        let t = if k < 20 { k as f32 / 20.0 } else { 1.0 - (k - 20) as f32 / 20.0 };
+        for (i, &row) in rows.iter().enumerate() {
+            let y = y0 + BUTTON[1] + BUTTON[2] * i as f32;
+            let at = [AT[0] + BUTTON[0], y];
+            if let Some(s) = a.sprites.get(&FILL.0) { gui::sprite(out, s, at, BUTTON_KEY, [1.0, 1.0], gui::rgba(FILL.1)); }
+            let frame = if i == self.pause_row { gui::lerp_colour(t, 0x70ff_feed, 0x20ff_feed) } else { gui::rgba(0x55f0_c070) };
+            if let Some(s) = a.sprites.get(&FRAME) { gui::sprite(out, s, at, BUTTON_KEY, [1.0, 1.0], frame); }
+            let colour = if !pause_enabled(row) { 0x8080_8080 } else if i == self.pause_row { 0x70ff_feed } else { 0x80f0_f0f0 };
+            let label: &[u8] = if row == PauseRow::Port { b"Port Options" } else { a.strings.get(row.text()) };
+            let w = gui::text_width(&a.glyphs, label, 1.0);
+            gui::text(out, &a.glyphs, 1, label, AT[0] + LABEL[0] - (w >> 1) as f32, y0 + LABEL[1] + LABEL[2] * i as f32, 1.0, gui::rgba(colour));
+        }
+    }
+
+    /// The in-game Options list (`0x438b48`): the frame (sprites 0x91..0x94), the selection (0x95), the title, the
+    /// labels (the front end's Options list's places) and the row icons.
+    fn draw_pause_options(&self, out: &mut Vec<Quad>, a: &Assets, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) {
+        use options::{ICONS_AT, ICON_RGBA, LABELS_AT, SELECTION, SELECTION_AT};
+        use pause::*;
+        let at = OPTIONS_AT;
+        for (id, c, key) in OPTIONS_SPRITES {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, at, key, [1.0, 1.0], gui::rgba(c)); }
+        }
+        if let Some(s) = a.sprites.get(&SELECTION) {
+            let p = [at[0] + SELECTION_AT[0], at[1] + SELECTION_AT[1] + SELECTION_AT[2] * self.options_row as f32];
+            gui::sprite(out, s, p, 0.0, [1.0, 1.05], self.pulse_colour());
+        }
+        let centred = |out: &mut Vec<Quad>, t: &[u8], x: f32, y: f32, c: u32| {
+            let w = gui::text_width(&a.glyphs, t, 1.0);
+            gui::text(out, &a.glyphs, 1, t, x - (w >> 1) as f32, y, 1.0, gui::rgba(c));
+        };
+        centred(out, a.strings.get(OPTIONS_TEXT), at[0] + OPTIONS_TITLE[0], at[1] + OPTIONS_TITLE[1], 0x80f0_f0f0);
+        for (i, o) in PauseOption::ALL.iter().enumerate() {
+            let c = if i == self.options_row { 0x70ff_feed } else { 0x80f0_f0f0 };
+            centred(out, a.strings.get(o.text()), at[0] + LABELS_AT[0], at[1] + LABELS_AT[1] + LABELS_AT[2] * i as f32, c);
+            let (x, y) = (at[0] + ICONS_AT[0], at[1] + ICONS_AT[1] + ICONS_AT[2] * i as f32);
+            if let Some((tex, [tw, th])) = icon(OPTIONS_ICON, i as u16) {
+                let rgba = gui::rgba(if i == self.options_row { 0x70ff_feed } else { ICON_RGBA });
+                out.push(Quad { pos: [[x, y], [x + 32.0, y], [x, y + 32.0], [x + 32.0, y + 32.0]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex, rgba });
+            }
         }
     }
 
@@ -887,7 +1244,8 @@ impl Menus {
         };
         let load = self.page == Page::Load || (self.page == Page::Overwrite && self.load);
         if self.page != Page::Overwrite { label(out, if load { LOAD_GAME } else { SAVE_GAME }, TITLE); }
-        if self.page == Page::Load {
+        // `0x33a9f8`: the labels show unless the front end hides them (its New Game page).
+        if self.page == Page::Load || (self.in_game && self.page == Page::Save) {
             label(out, SELECT_FILE, SELECT);
             label(out, EXIT_TEXT, EXIT);
         }
@@ -993,6 +1351,12 @@ impl Menus {
         gui::text_in_box(out, &a.glyphs_2, 2, &mut b, t, gui::rgba(0x80ff_a888));
     }
 }
+
+/// The pause list's rows on foot.
+pub fn pause_rows() -> &'static [PauseRow] { &PauseRow::ALL }
+
+/// A pause row can be taken: Special once its menu is unlocked (`0x359888`, not ported: never yet).
+fn pause_enabled(r: PauseRow) -> bool { r != PauseRow::Special }
 
 /// What the pages show besides their own state: the card, the save data's options, the port's settings, the Options
 /// rows.

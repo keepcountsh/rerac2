@@ -134,6 +134,9 @@ impl FrontEnd {
         }
     }
 
+    /// The front end entered again from a game (its Quit Game): the main menu.
+    pub fn at_menu(seed: u32) -> FrontEnd { FrontEnd { phase: Phase::Menu { sub: 1 }, ..FrontEnd::new(seed) } }
+
     /// The movie to play now (the engine keeps playing it until [`FrontEnd::tick`] is told it ended or the front end
     /// stops asking).
     pub fn movie(&self) -> Option<u32> {
@@ -223,6 +226,7 @@ impl FrontEnd {
                             menus::Out::NewGame => req.push(Request::NewGame),
                             menus::Out::Loaded { level } => req.push(Request::Load { level }),
                             menus::Out::Port(s, v) => req.push(Request::Port(s, v)),
+                            menus::Out::Resume | menus::Out::Quit => {}
                         }
                     }
                 }

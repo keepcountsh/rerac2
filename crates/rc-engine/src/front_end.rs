@@ -301,7 +301,7 @@ impl Plugin for FrontEndPlugin {
         })
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, tick.after(crate::card::CardStep))
-        .add_systems(Update, (hide_world, draw, finish).chain());
+        .add_systems(Update, (reenter, hide_world, draw, finish).chain());
     }
 }
 
@@ -314,13 +314,48 @@ fn setup(
     mut composites: ResMut<Assets<HudComposite>>,
     card: Option<ResMut<crate::card::Card>>,
 ) {
+    spawn_layer(&mut commands, &mut fe, &mut images, &mut meshes, &mut materials, &mut composites, card);
+}
+
+/// A game's Quit Game (crate::play): the front end again, at the main menu over the level as it is (New Game loads
+/// level 0, a load the save's level).
+#[allow(clippy::too_many_arguments)]
+fn reenter(
+    mut commands: Commands,
+    back: Option<Res<crate::play::ReturnToFrontEnd>>,
+    mut fe: ResMut<FrontEndState>,
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<HudMaterial>>,
+    mut composites: ResMut<Assets<HudComposite>>,
+    card: Option<ResMut<crate::card::Card>>,
+) {
+    if back.is_none() { return; }
+    commands.remove_resource::<crate::play::ReturnToFrontEnd>();
+    if !fe.done { return; }
+    let seed = clock_seed(if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() });
+    let r = &mut *fe;
+    (r.done, r.front, r.level, r.movie, r.picture, r.movie_ended) = (false, FrontEnd::at_menu(seed), None, None, None, false);
+    spawn_layer(&mut commands, r, &mut images, &mut meshes, &mut materials, &mut composites, card);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_layer(
+    commands: &mut Commands,
+    fe: &mut FrontEndState,
+    images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<HudMaterial>,
+    composites: &mut Assets<HudComposite>,
+    card: Option<ResMut<crate::card::Card>>,
+) {
     // Above every world, HUD and menu camera of the shared app; the frame's present camera (order 1000) draws after it.
     // A loaded save's level change keeps them (crate::level_switch).
     let keep = crate::level_switch::KeepAcrossLevels;
     let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() }, keep, Name::new("front end camera"))).id();
     fe.camera = Some(cam);
     let scaling = hud_render::scaling(crate::graphics::Hud::High);
-    let layer = Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &fe.data.textures, scaling, cam);
+    let layer = Layer::spawn(commands, images, meshes, materials, composites, &fe.data.textures, scaling, cam);
     for e in layer.entities { commands.entity(e).insert(keep); }
     fe.layer = Some(layer);
     // `0x1a8c88`: the card monitor runs the front end's variants.
@@ -363,10 +398,17 @@ fn tick(
     for req in r.front.tick(held, ended, &r.data.assets, cx.as_mut()) {
         match req {
             Request::Sound(n) => if r.trace { println!("front end: frame {}: sound {n} (not played)", r.ticks) },
-            // New Game without a card: the level as it is.
+            // New Game (without a card: the level as it is): level 0, fresh.
             Request::Row { kind: 4, .. } | Request::NewGame => {
-                println!("front end: New Game: level {:02}", crate::level_load::level_index());
-                r.done = true;
+                commands.remove_resource::<crate::play::Carry>();
+                if crate::level_load::level_index() == 0 {
+                    println!("front end: New Game: level 00");
+                    r.done = true;
+                } else {
+                    println!("front end: New Game: loading level 00");
+                    change.start_load(0);
+                    r.level = Some(0);
+                }
             }
             Request::Load { level } => {
                 let c = card.as_deref().expect("a load needs the card");
