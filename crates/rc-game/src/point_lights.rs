@@ -209,3 +209,32 @@ impl WorldLightLists {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+
+    #[test]
+    fn nibble_lists_fill_from_the_low_end_and_compact() {
+        let mut l = NO_LIGHTS;
+        for s in [3, 5, 0, 7] { assert!(add_to_list(&mut l, s)); }
+        assert_eq!(l, 0x7053);
+        assert!(!add_to_list(&mut l, 1));
+        remove_from_list(&mut l, 5);
+        assert_eq!(l, 0xf703);
+        remove_from_list(&mut l, 3);
+        assert_eq!(l, 0xff70);
+        remove_from_list(&mut l, 7);
+        remove_from_list(&mut l, 0);
+        assert_eq!(l, NO_LIGHTS);
+    }
+
+    #[test]
+    fn overlap_is_strict() {
+        assert!(spheres_overlap([0.0, 0.0, 0.0, 1.0], [2.9, 0.0, 0.0, 2.0]));
+        assert!(!spheres_overlap([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 0.0, 2.0]));
+    }
+
+
+}

@@ -640,3 +640,146 @@ pub(crate) fn parse_shrub_instance_section(section: &[u8]) -> Result<Vec<ShrubIn
     b.pod_slice(0x10, count as usize, "shrub instances")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck::bytes_of;
+
+    fn w(v: &mut Vec<u8>, words: &[u32]) { for x in words { v.extend(x.to_le_bytes()); } }
+    fn tag(nloop: u32, eop: bool, prim: u64, slot: i32) -> ShrubGifTag {
+        ShrubGifTag { tag: nloop as u64 | (eop as u64) << 15 | 1 << 46 | prim << 47 | 3 << 60, tag_hi: 0x412, gs_packet_offset: slot }
+    }
+    fn adgif(slot: i32, tex: i32) -> ShrubAdGifs {
+        let mut a = ShrubAdGifs::default();
+        a.tex1.pad[3..7].copy_from_slice(&slot.to_le_bytes());
+        a.tex0.data_lo = tex;
+        a
+    }
+    /// A packet VIF list: header block (V4_32 at 0), part 1 and part 2 (V4_16) at the header's addresses.
+    fn packet(tags: &[ShrubGifTag], ads: &[ShrubAdGifs], verts: &[(i16, u16)], vertex_offset: Option<i32>) -> Vec<u8> {
+        let vo = vertex_offset.unwrap_or(1 + tags.len() as i32 + 4 * ads.len() as i32);
+        let n = verts.len();
+        let mut v = Vec::new();
+        w(&mut v, &[0x0100_0404, 0, 0x0500_0000]);
+        let hq = 1 + tags.len() + 4 * ads.len();
+        w(&mut v, &[0x6c00_8000 | (hq as u32) << 16]);
+        v.extend(bytes_of(&ShrubPacketHeader { texture_count: ads.len() as i32, gif_tag_count: tags.len() as i32, vertex_count: n as i32, vertex_offset: vo }));
+        for t in tags { v.extend(bytes_of(t)); }
+        for a in ads { v.extend(bytes_of(a)); }
+        w(&mut v, &[0x0500_0000, 0x6d00_8000 | (n as u32) << 16 | vo as u32]);
+        for (i, &(slot, _)) in verts.iter().enumerate() { v.extend(bytes_of(&ShrubVertexPart1 { x: i as i16, y: 10, z: 20, gs_packet_offset: slot })); }
+        w(&mut v, &[0x0500_0000, 0x6d00_8000 | (n as u32) << 16 | (vo as u32 + n as u32)]);
+        for (i, &(_, nst)) in verts.iter().enumerate() { v.extend(bytes_of(&ShrubVertexPart2 { s: 4096, t: -(i as i16), q: 0x1000, n_and_stop: nst })); }
+        v
+    }
+    fn class_blob(packets: &[Vec<u8>], billboard: bool) -> Vec<u8> {
+        let mut table = Vec::new();
+        let mut data = Vec::new();
+        let first = 0x40 + 8 * packets.len();
+        for p in packets {
+            table.push(ShrubPacketEntry { offset: (first + data.len()) as i32, size: p.len() as i32 });
+            data.extend(p);
+            while data.len() % 16 != 0 { data.push(0); }
+        }
+        let bb = first + data.len();
+        let normals = bb + if billboard { 0x40 } else { 0 };
+        let h = ShrubClassHeader { scale: 2.0, o_class: 5, packet_count: packets.len() as i16, normals_offset: normals as i32,
+            billboard_offset: if billboard { bb as i32 } else { 0 }, ..Default::default() };
+        let mut b = bytes_of(&h).to_vec();
+        for e in &table { b.extend(bytes_of(e)); }
+        b.extend(data);
+        if billboard { b.extend(bytes_of(&ShrubBillboard { fade_distance: 40.0, width: 2.0, height: 3.0, z_ofs: 1.0, ..Default::default() })); }
+        for i in 0..24i16 { b.extend(bytes_of(&[i, 0, 0, 0])); }
+        b
+    }
+
+    /// Ad-gif at 0, strip A (3 verts) at 5, strip B (4 verts, EOP) at 15; 8 vertices: 7 real + 1 padding
+    /// vertex that rewrites vertex 6's slot. Stop bit on vertex 4 (= 8 - 4).
+    fn sample() -> Vec<u8> {
+        let tags = [tag(3, false, 4, 5), tag(4, true, 4, 15)];
+        let verts = [(6, 3), (9, 1), (12, 2), (16, 7), (19, 8), (22, 9), (25, 10), (25, 11)];
+        let mut verts = verts.to_vec();
+        verts[4].1 |= 0x8000;
+        packet(&tags, &[adgif(0, 2)], &verts, None)
+    }
+
+
+    #[test]
+    fn stop_bit_rules() {
+        let tags = [tag(6, true, 4, 5)];
+        let base: Vec<(i16, u16)> = (0..6).map(|i| (6 + 3 * i as i16, 0)).collect();
+        let run = |v: &[(i16, u16)]| read_packet(&packet(&tags, &[adgif(0, 1)], v, None), ShrubPacketEntry::default(), &mut -1);
+        // A stop bit on vertex 0 or 1 is never tested: the flag on vertex 2 ends the loop.
+        let mut v = base.clone();
+        v[1].1 = 0x8000;
+        v[2].1 = 0x8000;
+        let pk = run(&v).unwrap();
+        assert_eq!(pk.vertices.len(), 6);
+        assert_eq!(pk.draws[0].vertices, [0, 1, 2, 3, 4, 5]);
+        // Without a flag from index 2 on, VU1 reads past the tables into quadwords no unpack wrote.
+        let mut v = base.clone();
+        v[0].1 = 0x8000;
+        assert!(run(&v).is_err());
+        // A flag on vertex 3 of 6 makes VU1 process 7 vertices; the 7th reads unwritten memory.
+        let mut v = base.clone();
+        v[3].1 = 0x8000;
+        assert!(run(&v).is_err());
+    }
+
+    #[test]
+    fn texture_state_carries_across_packets() {
+        let tags = [tag(6, true, 4, 0)];
+        let verts: Vec<(i16, u16)> = (0..6).map(|i| (1 + 3 * i as i16, if i == 2 { 0x8000 } else { 0 })).collect();
+        // Second packet: its ad-gif block sits after the EOP tag, so the GIF never reads it.
+        let p2 = packet(&tags, &[adgif(0x40, 9)], &verts, None);
+        let sc = parse_shrub_class(&class_blob(&[sample(), p2.clone()], false)).unwrap();
+        assert_eq!(sc.packets[1].draws[0].texture, 2);
+        assert!(sc.billboard.is_none());
+        // Alone, the same packet draws before any texture was set.
+        assert!(parse_shrub_class(&class_blob(&[p2], false)).is_err());
+    }
+
+    #[test]
+    fn malformed_packets_are_rejected() {
+        let good = sample();
+        let mut t = -1;
+        assert!(read_packet(&good, ShrubPacketEntry::default(), &mut t).is_ok());
+        // A strip longer than the vertices written.
+        let tags = [tag(3, false, 4, 5), tag(5, true, 4, 15)];
+        let mut verts = vec![(6, 3), (9, 1), (12, 2), (16, 7), (19, 8), (22, 9), (25, 10), (25, 11)];
+        verts[4].1 |= 0x8000;
+        assert!(read_packet(&packet(&tags, &[adgif(0, 2)], &verts, None), ShrubPacketEntry::default(), &mut t).is_err());
+        // A vertex overwriting the ad-gif block.
+        let mut v2 = verts.clone();
+        v2[0].0 = 2;
+        assert!(read_packet(&packet(&[tag(3, false, 4, 5), tag(4, true, 4, 15)], &[adgif(0, 2)], &v2, None), ShrubPacketEntry::default(), &mut t).is_err());
+        // Triangle fans are not a shrub primitive.
+        assert!(read_packet(&packet(&[tag(3, false, 5, 5), tag(4, true, 4, 15)], &[adgif(0, 2)], &verts, None), ShrubPacketEntry::default(), &mut t).is_err());
+        // Vertex tables are read by address: elsewhere is fine when the unpacks go there too ...
+        assert!(read_packet(&packet(&[tag(3, false, 4, 5), tag(4, true, 4, 15)], &[adgif(0, 2)], &verts, Some(40)), ShrubPacketEntry::default(), &mut t).is_ok());
+        // ... but not where no unpack wrote.
+        let mut bad = good.clone();
+        bad[4 * 4 + 12..4 * 4 + 16].copy_from_slice(&50i32.to_le_bytes()); // header vertex_offset -> 50
+        assert!(read_packet(&bad, ShrubPacketEntry::default(), &mut t).is_err());
+    }
+
+
+
+
+    #[test]
+    fn sway() {
+        // The table is a negated sine.
+        assert_eq!([sway_table(0), sway_table(20), sway_table(64), sway_table(128), sway_table(192)], [0, -59, -127, 0, 127]);
+        assert_eq!(wind_sway(0, 0x100000, 5, [1.0, 1.0, 0.0]), None);
+        assert_eq!(wind_sway(2, 0x100000, 5, [70.0, 40.0, 0.0]), None); // 4900 + 1600 > 6000
+        // Block 0, tick 0: s(0) = 0 → g = 0.08; w = 0: s(64) = -127/128, s(0) = 0.
+        let [sx, sy] = wind_sway(2, 0, 0, [0.0; 3]).unwrap();
+        assert!((sx - (0.08 - 0.02 * 127.0 / 128.0)).abs() < 1e-6 && sy == 0.0);
+        let [sx1, _] = wind_sway(1, 0, 0, [0.0; 3]).unwrap();
+        assert!((sx1 - sx * 0.5).abs() < 1e-7);
+        // Attenuation is linear in the squared distance.
+        let [sxa, _] = wind_sway(2, 0, 0, [0.0, 0.0, 3000f32.sqrt()]).unwrap();
+        assert!((sxa - sx * 0.5).abs() < 1e-4);
+    }
+
+}

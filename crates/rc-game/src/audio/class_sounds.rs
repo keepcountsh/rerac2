@@ -78,4 +78,3 @@ pub fn ratchet_trigger(class: &MobyAnimClass, before: &AnimView, after: &AnimVie
         lo < time && time <= hi
     }).map(|&w| (w & 0xffff) as u16)
 }
-

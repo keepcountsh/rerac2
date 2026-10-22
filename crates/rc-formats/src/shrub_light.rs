@@ -109,3 +109,38 @@ pub fn vu1_shrub_data(addr: u16) -> Vu1ShrubData {
     Vu1ShrubData::Other(addr)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vu1_quirk_addresses() {
+        let base = vu1_palette_base(0xee, 0);
+        assert_eq!(base, 0xf3);
+        // Normal vertices read their own palette entry.
+        assert_eq!(vu1_colour_address(6, 2, 7, base), 0xf3 + 7);
+        assert_eq!(vu1_colour_address(8, 3, 7, base), 0xf3 + 7);
+        assert_eq!(vu1_shrub_data(0xf3 + 7), Vu1ShrubData::Palette { buffer: 0xee, slot: 0, entry: 7 });
+        // Vertex 3 of a 6-vertex packet, slot 0 of buffer 0xee: n + 0x1e6 lands in the other buffer's slot 3
+        // (palette entry 18 + n for n < 6), slot 4's matrix (n = 6..9) or slot 4's palette (n - 10).
+        assert_eq!(vu1_shrub_data(vu1_colour_address(6, 3, 2, base)), Vu1ShrubData::Palette { buffer: 0x17b, slot: 3, entry: 20 });
+        assert_eq!(vu1_shrub_data(vu1_colour_address(6, 3, 7, base)), Vu1ShrubData::Matrix { buffer: 0x17b, slot: 4, column: 1 });
+        assert_eq!(vu1_shrub_data(vu1_colour_address(6, 3, 20, base)), Vu1ShrubData::Palette { buffer: 0x17b, slot: 4, entry: 10 });
+        // Any later slot, or the 0x17b buffer, lands in a GS-packet output buffer.
+        assert_eq!(vu1_shrub_data(vu1_colour_address(6, 3, 0, vu1_palette_base(0xee, 1))), Vu1ShrubData::Other(0x21e));
+        assert_eq!(vu1_shrub_data(vu1_colour_address(6, 3, 23, vu1_palette_base(0x17b, 4))), Vu1ShrubData::Other(0x3f7));
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+}

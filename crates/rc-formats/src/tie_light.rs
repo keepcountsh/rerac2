@@ -59,4 +59,3 @@ pub fn instance_centre(class: &TieClass, inst: &TieInstance) -> [f32; 4] {
 pub(crate) fn column_lengths(inst: &TieInstance) -> [u32; 3] {
     std::array::from_fn(|i| ps2::sqrt(len2(bits(inst.matrix[i]))))
 }
-

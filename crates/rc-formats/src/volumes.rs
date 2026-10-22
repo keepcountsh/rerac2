@@ -45,4 +45,3 @@ pub(crate) struct Shape {
     pub(crate) unused_7c: f32,
 }
 const _: () = assert!(std::mem::size_of::<Shape>() == SHAPE_SIZE);
-

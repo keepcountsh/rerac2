@@ -390,3 +390,69 @@ impl PadInput {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn axis_dead_zone_and_scale() {
+        assert_eq!(axis(127).0, 0);
+        assert_eq!(axis(80).0, 0); // d = 47
+        assert_eq!(axis(0), Pf::b(0xbf80_0000)); // d = 127 → 79/76 clamped to 1, negated
+        assert_eq!(axis(251), Pf::ONE); // d = 124 → 76/76
+        // 200: d = 73 → 25/76 = 0.32894737 (div.s truncated)
+        assert_eq!(axis(200).0, 0x3ea8_6bca);
+        assert!((axis(200).to_f32() - 25.0 / 76.0).abs() < 1e-7);
+        assert_eq!(axis(54), -axis(200));
+    }
+
+    #[test]
+    fn arctan_matches_atan2() {
+        for &(a, b) in &[(1.0f32, 0.0f32), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (1.0, 1.0), (-0.3, 0.8), (0.5, -0.25), (-0.7, -0.7), (0.9, -1.0)] {
+            let r = fast_arctan(Pf::f(a), Pf::f(b)).to_f32();
+            assert!((r - b.atan2(a)).abs() < 2e-5, "atan2({b}, {a}) = {} vs {r}", b.atan2(a));
+        }
+        assert_eq!(fast_arctan(Pf::ZERO, Pf::ZERO).0, 0);
+        // The polynomial does not cancel π/4 exactly: atan2(0, 1) is 2^-22·0.75, not 0 (a property of the game's routine).
+        assert_eq!(fast_arctan(Pf::ONE, Pf::ZERO).0, 0x3440_0000);
+    }
+
+    #[test]
+    fn buttons_pressed_released_and_stick_bits() {
+        let mut p = PadState::default();
+        let a = PadInput::neutral().press(button::CROSS).stick(0.0, -1.0);
+        p.update(Some(&a.bytes()), false);
+        assert_eq!(p.held, button::CROSS | button::UP);
+        assert_eq!(p.pressed & 0xffff, button::CROSS | button::UP);
+        assert_eq!(p.raw, button::CROSS);
+        assert_eq!(p.ly, Pf::b(0xbf80_0000));
+        p.update(Some(&a.bytes()), false);
+        assert_eq!(p.pressed & 0xffff, 0);
+        p.update(Some(&PadInput::neutral().bytes()), false);
+        assert_eq!(p.released, button::CROSS | button::UP);
+        assert_eq!(p.pressed_within(button::CROSS, 7), Some(2));
+        assert_eq!(p.pressed_within(button::CROSS, 2), None);
+    }
+
+    #[test]
+    fn flick_from_rest() {
+        let mut p = PadState::default();
+        p.update(Some(&PadInput::neutral().bytes()), false);
+        p.update(Some(&PadInput::neutral().stick(1.0, 0.0).bytes()), false);
+        assert_ne!(p.pressed & button::FLICK, 0);
+        p.update(Some(&PadInput::neutral().stick(1.0, 0.0).bytes()), false);
+        assert_eq!(p.pressed & button::FLICK, 0);
+        // Swing from right to up (90°) at full length: angle flick.
+        p.update(Some(&PadInput::neutral().stick(0.0, -1.0).bytes()), false);
+        assert_ne!(p.pressed & button::FLICK, 0);
+    }
+
+    #[test]
+    fn mirror_swaps_left_right() {
+        let mut p = PadState::default();
+        p.update(Some(&PadInput::neutral().press(button::LEFT).stick(1.0, 0.0).bytes()), true);
+        assert_eq!(p.lx, Pf::b(0xbf80_0000));
+        assert_eq!(p.raw, button::RIGHT);
+        assert_eq!(p.held, button::RIGHT | button::LEFT); // raw right + stick-left bit
+    }
+}

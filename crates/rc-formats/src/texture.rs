@@ -218,3 +218,44 @@ pub(crate) fn billboard_mip_images<'a>(gs_ram: &'a [u8], b: &ShrubBillboardInfo)
     Ok(out)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clut_index_swaps_middle_blocks() {
+        // per 32-entry group: stored blocks 0,1,2,3 -> linear 0,2,1,3
+        for g in 0..8u32 {
+            let b = g * 32;
+            for k in 0..8 {
+                assert_eq!(clut_index(b + k), b + k);
+                assert_eq!(clut_index(b + 8 + k), b + 16 + k);
+                assert_eq!(clut_index(b + 16 + k), b + 8 + k);
+                assert_eq!(clut_index(b + 24 + k), b + 24 + k);
+            }
+        }
+        for i in 0..256 { assert_eq!(clut_index(clut_index(i)), i, "involution"); }
+    }
+
+    #[test]
+    fn scale_alpha_maps_0x80_to_opaque() {
+        assert_eq!(scale_alpha(0x00), 0x00);
+        assert_eq!(scale_alpha(0x01), 0x02);
+        assert_eq!(scale_alpha(0x40), 0x80);
+        assert_eq!(scale_alpha(0x7f), 0xfe);
+        assert_eq!(scale_alpha(0x80), 0xff);
+        assert_eq!(scale_alpha(0x81), 0xff);
+        assert_eq!(scale_alpha(0xff), 0xff);
+    }
+
+    #[test]
+    fn decode_indexed8_applies_clut_order_and_alpha() {
+        // entry j of the stored CLUT = (j, j, j, 0x80 if j even else 0x10)
+        let clut: Vec<u8> = (0..256u32).flat_map(|j| [j as u8, j as u8, j as u8, if j % 2 == 0 { 0x80 } else { 0x10 }]).collect();
+        let t = decode_indexed8(&[0, 8, 16, 25], 2, 2, &clut).unwrap();
+        assert_eq!((t.width, t.height), (2, 2));
+        assert_eq!(t.rgba, [0, 0, 0, 0xff, 16, 16, 16, 0xff, 8, 8, 8, 0xff, 25, 25, 25, 0x20]);
+        assert!(decode_indexed8(&[0; 3], 2, 2, &clut).is_err());
+        assert!(decode_indexed8(&[0; 4], 2, 2, &clut[..1020]).is_err());
+    }
+}

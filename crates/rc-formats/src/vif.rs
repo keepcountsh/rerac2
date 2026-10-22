@@ -70,3 +70,41 @@ pub(crate) fn parse_vif(list: &[u8]) -> Result<Vec<VifPacket<'_>>> {
     Ok(out)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn words(ws: &[u32]) -> Vec<u8> { ws.iter().flat_map(|w| w.to_le_bytes()).collect() }
+
+    #[test]
+    fn decodes_code_fields() {
+        // UNPACK V4_16 USN, FLG, addr 0x12, NUM 5, interrupt bit set (must be masked off).
+        let bytes = [words(&[0xed05_c012]), vec![0u8; 40]].concat();
+        let ps = parse_vif(&bytes).unwrap();
+        assert_eq!(ps.len(), 1);
+        let p = ps[0];
+        assert_eq!((p.cmd, p.num, p.imm, p.offset), (0x6d, 5, 0xc012, 0));
+        assert!(p.is_unpack());
+        assert_eq!((p.vn(), p.vl(), p.usn(), p.addr(), p.count(), p.element_size()), (3, 1, true, 0x12, 5, 8));
+        assert_eq!(p.data.len(), 40);
+    }
+
+    #[test]
+    fn unpack_sizes_and_num_zero() {
+        // V3_16 x3 = 18 bytes, padded to 20; V4_8 NUM=0 = 256 x 4 bytes; V4_32 x1 = 16.
+        let bytes = [words(&[0x6903_8000]), vec![0; 20], words(&[0x6e00_0000]), vec![0; 1024], words(&[0x6c01_0000]), vec![0; 16]].concat();
+        let ps = parse_vif(&bytes).unwrap();
+        assert_eq!(ps.len(), 3);
+        assert_eq!((ps[0].vn(), ps[0].vl(), ps[0].element_size(), ps[0].usn(), ps[0].data.len()), (2, 1, 6, false, 20));
+        assert_eq!((ps[1].count(), ps[1].element_size(), ps[1].data.len(), ps[1].offset), (256, 4, 1024, 24));
+        assert_eq!((ps[2].vn(), ps[2].vl(), ps[2].element_size(), ps[2].data.len()), (3, 0, 16, 16));
+    }
+
+
+    #[test]
+    fn truncated_payload_is_an_error_and_trailing_bytes_are_ignored() {
+        assert!(parse_vif(&[words(&[0x3000_0000, 1, 2]), vec![]].concat()).is_err());
+        // Fewer than 4 trailing bytes are not a code word.
+        assert_eq!(parse_vif(&[0, 0, 0, 0, 0, 0]).unwrap().len(), 1);
+    }
+}

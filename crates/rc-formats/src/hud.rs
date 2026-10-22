@@ -189,4 +189,3 @@ impl Hud {
         decode_indexed8_raw(px, w, h, clut)
     }
 }
-

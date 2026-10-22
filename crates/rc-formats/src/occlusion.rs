@@ -383,3 +383,62 @@ impl OcclusionState {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A two-cell grid: z 3, y 5, x 7..9 with x=8 empty; masks 0 and 1.
+    fn grid() -> Occlusion {
+        let mut b = vec![0u8; 0x140];
+        let w16 = |b: &mut Vec<u8>, o: usize, v: u16| b[o..o + 2].copy_from_slice(&v.to_le_bytes());
+        b[0..4].copy_from_slice(&0x40i32.to_le_bytes());
+        w16(&mut b, 4, 3); w16(&mut b, 6, 1); w16(&mut b, 8, 0x10 / 4);
+        w16(&mut b, 0x10, 5); w16(&mut b, 0x12, 1); w16(&mut b, 0x14, 0x18 / 4);
+        w16(&mut b, 0x18, 7); w16(&mut b, 0x1a, 3); w16(&mut b, 0x1c, 0); w16(&mut b, 0x1e, 0xffff); w16(&mut b, 0x20, 1);
+        b[0x40] = 0x01;          // mask 0: bit 0
+        b[0x40 + 0x80 + 1] = 0x04; // mask 1: bit 10
+        parse_occlusion_block(&b).unwrap()
+    }
+
+
+    #[test]
+    fn bits_and_fallbacks() {
+        let o = grid();
+        assert_eq!(OcclBits::from_bit(10), OcclBits(0x0104));
+        assert_eq!(OcclBits::from_bit(1023), OcclBits::ALWAYS);
+        let mut s = OcclusionState::default();
+        let m = *s.update(Some(&o), OcclusionMode::Active, OcclusionFallback::Neighbours, false, [36.5, 20.5, 12.5]);
+        assert!(OcclBits::from_bit(10).visible(&m) && !OcclBits::from_bit(0).visible(&m) && OcclBits::ALWAYS.visible(&m));
+        // x cell 8 is empty: fraction 0.25 tries x=7 first, then x=9; one hit each on x only.
+        let m = *s.update(Some(&o), OcclusionMode::Active, OcclusionFallback::Neighbours, false, [33.0, 20.5, 12.5]);
+        assert!(OcclBits::from_bit(0).visible(&m) && !OcclBits::from_bit(10).visible(&m));
+        assert_eq!(s.previous, PreviousMask::Union);
+        // Far outside: previous (the union) is kept; with the debug camera everything is visible.
+        let m = *s.update(Some(&o), OcclusionMode::Active, OcclusionFallback::Neighbours, false, [500.0, 0.0, 0.0]);
+        assert!(OcclBits::from_bit(0).visible(&m) && !OcclBits::from_bit(5).visible(&m));
+        let m = *s.update(Some(&o), OcclusionMode::Active, OcclusionFallback::Neighbours, true, [500.0, 0.0, 0.0]);
+        assert!(OcclBits::from_bit(5).visible(&m));
+        let m = *s.update(Some(&o), OcclusionMode::Active, OcclusionFallback::AllVisible, false, [36.5, 20.5, 12.5]);
+        assert!(!OcclBits::from_bit(0).visible(&m), "a hit ignores the fallback");
+        let m = *s.update(Some(&o), OcclusionMode::Freeze, OcclusionFallback::AllVisible, false, [500.0, 0.0, 0.0]);
+        assert!(!OcclBits::from_bit(0).visible(&m), "freeze keeps the mask");
+        let m = *s.update(Some(&o), OcclusionMode::Off, OcclusionFallback::Neighbours, false, [36.5, 20.5, 12.5]);
+        assert!(OcclBits::from_bit(0).visible(&m));
+    }
+
+    #[test]
+    fn mapping_resolution_rules() {
+        let rec = |b: i32, id: i32| OcclusionMapping { bit_index: b, occlusion_id: id };
+        let maps = OcclusionMappings { tfrag: vec![rec(3, 10), rec(4, 20)], tie: vec![rec(7, 1), rec(8, 2)], moby: vec![rec(9, 42)] };
+        let mut t = [TfragHeader::default(); 2];
+        t[0].tri_count = 10; t[1].tri_count = 20;
+        assert_eq!(resolve_tfrag_bits(&maps, &t), (vec![OcclBits::from_bit(3), OcclBits::from_bit(4)], false));
+        t[1].tri_count = 21;
+        assert_eq!(resolve_tfrag_bits(&maps, &t), (vec![OcclBits::ALWAYS; 2], true));
+        assert_eq!(resolve_tie_bits(&maps, &[1, 2]), (vec![OcclBits::from_bit(7), OcclBits::from_bit(8)], true, 0));
+        assert_eq!(resolve_tie_bits(&maps, &[2, 5]), (vec![OcclBits::from_bit(8), OcclBits::ALWAYS], false, 1));
+        let mut m = [MobyInstance::zeroed(); 3];
+        m[0].spawn_id = 42; m[1].spawn_id = 42; m[1].occlusion = 1; m[2].spawn_id = 7;
+        assert_eq!(resolve_moby_bits(&maps, &m), (vec![OcclBits::from_bit(9), OcclBits::ALWAYS, OcclBits::ALWAYS], 1));
+    }
+}

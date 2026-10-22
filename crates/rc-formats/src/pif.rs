@@ -50,4 +50,3 @@ impl<'a> Pif<'a> {
     /// RGBA with the alpha scaled to 0..0xff (`texture::decode_indexed8`), for inspection.
     pub(crate) fn decode(&self) -> Result<Texture> { crate::texture::decode_indexed8(self.pixels, self.width, self.height, self.palette) }
 }
-

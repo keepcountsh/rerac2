@@ -143,4 +143,3 @@ pub(crate) struct FogZone {
     pub(crate) unused_7c: u32,
 }
 const _: () = assert!(std::mem::size_of::<FogZone>() == FOG_ZONE_SIZE);
-

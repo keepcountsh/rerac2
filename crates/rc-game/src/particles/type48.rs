@@ -27,4 +27,3 @@ pub(crate) fn update48(sys: &mut Particles, i: usize) {
     rec::set_u32(r, 4, tween_color(f.to_bits(), rec::u32(r, 0x38), rec::u32(r, 0x34)));
     if fast_dec_timer(r, 10) != 0 { sys.kill_part(i); }
 }
-

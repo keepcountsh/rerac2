@@ -88,3 +88,30 @@ pub fn decompress(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn wad(packets: &[u8]) -> Vec<u8> {
+        let mut v = b"WAD\0\0\0\0TEST\0\0\0\0\0".to_vec();
+        v.extend_from_slice(packets);
+        let size = v.len() as u32;
+        v[3..7].copy_from_slice(&size.to_le_bytes());
+        v
+    }
+    #[test]
+    fn literal_then_little_match() {
+        let out = decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0xC0, 0x00])).unwrap();
+        assert_eq!(out, b"abcdddddddd");
+    }
+    #[test]
+    fn medium_match_with_little_literal() {
+        let out = decompress(&wad(&[0x01, b'x', b'y', b'z', b'w', 0x21, 0x02, 0x00, b'!', b'?'])).unwrap();
+        assert_eq!(out, b"xyzwwww!?");
+    }
+    #[test]
+    fn dummy_packet_and_pad() {
+        assert_eq!(decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0x11, 0x02, 0x00, b'e', b'f'])).unwrap(), b"abcdef");
+        assert_eq!(decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0x12, 0x00, 0x00, 0xEE])).unwrap(), b"abcd");
+        assert!(decompress(&wad(&[0x01, b'a', b'b', b'c', b'd', 0x01, b'e', b'f', b'g', b'h'])).is_err());
+    }
+}

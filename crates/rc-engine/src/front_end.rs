@@ -80,7 +80,7 @@ impl Data {
         let movies = (0..64).map(|r| t.movie(r)).collect::<rc_formats::buf::Result<Vec<_>>>()?;
         let movie_files = MOVIE_FILES.iter().map(|f| std::fs::metadata(root.join(f)).map(|m| m.len()).with_context(|| format!("{f} in {}", root.display()))).collect::<Result<Vec<_>>>()?;
         println!(
-            "front end: front end loaded: {} strings, {} GUI sprites, main menu {:?}",
+            "front end loaded: {} strings, {} GUI sprites, main menu {:?}",
             assets.strings.0.len(), assets.sprites.len(),
             assets.main_menu.iter().map(|r| String::from_utf8_lossy(assets.strings.get(r.text)).into_owned()).collect::<Vec<_>>()
         );

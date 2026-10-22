@@ -426,3 +426,96 @@ impl ReverbFx {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cube_box(kind: u8, depth: i32) -> ReverbBox {
+        // A box of half size 2 centred at (10, 0, 0), local x along world x.
+        let inverse = [[0.5, 0.0, 0.0, 0.0], [0.0, 0.5, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0]];
+        ReverbBox { instance: 7, center: [10.0, 0.0, 0.0], inverse, kind, delay: 0, feedback: 0, depth, inside: false }
+    }
+
+    #[test]
+    fn box_ramps_and_exits() {
+        let mut b = cube_box(mode::STUDIO_C, 5000);
+        let mut r = ReverbRequest::default();
+        // Outside and never inside: nothing.
+        b.update([5.0, 0.0, 0.0], &mut r);
+        assert_eq!((r.kind, r.depth, r.dirty), (0, 0, 0));
+        // −x face: depth 0, the type set.
+        b.update([8.0, 0.0, 0.0], &mut r);
+        assert_eq!((r.kind, r.depth, r.dirty, r.owner), (mode::STUDIO_C, 0, dirty::TYPE, Some(7)));
+        assert_eq!(r.command(), Some(SndCommand::SetReverb { kind: mode::STUDIO_C, depth: 0, delay: 0, feedback: 0 }));
+        // Halfway: trunc(5000·1·0.5); a depth change alone glides.
+        b.update([10.0, 0.0, 0.0], &mut r);
+        assert_eq!(r.depth, 2500);
+        assert_eq!(r.command(), Some(SndCommand::AutoReverb { depth: 2500, delta: 12, channels: 3 }));
+        // Out through +x: the full depth stays.
+        b.update([12.5, 0.0, 0.0], &mut r);
+        assert_eq!((r.kind, r.depth, r.owner), (mode::STUDIO_C, 5000, None));
+        assert!(!b.inside);
+        assert_eq!(r.command(), Some(SndCommand::AutoReverb { depth: 5000, delta: 12, channels: 3 }));
+        // Back in and out through −x: off.
+        b.update([11.0, 0.0, 0.0], &mut r);
+        b.update([7.0, 0.0, 0.0], &mut r);
+        assert_eq!((r.kind, r.depth), (mode::OFF, 0));
+        assert_eq!(r.command(), Some(SndCommand::SetReverb { kind: 0, depth: 0, delay: 0, feedback: 0 }));
+        assert_eq!(r.command(), None);
+    }
+
+
+    #[test]
+    fn env_point_radius() {
+        let pt = |x: f32| EnvSamplePoint { position: [x, 0.0, 0.0], ..Default::default() };
+        let pts = [pt(9.0), pt(-5.0), pt(5.0)];
+        assert_eq!(nearest_env_point(&pts, [0.0; 3]), Some(1));
+        assert_eq!(nearest_env_point(&pts, [20.0, 0.0, 0.0]), None);
+        assert_eq!(nearest_env_point(&pts, [17.0, 0.0, 0.0]), Some(0));
+    }
+
+    /// The decay: an impulse through each preset falls by ≈ 60 dB over its RT60 (energy in 50 ms windows).
+    #[test]
+    fn presets_decay_at_their_rt60() {
+        for kind in [mode::ROOM, mode::STUDIO_A, mode::STUDIO_B, mode::STUDIO_C, mode::HALL, mode::SPACE, mode::PIPE] {
+            let p = preset(kind).unwrap();
+            let mut fx = ReverbFx::default();
+            fx.set(kind, 0x7fff, 0, 0);
+            let n = (p.rt60 * RATE * 1.3) as usize;
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n { out.push(fx.run(if i == 0 { [20000, 20000] } else { [0, 0] })[0] as f64); }
+            let win = |t: f32| {
+                let a = (t * RATE) as usize;
+                out[a..a + 2400].iter().map(|x| x * x).sum::<f64>().max(1e-9)
+            };
+            let early = win(0.05 + p.loops_ms[1] / 1000.0);
+            let late = win(p.rt60 * 0.5 + 0.05 + p.loops_ms[1] / 1000.0);
+            let db = 10.0 * (early / late).log10();
+            // Half the RT60 later: about 30 dB down (the damping makes it a little more).
+            assert!((20.0..50.0).contains(&db), "{}: {db:.1} dB", mode::NAMES[kind as usize]);
+        }
+    }
+
+    #[test]
+    fn off_is_silent_and_glide_is_linear() {
+        let mut fx = ReverbFx::default();
+        assert_eq!(fx.run([10000, 10000]), [0, 0]);
+        fx.set(mode::STUDIO_B, 0, 0, 0);
+        assert!(fx.active());
+        fx.auto(2400, AUTO_DELTA);
+        for _ in 0..1200 { fx.run([0, 0]); }
+        assert!((fx.depth - 1200.0).abs() < 1.0, "{}", fx.depth);
+        for _ in 0..1200 { fx.run([0, 0]); }
+        assert_eq!(fx.depth, 2400.0);
+        fx.set(mode::OFF, 0, 0, 0);
+        assert!(!fx.active());
+        let mut e = ReverbFx::default();
+        e.set(mode::ECHO, 0x4000, 3, 64);
+        let mut first = None;
+        for i in 0..4000 {
+            let y = e.run(if i == 0 { [16000, 0] } else { [0, 0] });
+            if first.is_none() && y[0] != 0 { first = Some(i); }
+        }
+        assert_eq!(first, Some(echo_delay_samples(3)));
+    }
+}

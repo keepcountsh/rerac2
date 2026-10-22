@@ -69,4 +69,3 @@ pub(crate) fn read_overlay(sections: &[OverlaySection], addr: u32, n: usize) -> 
         s.data.get(off..off.checked_add(n)?)
     })
 }
-

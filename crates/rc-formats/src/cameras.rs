@@ -29,4 +29,3 @@ pub struct CameraRecord {
     /// File +0x1c: the pvar index (−1: none).
     pub pvar_index: i32,
 }
-

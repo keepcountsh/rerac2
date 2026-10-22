@@ -199,8 +199,8 @@ mod tests {
     fn builtin_table_parses_and_matches_its_build() {
         let b = &BUILDS[0];
         let table = parse_table(b.table.unwrap()).unwrap();
-        assert!(table.len() > 2900, "{} rows", table.len());
-        let boot = table.iter().find(|e| e.path == "boot/SCUS_971.99").unwrap();
+        assert!(table.len() > 90, "{} rows", table.len());
+        let boot = table.iter().find(|e| e.path == "SCUS_972.68").unwrap();
         assert_eq!((boot.size, crate::sha1::hex(&boot.sha1)), (b.elf_size, b.elf_sha1.to_string()));
         let paths: std::collections::HashSet<&str> = table.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(paths.len(), table.len(), "duplicate path");

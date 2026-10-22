@@ -198,7 +198,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
         .and_then(|s| s.get(0x28..0x2c))
         .map_or(f32::NEG_INFINITY, |b| f32::from_le_bytes(b.try_into().unwrap()));
     println!(
-        "level: level {index} ({name}): {} tfrags, {} textures, {} tie classes / {} instances, {} shrub classes / {} instances, {} moby classes / {} instances, sky {}, collision {}",
+        "level {index} ({name}): {} tfrags, {} textures, {} tie classes / {} instances, {} shrub classes / {} instances, {} moby classes / {} instances, sky {}, collision {}",
         tfrags.len(), textures.len(), ties.classes.len(), ties.instances.len(), shrubs.classes.len(), shrubs.instances.len(),
         mobys.classes.len(), mobys.instances.len(),
         sky.is_some(), collision.is_some()

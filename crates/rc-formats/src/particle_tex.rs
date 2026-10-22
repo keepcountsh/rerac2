@@ -161,3 +161,35 @@ pub fn parse_particle_textures(core: &LevelCore, index: &[u8], core_data: &[u8])
     Ok(ParticleTextures { entries, textures, defs, fx_entries, fx_textures })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+
+    #[test]
+    fn parse_part_defs_reads_header_offsets_and_blob() {
+        let mut idx = vec![0u8; 0x10];
+        for v in [2i32, 7, 0x18, 3, 0, 0x19] { idx.extend_from_slice(&v.to_le_bytes()); }
+        idx.extend_from_slice(&[9, 8, 7]);
+        let d = parse_part_defs(&idx, 0x10).unwrap();
+        assert_eq!(d.header, [2, 7, 0x18, 3]);
+        assert_eq!(d.offsets, [0, 0x19]);
+        assert_eq!(d.blob, [9, 8, 7]);
+        assert_eq!(d.first_frame(1), Some(8));
+        assert!(parse_part_defs(&idx[..idx.len() - 1], 0x10).is_err());
+        assert!(parse_part_defs(&idx, 0).is_err());
+    }
+
+
+    #[test]
+    fn bank_texture_uses_its_own_clut() {
+        let mut bank = vec![0u8; 1024 + 4];
+        // stored CLUT entry 8 is linear entry 16 (CSM1): put it at stored index 8 and read index 16.
+        bank[8 * 4..8 * 4 + 4].copy_from_slice(&[10, 20, 30, 0x40]);
+        bank[1024..].copy_from_slice(&[16, 0, 16, 0]);
+        let t = decode_bank_texture(&bank, 0, 1024, 2, 2).unwrap();
+        assert_eq!(&t.rgba[..4], &[10, 20, 30, 0x80]);
+        assert!(decode_bank_texture(&bank, 0, 1024, 4, 4).is_err());
+    }
+}

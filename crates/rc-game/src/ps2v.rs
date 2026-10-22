@@ -167,3 +167,34 @@ impl std::ops::Neg for Pf { type Output = Pf; #[inline] fn neg(self) -> Pf { Pf(
 impl std::ops::AddAssign for Pf { #[inline] fn add_assign(&mut self, o: Pf) { *self = *self + o; } }
 impl std::ops::SubAssign for Pf { #[inline] fn sub_assign(&mut self, o: Pf) { *self = *self - o; } }
 impl std::ops::MulAssign for Pf { #[inline] fn mul_assign(&mut self, o: Pf) { *self = *self * o; } }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn f(x: f32) -> F { x.to_bits() }
+
+    #[test]
+    fn ftoi0_truncates_toward_zero() {
+        assert_eq!(ftoi0(f(0.0)), 0);
+        assert_eq!(ftoi0(f(0.999)), 0);
+        assert_eq!(ftoi0(f(1.0)), 1);
+        assert_eq!(ftoi0(f(-1.75)), -1);
+        assert_eq!(ftoi0(f(4095.9)), 4095);
+        assert_eq!(ftoi0(f(8_388_609.0)), 8_388_609);
+        assert_eq!(ftoi0(f(1.5e10)), i32::MAX);
+        assert_eq!(ftoi0(f(-1.5e10)), i32::MIN);
+    }
+
+    #[test]
+    fn cross_and_dots() {
+        let x = [f(1.0), 0, 0];
+        let y = [0, f(1.0), 0];
+        assert_eq!(cross(x, y), [0, 0, f(1.0)]);
+        assert_eq!(cross(y, x), [0, 0, f(-1.0)]);
+        let a = [f(1.0), f(2.0), f(3.0)];
+        let b = [f(4.0), f(-5.0), f(6.0)];
+        assert_eq!(dot_x(a, b), f(12.0));
+        assert_eq!(dot_y(a, b), f(12.0));
+        assert_eq!(vmadds(a, b, f(0.5)), [f(3.0), f(-0.5), f(6.0)]);
+    }
+}

@@ -284,3 +284,82 @@ pub fn clock_seed(c: [u8; 8]) -> u32 {
     (c[1] as u32 + 1).wrapping_mul(c[3] as u32 + 1).wrapping_mul(c[2] as u32 + 1).wrapping_mul(c[5] as u32 + 1).wrapping_mul(c[6] as u32 + 1)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assets() -> Assets {
+        let row = |text| MenuRow { scale: 1.0, text, kind: 4, target: 0 };
+        Assets { glyphs: [Glyph::default(); 256], glyphs_2: [Glyph::default(); 256], strings: Strings::default(), main_menu: vec![row(1), row(2), row(3)], sprites: HashMap::new() }
+    }
+
+    /// Runs until the front end asks for a movie; returns the frames it took.
+    fn frames_to_movie(fe: &mut FrontEnd, a: &Assets) -> u32 {
+        let mut n = 0;
+        while fe.movie().is_none() { fe.tick(0, false, a); n += 1; }
+        n
+    }
+
+    #[test]
+    fn splashes_then_the_logo_then_the_title() {
+        let a = assets();
+        let mut fe = FrontEnd::new(1);
+        // 65 + 45 + 32 + 30, 65 + 25 + 32, one frame.
+        assert_eq!(frames_to_movie(&mut fe, &a), 172 + 122 + 1);
+        assert_eq!(fe.movie(), Some(MOVIE_LOGO));
+        // Buttons do not skip the logo.
+        fe.tick(button::START, false, &a);
+        fe.tick(0, false, &a);
+        assert_eq!(fe.movie(), Some(MOVIE_LOGO));
+        fe.tick(0, true, &a);
+        let first = fe.movie().unwrap();
+        assert!((0xb3..=0xbb).contains(&first));
+    }
+
+    #[test]
+    fn the_playlist_holds_each_couch_movie() {
+        let mut fe = FrontEnd::new(0x1234);
+        fe.build_playlist();
+        let l = &fe.playlist[1..];
+        assert!(l.iter().all(|m| (0xb3..=0xbb).contains(m)));
+        for m in 0xb3..=0xbbu16 { assert!(l.contains(&m), "{m:#x}"); }
+        assert_eq!(fe.playlist[0], 0);
+    }
+
+    #[test]
+    fn a_press_after_a_release_opens_the_menu() {
+        let a = assets();
+        let mut fe = FrontEnd::new(7);
+        frames_to_movie(&mut fe, &a);
+        fe.tick(0, true, &a);
+        // Held from before the title: no skip until released.
+        fe.tick(button::CROSS, false, &a);
+        assert!(fe.movie().is_some());
+        fe.tick(0, false, &a);
+        fe.tick(button::CROSS, false, &a);
+        assert_eq!(fe.movie(), None);
+        // Three frames of backdrop, then the page; Down moves and wraps.
+        for _ in 0..3 { fe.tick(0, false, &a); }
+        assert_eq!(fe.tick(button::DOWN, false, &a), [Request::Sound(3)]);
+        assert_eq!(fe.selected, 1);
+        fe.tick(0, false, &a);
+        fe.tick(button::UP, false, &a);
+        fe.tick(0, false, &a);
+        fe.tick(button::UP, false, &a);
+        assert_eq!(fe.selected, 2);
+        fe.tick(0, false, &a);
+        assert_eq!(fe.tick(button::CROSS, false, &a), [Request::Row { kind: 4, target: 0 }]);
+    }
+
+    #[test]
+    fn the_menu_goes_back_to_the_title_when_idle() {
+        let a = assets();
+        let mut fe = FrontEnd::new(7);
+        fe.phase = Phase::Menu { sub: 4 };
+        for _ in 0..IDLE_FRAMES { fe.tick(0, false, &a); }
+        assert!(fe.movie().is_some());
+    }
+
+    #[test]
+    fn seed_from_the_clock() { assert_eq!(clock_seed([0, 0x48, 0x09, 0x20, 0, 0x15, 0x10, 0x26]), 0x49 * 0x21 * 0x0a * 0x16 * 0x11); }
+}

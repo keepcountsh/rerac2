@@ -596,3 +596,140 @@ impl Streams {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::SPU_VOICES;
+
+    fn present() -> [bool; 15] { std::array::from_fn(|k| k < 9) }
+
+    #[test]
+    fn level_start_queues_the_loop() {
+        let mut m = Music::new(present());
+        let mut cmds = Vec::new();
+        m.start_track(0, 1, 0x400, &mut cmds);
+        assert_eq!(cmds, vec![StreamCommand::Play { player: PlayerId::Main, track: 0, vol: 0x400, group: 1, queue: 0, flags: 0x20, cb: StreamCallback::Start }]);
+        // Before the handle comes back music_Update does nothing.
+        let mut c2 = Vec::new();
+        m.update(&mut c2);
+        assert!(c2.is_empty());
+        m.reply(StreamReply { player: PlayerId::Main, cb: StreamCallback::Start, value: 7 });
+        assert_eq!(m.main.state, 8);
+        let mut c3 = Vec::new();
+        m.update(&mut c3);
+        assert_eq!(c3, vec![StreamCommand::Play { player: PlayerId::Main, track: 1, vol: 0x400, group: 1, queue: 7, flags: 0x24, cb: StreamCallback::Body }]);
+        assert_eq!(m.main.state, 9);
+        m.reply(StreamReply { player: PlayerId::Main, cb: StreamCallback::Body, value: 7 });
+        assert_eq!((m.main.state, m.main.handle), (4, 7));
+        // Playing: every frame asks for the time remaining and liveness.
+        let mut c4 = Vec::new();
+        m.update(&mut c4);
+        assert_eq!(c4.len(), 2);
+        assert_eq!(m.main.handle, -1);
+        m.reply(StreamReply { player: PlayerId::Main, cb: StreamCallback::Alive, value: 7 });
+        assert_eq!(m.main.handle, 7);
+    }
+
+    #[test]
+    fn requests_debounce_and_transition() {
+        let mut m = Music::new(present());
+        m.main = Player { handle: 7, track: 0, vol: 0x400, flags: 1, state: 4, ..Default::default() };
+        m.request(4, 8);
+        assert_eq!((m.pending_track, m.pending_stinger), (4, 8));
+        let mut cmds = Vec::new();
+        m.update(&mut cmds);
+        assert!(cmds.iter().any(|c| matches!(c, StreamCommand::Play { player: PlayerId::Transition, track: 8, .. })));
+        assert_eq!(m.timer, REQUEST_DEBOUNCE);
+        // Stinger starts: phase 1, then the time remaining arms the fade (T, T/4).
+        m.reply(StreamReply { player: PlayerId::Transition, cb: StreamCallback::Transition, value: 9 });
+        assert_eq!((m.transition.state, m.phase), (4, 1));
+        m.reply(StreamReply { player: PlayerId::Transition, cb: StreamCallback::Remaining, value: 288_000 });
+        assert_eq!((m.phase, m.fade_total, m.fade_quarter), (2, 288_000, 72_000));
+        // Half way through the first quarter: half volume.
+        m.transition.remaining = 288_000 - 36_000;
+        m.main.handle = 7;
+        let mut c = Vec::new();
+        m.update(&mut c);
+        assert!(c.contains(&StreamCommand::SetVolume { player: PlayerId::Main, handle: 7, vol: 0x200 }));
+        // Idle players: a request just sets the track.
+        let mut idle = Music::new(present());
+        idle.request(2, 6);
+        assert_eq!((idle.main.track, idle.pending_track), (2, -1));
+    }
+
+    /// A preseeked stream has no envelope yet, but its voice is reserved: tones must not take it, and
+    /// `Continue` restores the stream's ownership and volume.
+    #[test]
+    fn preseeked_stream_keeps_its_voice() {
+        let mut body = vec![0u8; 32];
+        body[1] = 0;
+        body[16 + 1] = 1;
+        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body), right: None });
+        let tracks: [Option<Arc<MusicTrack>>; 15] = std::array::from_fn(|k| (k == 0).then(|| track.clone()));
+        let mut vm = VoiceManager::default();
+        let mut spu = Spu::new(Arc::from(Vec::new()));
+        let mut st = Streams::default();
+        let play = StreamCommand::Play { player: PlayerId::Main, track: 0, vol: 0x400, group: 1, queue: 0, flags: 0x21, cb: StreamCallback::Preseek };
+        let r = st.execute(&play, &tracks, &mut vm, &mut spu).unwrap();
+        assert_eq!(r.value, 1);
+        let voice = st.streams[&r.value].voice;
+        assert!(!spu.voices[voice].active());
+        assert_eq!(vm.voices[voice].owner, VoiceUse::Stream { handle: 1 });
+        let (vol, basevol) = (spu.voices[voice].vol, vm.voices[voice].basevol);
+        // Fill every other voice with a tone; an allocator that treats the inactive preseek as free takes it.
+        let tone: Arc<[u8]> = Arc::from(&[0u8; 16][..]);
+        for i in 0..SPU_VOICES {
+            if i == voice { continue; }
+            spu.voices[i].key_on(VoiceData::Ram(Arc::clone(&tone)), 0, 0x1000, 0x00ff, 0x1fc0);
+            vm.voices[i] = VoiceSlot { owner: VoiceUse::Tone { handle: i as u32 + 100 }, priority: 0, group: 0, basevol: (0, 0), start_tick: 0, generation: spu.voices[i].generation };
+        }
+        let taken = vm.allocate(&mut spu, 0, 0, 0);
+        assert_ne!(taken, Some(voice));
+        assert_eq!(vm.voices[voice].owner, VoiceUse::Stream { handle: 1 });
+        st.execute(&StreamCommand::Continue { handle: r.value }, &tracks, &mut vm, &mut spu);
+        assert!(spu.voices[voice].active());
+        assert_eq!(spu.voices[voice].vol, vol);
+        assert_eq!(vm.voices[voice], VoiceSlot { owner: VoiceUse::Stream { handle: 1 }, priority: 127, group: 1, basevol, start_tick: 0, generation: spu.voices[voice].generation });
+        // Once the stream's natural end is observed, the voice can be used again.
+        for _ in 0..200 { spu.mix(); }
+        assert!(!spu.voices[voice].active());
+        let r = st.execute(&StreamCommand::Query { player: PlayerId::Main, handle: r.value, cb: StreamCallback::Alive }, &tracks, &mut vm, &mut spu).unwrap();
+        assert_eq!(r.value, 0);
+        assert_eq!(vm.voices[voice].owner, VoiceUse::Free);
+    }
+
+    /// Queueing the body behind a stream that already ended fails (0) instead of starting a second stream the
+    /// player never tracks; the player then goes idle and restarts the track (one music stream throughout).
+    #[test]
+    fn body_behind_an_ended_stream_fails() {
+        // A 2-frame track (ends after 56 samples).
+        let mut body = vec![0u8; 32];
+        body[1] = 0;
+        body[16 + 1] = 1;
+        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body), right: None });
+        let tracks: [Option<Arc<MusicTrack>>; 15] = std::array::from_fn(|k| (k < 2).then(|| track.clone()));
+        let mut vm = VoiceManager::default();
+        let mut spu = Spu::new(Arc::from(Vec::new()));
+        let mut st = Streams::default();
+        let play = |queue, flags, cb| StreamCommand::Play { player: PlayerId::Main, track: 0, vol: 0x400, group: 1, queue, flags, cb };
+        let r = st.execute(&play(0, 0x20, StreamCallback::Start), &tracks, &mut vm, &mut spu).unwrap();
+        assert_eq!(r.value, 1);
+        let music = |spu: &Spu| spu.voices.iter().filter(|v| v.active()).count();
+        assert_eq!(music(&spu), 1);
+        for _ in 0..200 { spu.mix(); }
+        assert_eq!(music(&spu), 0);
+        let r = st.execute(&play(1, 0x24, StreamCallback::Body), &tracks, &mut vm, &mut spu).unwrap();
+        assert_eq!(r.value, 0);
+        assert_eq!(music(&spu), 0);
+        // The EE side: body failed → idle → the track restarts (one new stream).
+        let mut m = Music::new(std::array::from_fn(|k| k < 2));
+        m.main = Player { handle: 1, track: 0, vol: 0x400, flags: 1, state: 9, ..Default::default() };
+        m.reply(r);
+        let mut cmds = Vec::new();
+        m.update(&mut cmds);
+        for c in &cmds { if let Some(r) = st.execute(c, &tracks, &mut vm, &mut spu) { m.reply(r); } }
+        let mut cmds = Vec::new();
+        m.update(&mut cmds);
+        assert_eq!(cmds.iter().filter(|c| matches!(c, StreamCommand::Play { queue: 0, .. })).count(), 1, "{cmds:?}");
+    }
+}

@@ -292,3 +292,18 @@ impl<'a> Relocation<'a> {
 
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masking_follows_lui_through_moves_and_keeps_constants() {
+        // lui v0,0x17 ; addiu s1,v0,0x42c0 ; move s2,v0 ; addiu s1,s2,0x42c0 ; lui at,0x3f80 ; lw t0,8(a0) ; lw t1,-0x10(gp)
+        let w = [0x3c02_0017, 0x2451_42c0, 0x0040_902d, 0x2651_42c0, 0x3c01_3f80, 0x8c88_0008, 0x8f89_fff0];
+        let m = mask(&w);
+        assert_eq!(m, vec![0x3c02_0000, 0x2451_0000, 0x0040_902d, 0x2651_0000, 0x3c01_3f80, 0x8c88_0008, 0x8f89_0000]);
+        assert_eq!(address_refs(&w), vec![(1, 0x1742c0), (3, 0x1742c0), (6, GP - 0x10)]);
+        // lui a0,0x1b ; addiu a0,a0,-0x1000 → 0x1af000
+        assert_eq!(address_refs(&[0x3c04_001b, 0x2484_f000]), vec![(1, 0x1a_f000)]);
+    }
+}

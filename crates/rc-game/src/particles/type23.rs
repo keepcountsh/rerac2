@@ -66,4 +66,3 @@ pub(crate) fn update(sys: &mut Particles, i: usize) {
     };
     rec::set_u32(r, 4, alpha << 24 | base);
 }
-

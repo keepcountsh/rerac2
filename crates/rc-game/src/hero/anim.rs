@@ -555,4 +555,3 @@ impl AnimCtl for RatchetAnimCtl<'_> {
 
     fn key_rate(&self, seq: u8, frame: u8) -> f32 { self.r().key_rate(seq, frame) }
 }
-

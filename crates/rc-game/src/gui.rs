@@ -178,3 +178,37 @@ pub fn text(out: &mut Vec<Quad>, glyphs: &[Glyph; 256], slot: usize, text: &[u8]
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(tx: f32, parent: Option<usize>) -> BoneKey { BoneKey { rotation: [0.0, 0.0, 0.0, 1.0], scale: [1.0; 3], translation: [tx, 0.0, 0.0], parent } }
+
+    #[test]
+    fn keys_blend_and_chain() {
+        let s = Sprite { scale: 1.0, vertices: vec![], prims: vec![], frames: vec![vec![key(0.0, None), key(3654.0, Some(0))], vec![key(0.0, None), key(23762.0, Some(0))]], textures: 0 };
+        let m = pose(&s, 0.25);
+        assert_eq!(m[1][3][0], 3654.0 + 0.25 * (23762.0 - 3654.0));
+        // Frame 1 blends towards frame 0 (wrapping).
+        assert_eq!(pose(&s, 1.5)[1][3][0], 0.5 * 23762.0 + 0.5 * 3654.0);
+    }
+
+
+    #[test]
+    fn text_advances_and_skips_colour_codes() {
+        let mut g = [Glyph::default(); 256];
+        g[b'A' as usize] = Glyph { u: 0, v: 0, y: 0, advance: 14 };
+        g[b' ' as usize] = Glyph { u: 0, v: 0, y: 0, advance: 5 };
+        let mut out = Vec::new();
+        text(&mut out, &g, 1, b"A\x09 A", 10.0, 20.0, 1.0, [0x80; 4]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1].pos[0], [10.0 + 14.0 + 5.0, 20.0]);
+        assert_eq!(text_width(&g, b"A A", 1.0), 33);
+    }
+
+    #[test]
+    fn colour_lerp() {
+        assert_eq!(lerp_colour(0.0, 0x7fe0e0e0, 0x5ff0c070), rgba(0x7fe0e0e0));
+        assert_eq!(lerp_colour(1.0, 0x7fe0e0e0, 0x5ff0c070), rgba(0x5ff0c070));
+    }
+}

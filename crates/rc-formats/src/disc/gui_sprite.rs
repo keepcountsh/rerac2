@@ -119,3 +119,18 @@ fn sprite(b: &Buf) -> Result<Sprite> {
     Ok(Sprite { scale, vertices, prims, frames, textures: nt })
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn packed_vertex_fields() {
+        // bone 1, x = −64 (bits 0..13 = 0x3ff0), z = −225 (bits 12..27).
+        let x_bits = (-16i32 & 0x3fff) as u32;
+        let z = -225i32 as u32 & 0xffff;
+        let w = (1u32 << 28) | ((z << 12) & 0x0fff_f000) | x_bits;
+        let w = w as i32;
+        assert_eq!((w << 18) >> 16, -64);
+        assert_eq!((w >> 28) & 0xf, 1);
+        // z shares bits 12, 13 with x's top bits (the game reads them so); here they agree.
+        assert_eq!((w << 4) >> 16, -225);
+    }
+}

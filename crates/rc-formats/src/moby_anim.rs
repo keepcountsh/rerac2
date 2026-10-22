@@ -1415,3 +1415,197 @@ pub fn joint_translations(class: &MobyAnimClass, s: &AnimState, snap: Option<&Mo
     evaluate_chains(class, s, snap, chains).iter().map(|r| bits4(r[3])).collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn f(x: f32) -> u32 { x.to_bits() }
+    fn q4(v: V4) -> [f32; 4] { v.map(f32::from_bits) }
+    fn close(a: f32, b: f32, tol: f32) -> bool { (a - b).abs() <= tol }
+
+    /// Class 66, frame 1, joint 0: the doc's 8 bytes `000064e5 0000337d`.
+    const Q66_F1: [u8; 8] = [0x00, 0x00, 0x64, 0xe5, 0x00, 0x00, 0x33, 0x7d];
+    const Q_ID: [i16; 4] = [0, 0, 0, 0x7fff];
+
+    fn q66_f1() -> [i16; 4] { bytemuck::pod_read_unaligned(&Q66_F1) }
+
+    #[test]
+    fn class66_quaternion_decode_and_rows() {
+        let q = q66_f1();
+        assert_eq!(q, [0, -6812, 0, 32051]);
+        let v = quat_f32(q);
+        assert!(close(v[1], -0.207886, 1e-6) && close(v[3], 0.978119, 1e-6) && v[0] == 0.0 && v[2] == 0.0, "{v:?}");
+        let r = quat_rows(bits4(v)).map(q4);
+        assert!(close(r[0][0], 0.913567, 2e-6) && close(r[0][2], -0.406674, 2e-6), "{:?}", r[0]);
+        assert!(close(r[2][0], 0.406674, 2e-6) && close(r[2][2], 0.913567, 2e-6), "{:?}", r[2]);
+        // Identity quaternion (0x7fff = 0.99997) gives exact identity rows.
+        assert_eq!(quat_rows(quat_bits(Q_ID)), [[ONE, 0, 0, 0], [0, ONE, 0, 0], [0, 0, ONE, 0]]);
+    }
+
+    #[test]
+    fn plain_lerp_is_not_normalised_and_wrap_flips() {
+        let (a, b) = (quat_bits(Q_ID), quat_bits(q66_f1()));
+        let (u, t) = (f(0.5), f(0.5));
+        let q = q4(lerp(a, b, u, t, 4, a));
+        let n = (q.iter().map(|x| x * x).sum::<f32>()).sqrt();
+        assert!(close(q[1], -0.103943, 1e-6) && close(q[3], 0.989044, 1e-5), "{q:?}");
+        assert!(close(n, 0.99449, 1e-5), "|q| = {n}");
+        assert!(close(q4(quat_rows(bits4(q))[0])[0], 0.978392, 2e-6));
+        // Wrap 14 → 0: q14 = (0, −6812, 0, −32051), dot with q0 < 0 → flip → (0, −0.104519, 0, −0.994523).
+        let q14 = quat_bits([0, -6812, 0, -32051]);
+        let w = q4(nlerp_flip(q14, a, u, t));
+        assert!(close(w[1], -0.104519, 2e-6) && close(w[3], -0.994523, 2e-6) && w[0] == 0.0, "{w:?}");
+    }
+
+    fn frame(quats: Vec<[i16; 4]>, scales: Vec<ScaleRec>, trans: Vec<TransRec>, rate: f32) -> MobyFrame {
+        let mut payload: Vec<u8> = bytemuck::cast_slice(&quats).to_vec();
+        payload.extend_from_slice(bytemuck::cast_slice(&scales));
+        let to = payload.len();
+        payload.extend_from_slice(bytemuck::cast_slice(&trans));
+        while !payload.len().is_multiple_of(16) { payload.push(0); }
+        let header = MobyFrameHeader {
+            rate, time: 0, qwc: (payload.len() / 16) as u16, quat_bytes: (quats.len() * 8) as u16,
+            scale_count: scales.len() as u16, trans_offset: to as u16, trans_count: trans.len() as u16,
+        };
+        MobyFrame { header, quats, scales, trans, payload }
+    }
+
+    /// Class 747's numbers from the doc: 2 joints, j1's parent is j0, frame 1 has a post-scale on j0
+    /// and a translation on j1.
+    fn class747() -> MobyAnimClass {
+        let mut s0 = IDENTITY;
+        s0[3] = [0.0, 0.0, -831.386, 1.0];
+        let mut s1 = IDENTITY;
+        s1[3] = [0.0, 0.0, -27067.32, 1.0];
+        let f0 = frame(vec![Q_ID, Q_ID], vec![], vec![], 0.25);
+        let f1 = frame(
+            vec![Q_ID, Q_ID],
+            vec![ScaleRec { scale: [0x1000, 0x1000, 0x0cd6], joint: 0, flags: 0 }],
+            vec![TransRec { trans: [0, 0, 21048], joint: 1, pad: 0 }],
+            0.25,
+        );
+        let seq = MobySequence {
+            header: MobySequenceHeader { frame_count: 2, loop_sound: 0xff, rate_override: 0.0, ..Default::default() },
+            frames: vec![f0, f1],
+            triggers: vec![],
+        };
+        MobyAnimClass {
+            joint_count: 2,
+            skeleton: vec![s0, s1],
+            rest: vec![[0.0, 0.0, 831.386], [0.0, 0.0, 21119.06]],
+            parent_word: vec![0, 0x7000_0000],
+            sequences: vec![Some(seq)],
+        }
+    }
+
+
+    #[test]
+    fn advance_from_spawn_and_wrap() {
+        // 15 keys, rate override 0.125 (8 ticks per key): one cycle = 120 ticks, like class 66.
+        let frames = (0..15).map(|_| frame(vec![Q_ID], vec![], vec![], 0.125)).collect();
+        let seq = MobySequence { header: MobySequenceHeader { frame_count: 15, loop_sound: 0xff, rate_override: 0.125, ..Default::default() }, frames, triggers: vec![] };
+        let c = MobyAnimClass { joint_count: 1, skeleton: vec![IDENTITY], rest: vec![[0.0; 3]], parent_word: vec![0], sequences: vec![Some(seq)] };
+        let mut s = AnimState::spawn(&c);
+        assert_eq!(s.speed, 1.0);
+        advance(&mut s, &c);
+        assert_eq!((s.frame_a, s.frame_b, s.t, s.rate, s.flags), (0, 1, 0.0, 0.125, 1));
+        let mut wraps = 0;
+        for tick in 2..=121 {
+            advance(&mut s, &c);
+            if s.flags & 2 != 0 { wraps += 1; assert_eq!(tick, 1 + 14 * 8, "wrap when B steps past the last key"); }
+        }
+        // After 120 more ticks: back at key 0 → 1 with t = 0.
+        assert_eq!((s.frame_a, s.frame_b, s.t), (0, 1, 0.0));
+        assert_eq!(wraps, 1);
+        // Backwards: speed −1 from (0 → 1, t = 0) steps to (14 → 0).
+        s.speed = -1.0;
+        advance(&mut s, &c);
+        assert_eq!((s.frame_a, s.frame_b, s.flags), (14, 0, 3));
+        assert!(close(s.t, 0.875, 1e-6), "{}", s.t);
+        // Static class: one sequence with ≤ 1 frame and no loop sound → speed 0 and mode 0x40.
+        let st = MobySequence { header: MobySequenceHeader { frame_count: 1, loop_sound: 0xff, ..Default::default() }, frames: vec![frame(vec![Q_ID], vec![], vec![], 1.0)], triggers: vec![] };
+        let sc = MobyAnimClass { sequences: vec![Some(st)], ..c.clone() };
+        let s = AnimState::spawn(&sc);
+        assert!(s.speed == 0.0 && s.skip_advance);
+    }
+
+    #[test]
+    fn snap_window() {
+        let frames = (0..3).map(|_| frame(vec![Q_ID], vec![], vec![], 0.3)).collect();
+        let seq = MobySequence { header: MobySequenceHeader { frame_count: 3, ..Default::default() }, frames, triggers: vec![] };
+        let c = MobyAnimClass { joint_count: 1, skeleton: vec![IDENTITY], rest: vec![[0.0; 3]], parent_word: vec![0], sequences: vec![Some(seq)] };
+        // t' = 0.9975 lies in the snap window → exactly one key step with t = 0.
+        let mut s = AnimState { seq_a: 0, frame_a: 0, seq_b: 0, frame_b: 1, t: 0.6975, speed: 1.0, rate: 0.3, flags: 0, trigger_count: 0, skip_advance: false };
+        advance(&mut s, &c);
+        assert_eq!((s.frame_a, s.frame_b, s.t), (1, 2, 0.0));
+        // Below the window: no step.
+        let mut s2 = AnimState { t: 0.6, frame_a: 0, frame_b: 1, ..s };
+        advance(&mut s2, &c);
+        assert_eq!((s2.frame_a, s2.flags), (0, 0));
+    }
+
+    #[test]
+    fn post_scale_list_drops_a_only_joints() {
+        // Same joints in A and B: full set.
+        assert_eq!(post_scale_list(&[0, 1, 2], &[0, 1, 2]), [0, 1, 2]);
+        // Disjoint: A then B (true union).
+        assert_eq!(post_scale_list(&[0, 1], &[2, 3]), [0, 1, 2, 3]);
+        // A = [0, 1, 3], B = [0, 2]: the re-append of 0 cuts 1 and 3 off.
+        assert_eq!(post_scale_list(&[0, 1, 3], &[0, 2]), [0, 2]);
+        // A = [1, 0], B = [0, 1]: 1's link is overwritten last with the terminator → only 1 remains.
+        assert_eq!(post_scale_list(&[1, 0], &[0, 1]), [1]);
+        // Only A or only B.
+        assert_eq!(post_scale_list(&[4, 5], &[]), [4, 5]);
+        assert_eq!(post_scale_list(&[], &[7]), [7]);
+    }
+
+    /// class747 plus a second sequence (3 keys, rate 0.5; joint 0 turned 24° about y in key 2).
+    fn class747_two_seqs() -> MobyAnimClass {
+        let mut c = class747();
+        let q24 = bytemuck::pod_read_unaligned::<[i16; 4]>(&Q66_F1);
+        let frames = vec![
+            frame(vec![Q_ID, Q_ID], vec![], vec![], 0.5),
+            frame(vec![Q_ID, Q_ID], vec![], vec![], 0.5),
+            frame(vec![q24, Q_ID], vec![], vec![TransRec { trans: [0, 0, 21000], joint: 1, pad: 0 }], 0.75),
+        ];
+        c.sequences.push(Some(MobySequence { header: MobySequenceHeader { frame_count: 3, loop_sound: 0xff, ..Default::default() }, frames, triggers: vec![] }));
+        c
+    }
+
+    #[test]
+    fn hard_cut_clamps_and_takes_the_frame_rate() {
+        let c = class747_two_seqs();
+        let mut s = AnimState::spawn(&c);
+        s.t = 0.3;
+        s.flags = 3;
+        assert!(hard_cut(&mut s, &c, 1, 0));
+        assert_eq!((s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.rate, s.t, s.flags), (1, 0, 1, 1, 0.5, 0.3, 1));
+        // Past the end: A = last key, B clamped to it (no wrap).
+        assert!(hard_cut(&mut s, &c, 1, 7));
+        assert_eq!((s.frame_a, s.frame_b, s.rate), (2, 2, 0.75));
+        assert!(!hard_cut(&mut s, &c, 5, 0));
+    }
+
+    #[test]
+    fn blend_with_zero_ticks_lands_on_the_next_advance() {
+        let c = class747_two_seqs();
+        let mut s = AnimState::spawn(&c);
+        advance(&mut s, &c); // the load pass: (0,0) -> (0,1), t = 0
+        let mut snap = None;
+        assert!(set_sequence(&mut s, &c, 1, 0, 0, &mut snap));
+        assert!(snap.is_none(), "t = 0: no snapshot, key A kept");
+        assert_eq!((s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.t, s.speed), (0, 0, 1, 0, 0.0, 1.0));
+        assert_eq!(s.rate.to_bits(), ps2::MAX, "1 / 0 on the FPU");
+        advance(&mut s, &c);
+        assert_eq!((s.seq_a, s.frame_a, s.seq_b, s.frame_b, s.t, s.rate), (1, 0, 1, 1, 0.5, 0.5));
+        // Five ticks: rate 1/5, t reaches 1 after five advances (then the target's own rate).
+        let mut s = AnimState::spawn(&c);
+        advance(&mut s, &c);
+        set_sequence(&mut s, &c, 1, 0, 5, &mut snap);
+        for _ in 0..4 { advance(&mut s, &c); assert_eq!(s.seq_a, 0); }
+        advance(&mut s, &c);
+        assert_eq!((s.seq_a, s.frame_a, s.frame_b), (1, 0, 1));
+    }
+
+
+}

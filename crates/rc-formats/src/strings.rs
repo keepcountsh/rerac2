@@ -62,4 +62,3 @@ pub fn parse_strings(gameplay: &[u8], lang: u32) -> Result<Vec<Message>> {
 
 /// `Help_FindIndex`: index of the first entry with `id`.
 pub fn find_index(messages: &[Message], id: i32) -> Option<usize> { messages.iter().position(|m| m.id == id) }
-

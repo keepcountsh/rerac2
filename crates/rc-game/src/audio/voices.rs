@@ -833,3 +833,66 @@ impl VoiceManager {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distance_law() {
+        let def = SoundDef { near: 0.0, far: 24.0, vol_far: 0, vol_near: 2048, ..Default::default() };
+        assert_eq!(distance_volume(0.0, &def), 2048);
+        assert_eq!(distance_volume(30.0, &def), 0);
+        assert_eq!(distance_volume(12.0, &def), 1024);
+        // Truncated toward zero.
+        assert_eq!(distance_volume(17.9, &def), 520);
+        let sq = SoundDef { flags: 1, ..def };
+        assert_eq!(distance_volume(12.0, &sq), 512);
+    }
+
+    #[test]
+    fn pan_directions() {
+        let l = Listener { pos: [0.0; 3], rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], ..Default::default() };
+        assert_eq!(pan_degrees([10.0, 0.0, 0.0], &l), 0);
+        let left = pan_degrees([0.0, 10.0, 0.0], &l);
+        let right = pan_degrees([0.0, -10.0, 0.0], &l);
+        assert!((-90..=-89).contains(&left), "{left}");
+        assert!((89..=90).contains(&right), "{right}");
+        // Inside one unit the pan fades to the centre.
+        assert_eq!(pan_degrees([0.0, 0.5, 0.0], &l), 0);
+    }
+
+    #[test]
+    fn volumes_and_pan_table() {
+        let t = pan_table();
+        assert_eq!(t[0], (0x3fff, 0));
+        assert_eq!(t[1], (0x3ffe, 0xb6));
+        assert_eq!(t[2], (0x3ffc, 0x11d));
+        assert_eq!(t[90], (0x2d40, 0x2d40));
+        let vm = VoiceManager::default();
+        // Centre: 127·258 = 32766 at 0x2d40/0x3fff each side.
+        assert_eq!(vm.make_volume(127, 0, 127, 0, 127, 0), (23168, 23168));
+        // Hard left (pan 270) and right (90).
+        assert_eq!(vm.make_volume(127, 0, 127, 270, 127, 0), (32766, 0));
+        assert_eq!(vm.make_volume(127, 0, 127, 90, 127, 0), (0, 32766));
+        // Group scale: master 0x400 squares; 0x2cc (the music option) ≈ 0.49.
+        assert_eq!(vm.adjust_vol_to_group(32766, 0), 32766);
+        let mut vm2 = VoiceManager::default();
+        vm2.master[1] = 0x2cc;
+        assert_eq!(vm2.adjust_vol_to_group(23168, 1), ((23168 * 0x2cc / 0x400) * (23168 * 0x2cc / 0x400) / 0x7ffe) as i16);
+        assert_eq!(master_volumes(0x400, 0x2cc, false, false), [819, 716, 819, 716, 716, 1024]);
+        assert_eq!(master_volumes(0x400, 0x2cc, true, false)[1], 429);
+        assert_eq!(doppler_pm(0.0), 0);
+        assert_eq!(doppler_pm(1.0), 300 * 0x5f4 / 0x2e5);
+    }
+
+
+    #[test]
+    fn timer() {
+        let mut t = 0;
+        assert!(fast_dec_timer(&mut t));
+        let mut t = 2;
+        assert!(!fast_dec_timer(&mut t));
+        assert!(fast_dec_timer(&mut t));
+        assert!(fast_dec_timer(&mut t));
+    }
+}

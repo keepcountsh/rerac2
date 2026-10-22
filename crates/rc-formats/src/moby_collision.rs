@@ -120,3 +120,29 @@ pub fn parse_level(core: &LevelCore, core_data: &[u8]) -> Result<Vec<(i32, MobyC
     Ok(out)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blob(prims: &[[u32; 8]], verts: &[[i16; 4]], faces: &[[u8; 4]], counts: [u16; 2]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&counts[0].to_le_bytes());
+        b.extend_from_slice(&counts[1].to_le_bytes());
+        for n in [prims.len() * 0x20, faces.len() * 4, verts.len() * 8] { b.extend_from_slice(&(n as i32).to_le_bytes()); }
+        for p in prims { for w in p { b.extend_from_slice(&w.to_le_bytes()); } }
+        for v in verts { for c in v { b.extend_from_slice(&c.to_le_bytes()); } }
+        for f in faces { b.extend_from_slice(f); }
+        b
+    }
+
+
+    #[test]
+    fn rejects_bad_lists_and_indices() {
+        let open = [0x0002_0401, 0, 0, 0, 0, 0, 0, 0];
+        let end = [0x8002_0401, 0, 0, 0, 0, 0, 0, 0];
+        assert!(MobyCollision::parse(&blob(&[open], &[], &[], [0, 0])).is_err(), "no end bit");
+        assert!(MobyCollision::parse(&blob(&[end, open], &[], &[], [0, 0])).is_err(), "early end");
+        assert!(MobyCollision::parse(&blob(&[], &[[0; 4]], &[[0, 0, 1, 0]], [0, 0])).is_err(), "index past the vertices");
+        assert!(MobyCollision::parse(&blob(&[open, end], &[], &[], [0, 0])).is_ok());
+    }
+}

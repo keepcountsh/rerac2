@@ -105,4 +105,3 @@ pub(crate) fn advance(pts: &[Point], closed: bool, dist: f32, c: &mut Cursor) ->
         d = nd;
     }
 }
-

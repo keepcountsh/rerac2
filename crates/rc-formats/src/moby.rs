@@ -747,3 +747,55 @@ pub fn joint_list(blob: &[u8], header: &MobyClassHeader, list: usize) -> Result<
     Ok((a, c))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+
+    #[test]
+    fn vertex_cache_ids_shift_by_seven() {
+        // 10 in-file vertices + 1 epilogue: records 7..=10 carry ids of vertices 0..=3, the
+        // epilogue's bytes 4.. carry the remaining six (upper bits 9-15 are not part of the id).
+        let mut recs = vec![[0u8; 16]; 11];
+        for (i, r) in recs.iter_mut().enumerate().skip(7) { r[..2].copy_from_slice(&((0x100 + i as u16) | 0xfe00).to_le_bytes()); }
+        for k in 0..6 { recs[10][4 + k * 2..6 + k * 2].copy_from_slice(&((0x1f0u16 + k as u16) | 0x200).to_le_bytes()); }
+        let ids = vertex_cache_ids(&recs, 10).unwrap();
+        assert_eq!(ids, [0x107, 0x108, 0x109, 0x10a, 0x1f0, 0x1f1, 0x1f2, 0x1f3, 0x1f4, 0x1f5]);
+        assert!(vertex_cache_ids(&recs[..8], 8).is_err(), "1 shifted id + 6 epilogue ids < 8");
+        // Duplicate entries store the cache id shifted left by 7.
+        assert_eq!(duplicate_cache_id(0x1ab << 7), 0x1ab);
+        assert_eq!(duplicate_cache_id(0xffff), 0x1ff);
+    }
+
+    #[test]
+    fn slot_machine_resolves_weights_summing_to_256() {
+        let mut s = Vu0Slots::default();
+        // Pre-loop transfers: joint 5 -> slot 0, joint 9 -> slot 4.
+        s.store(0, MobySkin::joint(5)).unwrap();
+        s.store(4, MobySkin::joint(9)).unwrap();
+        // Two-way: transfer joint 2 (b1 = 2 << 1) to 8, blend slots 0/4 with 100/156, store at 0x40.
+        let two = s.vertex(MobyVertexKind::TwoWay, &[0, 2 << 1, 0, 4, 100, 156, 8, 0x40]).unwrap();
+        assert_eq!(two, MobySkin { count: 2, joints: [5, 9, 0], weights: [100, 156, 0] });
+        // Three-way: slots 0, 4 and b1 & 0xfe = 8 (joint 2), weights 50/60/146, store at 0x44.
+        let three = s.vertex(MobyVertexKind::ThreeWay, &[0x77, 8 | 1, 0, 4, 50, 60, 146, 0x44]).unwrap();
+        assert_eq!(three, MobySkin { count: 3, joints: [5, 9, 2], weights: [50, 60, 146] });
+        for sk in [two, three] { assert_eq!(sk.weights.iter().sum::<u16>(), 256); }
+        // Single: transfer joint 7 to 0xc (store before load), then load it; loading a blend slot
+        // gives the blend; 0xf4 is the no-store sink.
+        assert_eq!(s.vertex(MobyVertexKind::Single, &[0, 7 << 1, 0xc, 0xc, 0, 0, 0, 0]).unwrap(), MobySkin::joint(7));
+        assert_eq!(s.vertex(MobyVertexKind::Single, &[0, 0, 0x40, 0xf4, 0, 0, 0, 0]).unwrap(), two);
+        // Invariants the disc satisfies: aligned addresses, no blend of blends, defined slots, sum 256.
+        assert!(s.vertex(MobyVertexKind::TwoWay, &[0, 0, 0x40, 0, 128, 128, 0xf4, 0xf4]).is_err(), "blend of a blend");
+        assert!(s.vertex(MobyVertexKind::Single, &[0, 0, 0x80, 0xf4, 0, 0, 0, 0]).is_err(), "undefined slot");
+        assert!(s.vertex(MobyVertexKind::Single, &[0, 0, 2, 0xf4, 0, 0, 0, 0]).is_err(), "unaligned");
+        assert!(s.vertex(MobyVertexKind::TwoWay, &[0, 0, 0, 4, 100, 100, 0xf4, 0xf4]).is_err(), "weights 200");
+        assert!(s.vertex(MobyVertexKind::Single, &[0, 0, 0xf4, 0xf4, 0, 0, 0, 0]).is_err(), "sink is write-only");
+        // Metal vertices carry their skin inline.
+        assert_eq!(metal_skin(&[3, 4, 5, 1, 0, 0, 0, 0]).unwrap(), MobySkin::joint(3));
+        assert_eq!(metal_skin(&[3, 4, 5, 3, 16, 32, 208, 0]).unwrap(), MobySkin { count: 3, joints: [3, 4, 5], weights: [16, 32, 208] });
+        assert!(metal_skin(&[3, 4, 5, 2, 16, 32, 208, 0]).is_err());
+    }
+
+
+}

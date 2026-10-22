@@ -286,3 +286,81 @@ pub fn parse_sky_textures(block: &[u8], sky: &Sky) -> Result<Vec<SkyTexture>> {
         .collect()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck::bytes_of;
+
+    /// A block with one texture (2x2), one textured shell and one gouraud shell of one cluster each.
+    fn synthetic(textured_flags: i32) -> Vec<u8> {
+        let mut b = vec![0u8; 0x900];
+        let mut h = SkyHeader { shell_count: 2, texture_count: 1, texture_defs: 0x40, texture_data: 0x400, ..Default::default() };
+        h.shells[0] = 0x100;
+        h.shells[1] = 0x200;
+        b[..0x40].copy_from_slice(bytes_of(&h));
+        let def = SkyTextureDef { palette_offset: 0, texture_offset: 0x400, width: 2, height: 2 };
+        b[0x40..0x50].copy_from_slice(bytes_of(&def));
+        // CLUT at 0x400: entry j = (j, 0, 0, 0x80); stored entry 8 lands at linear index 16. Pixels at 0x800.
+        for j in 0..256usize { b[0x400 + 4 * j..][..4].copy_from_slice(&[j as u8, 0, 0, 0x80]); }
+        b[0x800..0x804].copy_from_slice(&[0, 1, 16, 8]);
+        let verts = [SkyVertex { x: 100, y: 0, z: 0, alpha: 0x80 }, SkyVertex { x: 0, y: 100, z: 0, alpha: 0x40 }, SkyVertex { x: 0, y: 0, z: 100, alpha: 0 }];
+        for (so, flags, data, attrs, faces) in [
+            (0x100usize, textured_flags, 0x300usize, [0x1000u32 << 16, 0x0800, 0xf000_0000], [[0u8, 1, 2, 0], [2, 1, 0, 0]]),
+            (0x200, 1, 0x340, [0x8011_2233, 0x8044_5566, 0x4000_0000], [[0, 2, 1, 0xff], [1, 2, 0, 0xff]]),
+        ] {
+            b[so..so + 4].copy_from_slice(&1i32.to_le_bytes());
+            b[so + 4..so + 8].copy_from_slice(&flags.to_le_bytes());
+            let ch = SkyClusterHeader { bsphere: [0.0, 0.0, 0.0, 100.0], data: data as i32, vertex_count: 3, tri_count: 2, vertex_offset: 0, st_offset: 0x18, tri_offset: 0x24, data_size: 0x30 };
+            b[so + 0x10..so + 0x30].copy_from_slice(bytes_of(&ch));
+            for (i, v) in verts.iter().enumerate() { b[data + 8 * i..][..8].copy_from_slice(bytes_of(v)); }
+            for (i, a) in attrs.iter().enumerate() { b[data + 0x18 + 4 * i..][..4].copy_from_slice(&a.to_le_bytes()); }
+            for (i, f) in faces.iter().enumerate() { b[data + 0x24 + 4 * i..][..4].copy_from_slice(f); }
+        }
+        b
+    }
+
+    #[test]
+    fn parses_shells_and_walks_faces() {
+        let b = synthetic(0);
+        let sky = parse_sky_block(&b).unwrap();
+        assert_eq!(sky.shells.len(), 2);
+        let (sh, c) = (&sky.shells[0], &sky.shells[0].clusters[0]);
+        assert!(sh.textured());
+        let g = sky_gs_vertices(sh, c);
+        assert_eq!(g.len(), 6);
+        // face 0 = vertices 0, 1, 2 in stored order; s/t zero-extended: 0xf000 -> 15.0, not -1.0.
+        assert_eq!(g[0], SkyGsVertex { position: [100, 0, 0], texture: 0, pad: 0, st: [0.0, 1.0], rgba: [0x80, 0x80, 0x80, 0x80] });
+        assert_eq!(g[1].st, [0.5, 0.0]);
+        assert_eq!(g[1].rgba[3], 0x40);
+        assert_eq!(g[2].st, [0.0, 15.0]);
+        assert_eq!(g[3].position, [0, 0, 100]);
+        // gouraud shell: the attribute word is the colour; the face texture byte is ignored.
+        let (sh, c) = (&sky.shells[1], &sky.shells[1].clusters[0]);
+        assert!(!sh.textured());
+        let g = sky_gs_vertices(sh, c);
+        assert_eq!(g[0].rgba, [0x33, 0x22, 0x11, 0x80]);
+        assert_eq!(g[1].rgba, [0, 0, 0, 0x40]);
+        assert_eq!((g[1].texture, g[1].st), (0xff, [0.0, 0.0]));
+        // any non-zero flags word means gouraud, not just bit 0.
+        let sky2 = parse_sky_block(&synthetic(2)).unwrap();
+        assert!(!sky2.shells[0].textured());
+        assert_eq!(sky_gs_vertices(&sky2.shells[0], &sky2.shells[0].clusters[0])[0].texture, 0xff);
+    }
+
+
+    #[test]
+    fn rejects_bad_data() {
+        let mut b = synthetic(0);
+        b[0x300 + 0x24] = 3; // face index == vertex_count
+        assert!(parse_sky_block(&b).is_err());
+        let mut b = synthetic(0);
+        b[0x300 + 0x27] = 1; // texture 1 of 1
+        assert!(parse_sky_block(&b).is_err());
+        let mut b = synthetic(0);
+        b[0x100 + 0x10 + 0x1e] = 0x28; // data_size cuts the face array
+        assert!(parse_sky_block(&b).is_err());
+        let mut b = synthetic(0);
+        b[6] = 9; // shell_count
+        assert!(parse_sky_block(&b).is_err());
+    }
+}

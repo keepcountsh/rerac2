@@ -805,3 +805,161 @@ pub struct SoundEvent {
 
 // ---------------------------------------------------------------------------------------------------
 // Hit delivery outside the moby loop (the hero's attacks)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gauss_rows_sum_to_unity() {
+        for i in 0..256 {
+            let s = GAUSS[0xff - i] as i32 + GAUSS[0x1ff - i] as i32 + GAUSS[0x100 + i] as i32 + GAUSS[i] as i32;
+            assert!((0x7f7f..=0x7f81).contains(&s), "row {i}: {s:#x}");
+        }
+        assert_eq!(GAUSS[511], 0x59b3);
+        // A constant signal stays (almost) constant through the filter.
+        assert_eq!(gauss_interpolate(0, [10000; 4]), gauss_interpolate(255, [10000; 4]));
+    }
+
+    #[test]
+    fn adsr_phases() {
+        let mut a = Adsr { adsr1: 0x80ff, adsr2: 0x9fc0, ..Default::default() };
+        a.attack();
+        // Exponential attack, step +7 at shift 0: 7 << 11 per sample up to 0x6000, then every 4th sample:
+        // 0x3800, 0x7000, (4 samples) 0x7fff → decay; sustain level 15 (0x8000) is met at once → sustain.
+        a.run();
+        a.run();
+        assert_eq!(a.level, 0x7000);
+        for _ in 0..4 { a.run(); }
+        assert_eq!((a.level, a.phase), (0x7fff, Phase::Decay));
+        a.run();
+        assert_eq!(a.phase, Phase::Sustain);
+        a.release();
+        // Release shift 0, linear −8 << 11 per sample.
+        a.run();
+        assert_eq!(a.level, 0x7fff - 0x4000);
+        a.run();
+        a.run();
+        assert_eq!(a.phase, Phase::Stopped);
+        // Slow linear attack: shift 20 → one step (+7 << 0... = 7) every 2^9 samples.
+        let mut b = Adsr { adsr1: 20 << 10, adsr2: 0, ..Default::default() };
+        b.attack();
+        for _ in 0..512 { b.run(); }
+        assert_eq!(b.level, 7);
+    }
+
+    /// Regression (the R.Y.N.O. crash, 2026-09-28): many loud voices at once — the mix clamps, it does not overflow
+    /// (the 32-bit master product panicked in the dev build past about two full-scale voices).
+    #[test]
+    fn loud_mix_clamps_without_overflow() {
+        assert_eq!(master_out(48 * 32767, 0x3fff), i16::MAX);
+        assert_eq!(master_out(-48 * 32768, 0x3fff), i16::MIN);
+        assert_eq!(master_out(1000, 0x3fff), ((1000 * 0x7ffe) >> 15) as i16, "the level below the clamp is unchanged");
+        let mut ram = Vec::new();
+        ram.extend(frame(6, 0x77));
+        ram.extend(frame(2, 0x77));
+        ram.extend(frame(3, 0x77));
+        let ram: Arc<[u8]> = Arc::from(ram);
+        let mut spu = Spu::new(ram.clone());
+        for v in spu.voices.iter_mut().take(12) {
+            v.key_on(VoiceData::Ram(ram.clone()), 0, 0x1000, 0x00ff, 0x1fc0);
+            v.vol = [0x3fff, 0x3fff];
+        }
+        let out: Vec<[i16; 2]> = (0..400).map(|_| spu.mix()).collect();
+        assert!(out.iter().any(|s| s[0] == i16::MAX || s[0] == i16::MIN), "twelve loud voices clip");
+    }
+
+    fn frame(flags: u8, v: u8) -> [u8; 16] {
+        let mut f = [v; 16];
+        f[0] = 0;
+        f[1] = flags;
+        f
+    }
+
+    #[test]
+    fn voice_plays_one_shots_and_loops() {
+        // One-shot: zero frame, a loud frame, end. At pitch 0x1000 (one sample per output sample) the voice
+        // stops after 3 · 28 samples.
+        let mut ram = Vec::new();
+        ram.extend(frame(0, 0));
+        ram.extend(frame(0, 0x11));
+        ram.extend(frame(1, 0x11));
+        ram.extend(frame(7, 0));
+        let loop_at = ram.len();
+        ram.extend(frame(6, 0));
+        ram.extend(frame(2, 0x33));
+        ram.extend(frame(3, 0x33));
+        let ram: Arc<[u8]> = Arc::from(ram);
+        let mut v = SpuVoice::default();
+        v.key_on(VoiceData::Ram(ram.clone()), 0, 0x1000, 0x00ff, 0x1fc0);
+        v.vol = [0x3fff, 0x3fff];
+        let out: Vec<i32> = (0..120).map(|_| v.run().0).collect();
+        assert!(out[..28].iter().all(|&x| x == 0));
+        assert!(out[40..80].iter().any(|&x| x != 0));
+        assert!(!v.active());
+        assert!(out[85..].iter().all(|&x| x == 0));
+        // Loop: keeps playing past its end, jumping back to the loop-start frame.
+        let mut v = SpuVoice::default();
+        v.key_on(VoiceData::Ram(ram), loop_at, 0x1000, 0x00ff, 0x1fc0);
+        v.vol = [0x3fff, 0x3fff];
+        let out: Vec<i32> = (0..28 * 10).map(|_| v.run().0).collect();
+        assert!(v.active());
+        assert!(out[28 * 7..].iter().any(|&x| x != 0));
+        // Streams: two parts, the second repeating.
+        let a = StreamPart { data: Arc::from(&[frame(0, 0x11), frame(1, 0x11)].concat()[..]), looped: false };
+        let b = StreamPart { data: Arc::from(&[frame(0, 0x22), frame(1, 0x22)].concat()[..]), looped: true };
+        let mut v = SpuVoice::default();
+        v.key_on(VoiceData::Stream { cur: a, queue: VecDeque::from([b]) }, 0, 0x1000, 0x00ff, 0x1fc0);
+        assert_eq!(v.stream_remaining(), 56);
+        for _ in 0..56 * 5 { v.run(); }
+        assert!(v.active());
+        assert!(v.stream_remaining() <= 56);
+    }
+
+
+
+
+
+    /// The Start → Loop hand-over is sample-exact: a stream voice playing part A then part B outputs the same
+    /// samples as one RAM voice playing A's frames (end flag cleared) followed by B's, at the music pitch.
+    #[test]
+    fn stream_queue_is_seamless() {
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        for k in 0..6u8 {
+            let mut f = [0u8; 16];
+            f[0] = (k % 4) << 4 | 3;
+            for (i, x) in f[2..].iter_mut().enumerate() { *x = k.wrapping_mul(37).wrapping_add((i as u8).wrapping_mul(11)) ^ 0x5a; }
+            let mut g = f;
+            g[0] = ((k + 1) % 5) << 4 | 2;
+            a.extend(f);
+            b.extend(g);
+        }
+        a[5 * 16 + 1] = 1; // end frames
+        b[5 * 16 + 1] = 1;
+        let mut joined = a.clone();
+        joined[5 * 16 + 1] = 0;
+        joined.extend(&b);
+        let pitch = rc_formats::vag::rate_to_pitch(44100);
+        let mut s = SpuVoice::default();
+        let (pa, pb) = (StreamPart { data: Arc::from(&a[..]), looped: false }, StreamPart { data: Arc::from(&b[..]), looped: false });
+        s.key_on(VoiceData::Stream { cur: pa, queue: VecDeque::from([pb]) }, 0, pitch, 0x00ff, 0x1fc0);
+        let mut r = SpuVoice::default();
+        r.key_on(VoiceData::Ram(Arc::from(joined)), 0, pitch, 0x00ff, 0x1fc0);
+        for v in [&mut s, &mut r] { v.vol = [0x3fff, 0x3fff]; }
+        let n = 12 * 28 * 4096 / pitch as usize - 4;
+        let xs: Vec<(i32, i32)> = (0..n).map(|_| s.run()).collect();
+        let ys: Vec<(i32, i32)> = (0..n).map(|_| r.run()).collect();
+        assert_eq!(xs, ys);
+        assert!(xs.iter().filter(|x| x.0 != 0).count() > n / 2);
+    }
+
+    #[test]
+    fn wav_header() {
+        let w = wav_bytes(&[[1, -1], [2, -2]]);
+        assert_eq!(&w[..4], b"RIFF");
+        assert_eq!(w.len(), 44 + 8);
+        assert_eq!(u32::from_le_bytes(w[24..28].try_into().unwrap()), 48000);
+        assert_eq!(i16::from_le_bytes([w[46], w[47]]), -1);
+    }
+}

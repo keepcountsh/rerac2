@@ -640,3 +640,33 @@ impl Tfrag {
 
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+
+
+    #[test]
+    fn kick_records_with_z_switch_texture() {
+        let st = |x: i8, y: i8, z: i8| TfragStrip { vertex_count_and_flag: x, end_of_packet_flag: y, ad_gif_offset: z, pad: 0 };
+        let mut t = Tfrag { ad_gifs: vec![TfragAdGifs::default(); 3], ..Default::default() };
+        // load ad-gif 1 + 3 verts; kick without texture (z < 0) + 3 verts; kick with ad-gif 2 + 3 verts;
+        // plain run of 3; load ad-gif 0 + 3 verts; end.
+        t.lod[0].strips = vec![st(-125, 0, 5), st(-125, -128, -1), st(-125, -128, 10), st(3, 0, 0), st(-125, 0, 0), st(0, 0, 0)];
+        t.lod[0].indices = (0..15).collect();
+        let g: Vec<u16> = tfrag_triangles(&t, 0).unwrap().iter().map(|t| t.ad_gif).collect();
+        assert_eq!(g, vec![1, 1, 2, 2, 0]);
+        // The first record always loads its ad-gif and is always biased (VU1 L84), whatever `y` says.
+        t.lod[0].strips = vec![st(-125, -128, 5), st(0, 0, 0)];
+        assert_eq!(tfrag_triangles(&t, 0).unwrap().iter().map(|t| t.ad_gif).collect::<Vec<_>>(), vec![1]);
+        // A load past the ad-gif array, or off a record boundary, is rejected.
+        t.lod[0].strips = vec![st(-125, 0, 15), st(0, 0, 0)];
+        assert!(tfrag_triangles(&t, 0).is_err());
+        t.lod[0].strips = vec![st(-125, 0, 5), st(-125, -128, 7), st(0, 0, 0)];
+        assert!(tfrag_triangles(&t, 0).is_err());
+    }
+
+
+
+}

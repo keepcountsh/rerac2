@@ -195,3 +195,45 @@ pub fn ps1_note_to_pitch(center_note: i8, center_fine: i8, note: i16, fine: i16)
 /// 989snd stream player's own computation is not reversed (docs/plan/audio.md §4).
 pub fn rate_to_pitch(rate: u32) -> u16 { ((rate as u64 * 0x1000) / 48000).min(0x3fff) as u16 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+
+
+
+    #[test]
+    fn note_table_and_pitch() {
+        let t = note_pitch_table();
+        assert_eq!(&t[..3], &[0x8000, 0x879c, 0x8fac]);
+        assert_eq!(t[12], 0x8000);
+        assert_eq!(t[139], 0x878c);
+        assert_eq!(t.iter().map(|&v| v as u64).sum::<u64>(), 4_867_824);
+        // Same note: unity. An octave up doubles, an octave down halves.
+        assert_eq!(note_to_pitch(60, 0, 60, 0), 0x1000);
+        assert_eq!(note_to_pitch(60, 0, 72, 0), 0x2000);
+        assert_eq!(note_to_pitch(60, 0, 48, 0), 0x800);
+        // PS1-style centre (+72/0) played at 60: one octave down, then ×44100/48000.
+        assert_eq!(ps1_note_to_pitch(72, 0, 60, 0), (0x800u32 * 44100 / 48000) as u16);
+        // Negative centre: PS2 rate, no scaling.
+        assert_eq!(ps1_note_to_pitch(-60, 0, 60, 0), 0x1000);
+        assert_eq!(rate_to_pitch(44100), 3763);
+        assert_eq!(rate_to_pitch(48000), 0x1000);
+    }
+
+    #[test]
+    fn vag_header() {
+        let mut v = b"VAGp".to_vec();
+        v.extend(0x20u32.to_be_bytes());
+        v.extend([0u8; 4]);
+        v.extend(32u32.to_be_bytes());
+        v.extend(44100u32.to_be_bytes());
+        v.extend([0u8; 12]);
+        v.extend(b"L01_Enemy_Loop\0\0");
+        v.extend([0u8; 32]);
+        let (h, body) = parse_vag(&v).unwrap();
+        assert_eq!((h.version, h.data_size, h.sample_rate, h.name.as_str(), body.len()), (0x20, 32, 44100, "L01_Enemy_Loop", 32));
+        assert!(parse_vag(&v[..0x20]).is_err());
+    }
+}

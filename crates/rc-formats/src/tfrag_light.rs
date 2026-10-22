@@ -225,3 +225,31 @@ pub mod ps2 {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn f(x: f32) -> u32 { x.to_bits() }
+
+    #[test]
+    fn ps2_arithmetic_truncates() {
+        assert_eq!(ps2::add(f(65536.0), f(0.5 / 128.0 * 1.999)), f(65536.0)); // below the 1/128 grid
+        assert_eq!(ps2::add(f(65536.0), f(1.0)), f(65537.0));
+        assert_eq!(ps2::mul(f(1.0), f(0.3)), f(0.3));
+        assert_eq!(ps2::mul(0x3f80_0003, 0x3fc0_0001), 0x3fc0_0005); // exact 1.5 + 5.5 ulp: truncated (IEEE nearest: ..06)
+        assert_eq!(ps2::add(f(1.0), f(-1.0)), 0);
+        assert_eq!(ps2::add(f(1.0), f(1e-10)), f(1.0)); // exponent gap >= 25
+        // Adder drops the smaller operand's bits below half an ULP of the larger one first:
+        assert_eq!(ps2::add(f(1.0), f(-1.5 * (2.0f32).powi(-24))), 0x3f7f_ffff); // IEEE round-toward-zero: 0x3f7ffffe
+        assert_eq!(ps2::sqrt(f(4.0)), f(2.0));
+        assert_eq!(ps2::sqrt(f(2.0)), 0x3fb5_04f3); // sqrt 2 = 1.41421353.., truncated
+        assert_eq!(ps2::div(f(1.0), f(4.0)), f(0.25));
+        assert_eq!(ps2::div(f(1.0), f(3.0)), 0x3eaa_aaaa); // IEEE nearest is ..ab
+        assert_eq!(ps2::itof12(0x800), f(0.5));
+        assert_eq!(ps2::itof12(-4096 * 3), f(-3.0));
+        assert_eq!(ps2::mul(f(1e30), f(1e30)), ps2::MAX);
+    }
+
+
+
+}

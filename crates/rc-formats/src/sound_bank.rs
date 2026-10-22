@@ -487,4 +487,3 @@ pub struct EnvSamplePoint {
     /// +0x28: music track the level starts (while music is idle) near this point.
     pub music_track: i32,
 }
-

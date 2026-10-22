@@ -218,4 +218,24 @@ impl AudioSystem {
         self.scene.speech.is_some_and(|(i, g)| self.spu.voices[i].generation == g && self.spu.voices[i].active())
     }
 }
+/// Tests that post to or drain the process-wide inbox hold this (the test harness runs them in parallel).
+#[cfg(test)]
+pub(crate) static TEST_INBOX: Mutex<()> = Mutex::new(());
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inbox_keeps_order() {
+        let _lock = TEST_INBOX.lock().unwrap_or_else(|e| e.into_inner());
+        let vag: Arc<[u8]> = Arc::from(&b"VAGp"[..]);
+        post(SceneAudioCmd::PauseMusic);
+        post(SceneAudioCmd::Speech { vag: vag.clone() });
+        post(SceneAudioCmd::ResumeMusic { after: 30 });
+        let got = take();
+        let mine: Vec<_> = got.into_iter().filter(|c| matches!(c, SceneAudioCmd::PauseMusic | SceneAudioCmd::Speech { .. } | SceneAudioCmd::ResumeMusic { after: 30 })).collect();
+        assert_eq!(mine, [SceneAudioCmd::PauseMusic, SceneAudioCmd::Speech { vag }, SceneAudioCmd::ResumeMusic { after: 30 }]);
+        assert!(take().is_empty());
+    }
+}

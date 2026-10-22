@@ -392,4 +392,3 @@ fn build_mesh(prims: &[Prim], fine: &[(usize, [[i32; 2]; 4])], add: &[usize], fr
         .with_inserted_attribute(ATTRIBUTE_SCISSOR, VertexAttributeValues::Uint32x4(sc))
         .with_inserted_indices(Indices::U32(idx))
 }
-

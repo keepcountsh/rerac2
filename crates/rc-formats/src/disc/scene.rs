@@ -113,3 +113,17 @@ impl SceneWad {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids() {
+        assert_eq!(record_of(0x21), 0);
+        assert_eq!(record_of(0x23), 2);
+        assert_eq!(record_of(0x26), 0);
+        assert_eq!(record_of(0x16), 0x16);
+        assert_eq!(record_of(0xbf), 0x2e);
+        assert!(is_scene(0x21) && !is_scene(0x16) && !is_scene(0xb1));
+    }
+}

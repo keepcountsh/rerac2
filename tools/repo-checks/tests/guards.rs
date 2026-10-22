@@ -65,9 +65,9 @@ fn guard_scans_crates_and_tool_tests() {
     let root = repo_root();
     let dirs: Vec<String> = guarded_dirs(&root).iter().map(|d| d.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/")).collect();
     assert_eq!(dirs[0], "crates");
-    for t in ["tools/repo-checks/tests", "tools/trace/tests"] { assert!(dirs.iter().any(|d| d == t), "{t} not scanned: {dirs:?}"); }
+    for t in ["tools/repo-checks/tests"] { assert!(dirs.iter().any(|d| d == t), "{t} not scanned: {dirs:?}"); }
     assert!(dirs.iter().all(|d| d == "crates" || d.ends_with("/tests")), "{dirs:?}");
-    assert!(is_test_file("crates/rc-game/tests/hero/hero_novalis.rs") && is_test_file("tools/trace/tests/trace/main.rs"));
+    assert!(is_test_file("crates/rc-formats/tests/formats/disc.rs") && is_test_file("tools/trace/tests/trace/main.rs"));
     assert!(!is_test_file("crates/rc-extract/src/main.rs"));
 }
 

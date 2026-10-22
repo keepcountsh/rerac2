@@ -260,3 +260,90 @@ impl BSphereView {
 
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocator_takes_lowest_free_and_tracks_hw() {
+        let mut p = PartPool::new();
+        assert_eq!((p.hint, p.hw, p.count), (0, -1, 0));
+        for k in 0..5 { assert_eq!(p.create_part(6), Some(k)); }
+        assert_eq!((p.hint, p.hw, p.count), (5, 4, 5));
+        p.kill_part(1);
+        p.kill_part(3);
+        assert_eq!((p.hint, p.hw, p.count), (1, 4, 3));
+        assert_eq!(p.recs[3][1], FLAG_DEAD);
+        // Refill hole 1: 1 <= hw, so the new hint is the first clear bit from bit 0 of byte (2 >> 3) = 0 → 3.
+        assert_eq!(p.create_part(7), Some(1));
+        assert_eq!(p.hint, 3);
+        assert_eq!(p.create_part(7), Some(3));
+        assert_eq!(p.hint, 5);
+        // Killing the top record walks hw down past dead slots.
+        p.kill_part(4);
+        assert_eq!(p.hw, 3);
+        for k in [3, 2, 1, 0] { p.kill_part(k); }
+        assert_eq!((p.hint, p.hw, p.count), (0, -1, 0));
+    }
+
+    #[test]
+    fn allocator_scan_crosses_full_bytes_and_reports_full() {
+        let mut p = PartPool::new();
+        for k in 0..20 { assert_eq!(p.create_part(1), Some(k)); }
+        p.kill_part(2);
+        assert_eq!(p.create_part(1), Some(2));
+        // Bytes 0 and 1 are full, byte 2 has bits 0..3 set: the scan ends at 20.
+        assert_eq!(p.hint, 20);
+        let mut q = PartPool::new();
+        for _ in 0..POOL_RECORDS { assert!(q.create_part(0).is_some()); }
+        assert_eq!(q.hint, 0x800);
+        assert_eq!(q.create_part(0), None);
+        q.kill_part(1000);
+        assert_eq!(q.create_part(0), Some(1000));
+        assert_eq!(q.hint, 0x800, "no clear bit left: the scan runs to 0x800");
+    }
+
+    #[test]
+    fn create_clears_only_the_first_half() {
+        let mut p = PartPool::new();
+        let i = p.create_part(6).unwrap();
+        p.recs[i] = [0xab; RECORD_SIZE];
+        p.kill_part(i);
+        let j = p.create_part(9).unwrap();
+        assert_eq!(i, j);
+        assert_eq!(p.recs[j][0], 9);
+        assert!(p.recs[j][1..0x20].iter().all(|&b| b == 0));
+        assert!(p.recs[j][0x20..].iter().all(|&b| b == 0xab), "0x20..0x3f are stale");
+    }
+
+
+    #[test]
+    fn dec_timer_and_ticks() {
+        let mut r = [0u8; RECORD_SIZE];
+        rec::set_i16(&mut r, 10, 2);
+        assert_eq!(fast_dec_timer(&mut r, 10), 0);
+        assert_eq!(fast_dec_timer(&mut r, 10), 2);
+        assert_eq!(rec::i16(&r, 10), 0);
+        assert_eq!(fast_dec_timer(&mut r, 10), 1);
+        rec::set_i16(&mut r, 10, -5);
+        assert_eq!(fast_dec_timer(&mut r, 10), 2);
+        assert_eq!(rec::i16(&r, 10), 0);
+        assert_eq!(TimeBase::NTSC.ticks(150), 150);
+        assert_eq!(TimeBase::NTSC.ticks(0), 0);
+    }
+
+    #[test]
+    fn bsphere_check_depth_and_sides() {
+        // Camera at the origin looking along +X (forward X, left Y, up Z).
+        let v = BSphereView::from_camera([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], 0.63, 0.63 * 0.775);
+        assert!(!v.culled(240.0, [100.0, 0.0, 0.0, 20.0]));
+        assert!(!v.culled(240.0, [259.0, 0.0, 0.0, 20.0]), "near side of the sphere within 240");
+        assert!(v.culled(240.0, [261.0, 0.0, 0.0, 20.0]));
+        assert!(v.culled(240.0, [-30.0, 0.0, 0.0, 20.0]), "behind");
+        assert!(!v.culled(240.0, [-10.0, 0.0, 0.0, 20.0]), "straddles the eye");
+        // Left of the frustum: y = 0.63·100 + 20·√(1+0.63²) + 1 → outside; −1 → inside.
+        let edge = 63.0 + 20.0 * (1.0f32 + 0.63 * 0.63).sqrt();
+        assert!(v.culled(240.0, [100.0, edge + 1.0, 0.0, 20.0]));
+        assert!(!v.culled(240.0, [100.0, edge - 1.0, 0.0, 20.0]));
+    }
+}

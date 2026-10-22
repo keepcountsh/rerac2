@@ -99,3 +99,37 @@ pub fn parse_hex(s: &str) -> Option<[u8; 20]> {
     Some(out)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FIPS 180-2 appendix A / NIST CAVP short-message vectors.
+    #[test]
+    fn standard_vectors() {
+        assert_eq!(hex(&sha1(b"")), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(hex(&sha1(b"abc")), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(hex(&sha1(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")), "84983e441c3bd26ebaae4aa1f95129e5e54670f1");
+        assert_eq!(
+            hex(&sha1(b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")),
+            "a49b2446a02c645bf419f995b67091253a04a259"
+        );
+        assert_eq!(hex(&sha1(b"The quick brown fox jumps over the lazy dog")), "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12");
+        assert_eq!(hex(&sha1(&vec![b'a'; 1_000_000])), "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
+    }
+
+    #[test]
+    fn padding_boundaries_and_incremental_updates_agree() {
+        let data: Vec<u8> = (0..1000u32).map(|i| (i * 31 + 7) as u8).collect();
+        for len in [0, 1, 55, 56, 57, 63, 64, 65, 119, 120, 127, 128, 129, 1000] {
+            let whole = sha1(&data[..len]);
+            for split in [1, 3, 17, 63, 64, 65, 200] {
+                let mut s = Sha1::new();
+                for c in data[..len].chunks(split) { s.update(c); }
+                assert_eq!(s.finish(), whole, "len {len} split {split}");
+            }
+        }
+        assert_eq!(parse_hex(&hex(&sha1(b"abc"))), Some(sha1(b"abc")));
+        assert_eq!(parse_hex("A9993E364706816ABA3E25717850C26C9CD0D89D"), Some(sha1(b"abc")));
+        assert_eq!(parse_hex("xyz"), None);
+    }
+}

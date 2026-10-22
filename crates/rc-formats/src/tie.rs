@@ -613,3 +613,199 @@ pub fn wind_sway(mode: u16, block: u32, tick: u32, rel: [f32; 3]) -> Option<[f32
     crate::shrub::wind_sway_phase(mode, (block >> 9) & 0x1ff, tick, rel)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck::bytes_of;
+
+    /// Builds a one-LOD class blob around `pk` (packet data, header fields filled in by the caller).
+    fn class_blob(ph: TiePacketHeader, data: &[u8], ad_gifs: usize) -> Vec<u8> {
+        let table = 0x80usize;
+        let pdata = table + 0x10;
+        let normals = pdata + data.len();
+        let adg = normals + 0x200;
+        let mut h = TieClassHeader { scale: 1.0, o_class: 7, ..Default::default() };
+        h.packets = [table as i32, 0, 0];
+        h.packet_count = [1, 0, 0];
+        h.normals = normals as u32;
+        h.ad_gif_ofs = adg as u32;
+        h.texture_count = ad_gifs as u8;
+        let mut b = bytes_of(&h).to_vec();
+        b.extend_from_slice(bytes_of(&TiePacketHeader { data: 0x10, ..ph }));
+        b.extend_from_slice(data);
+        for i in 0..64i16 { b.extend_from_slice(bytes_of(&[i, 0, 0, 0])); }
+        b.resize(b.len() + ad_gifs * 0x50, 0);
+        b
+    }
+
+    fn pad16(v: &mut Vec<u8>) { while !v.len().is_multiple_of(16) { v.push(0); } }
+
+    /// Packet: ad-gif 0 at slot 0, strip A (3 verts) at 6, ad-gif 1 at 16, strip B (4 verts) at 22.
+    /// Slots A: 7, 10, 13; B: 23, 26, 29, 32. Four dinky (single-only, marker = index 0) and two fat
+    /// vertices (single phase = index 0, double phase = index 1 which also writes slot 26).
+    fn sample() -> (TiePacketHeader, Vec<u8>) {
+        let mut d = Vec::new();
+        for x in [16i32, 0, 0, 0] { d.extend(x.to_le_bytes()); }                 // ad_gif_dest
+        for x in [0x50i32, 0, 0, 0] { d.extend(x.to_le_bytes()); }               // ad_gif_src: block 0 -> ad-gif 1, block 1 -> ad-gif 0
+        // unpack header: single_only, fat present, ?, 2 strips, markers (dinky 29 is index 0), counts 4 dinky + 2 fat
+        d.extend([1, 0, 6, 2, 29, 0, 7, 23, 12, 12, 4, 2]);
+        d.extend([3, 0, 6, 0, 4, 0, 22, 0]);                                     // strips
+        pad16(&mut d);
+        let vert_ofs = d.len() / 16;
+        let dinky = [(29u16, 0u16), (13, 0), (32, 0), (10, 0)];
+        for (i, (s, s2)) in dinky.iter().enumerate() {
+            d.extend(bytes_of(&TieDinkyVertex { x: i as i16, y: 100, z: 200, gs_slot: *s, s: 4096, t: -4096, q: 0x1000, gs_slot_2: *s2 }));
+        }
+        d.extend(bytes_of(&TieFatVertex { dx: 1, dy: 2, dz: 3, gs_slot: 7, x: 10, y: 11, z: 12, pad: 0, s: 0, t: 0, q: 0x1000, gs_slot_2: 0 }));
+        d.extend(bytes_of(&TieFatVertex { dx: -1, dy: -2, dz: -3, gs_slot: 23, x: 20, y: 21, z: 22, pad: 0, s: 0, t: 0, q: 0x1000, gs_slot_2: 26 }));
+        pad16(&mut d);
+        let vert_size = d.len() / 16 - vert_ofs;
+        let color_ofs = d.len() / 16;
+        let colors = [5u8, 6, 7, 8, 9, 10, 11, 0xff, 12, 13, 14, 0xff];      // 4 dinky, 2 fat
+        d.extend(colors);
+        pad16(&mut d);
+        d.extend(colors.map(|c| if c == 0xff { c } else { c + 0x40 }));
+        pad16(&mut d);
+        let slot_ofs = d.len() / 16;
+        d.extend([7u8, 3, 3, 0xfc, 3, 3, 3, 0xf6]);
+        pad16(&mut d);
+        let ph = TiePacketHeader {
+            data: 0, shader_count: 2, ad_gif_qwc: 10, control_count: 5, control_size: 2, vert_ofs: vert_ofs as u8, vert_size: vert_size as u8,
+            color_ofs: color_ofs as u8, color_count: 3, slot_table_ofs: slot_ofs as u8, slot_table_size: 1, strip_count: 2, strip_vertex_count: 7,
+        };
+        (ph, d)
+    }
+
+
+    #[test]
+    fn wind_sway_uses_the_address_page_as_its_phase() {
+        // `(block >> 9) & 0x1ff`: the page, not the address (TieProc's extra shift).
+        assert_eq!(wind_sway(0, 0x100000, 5, [1.0, 1.0, 0.0]), None);
+        assert_eq!(wind_sway(2, 0x100000, 5, [70.0, 40.0, 0.0]), None); // 4900 + 1600 > 6000
+        for tick in [0u32, 1, 7, 255, 256, 4097] {
+            for block in [0u32, 0x40, 0x1c0, 0x200, 0x240, 0x1040] {
+                assert_eq!(
+                    wind_sway(2, block, tick, [0.0, 0.0, 10.0]),
+                    crate::shrub::wind_sway_phase(2, (block >> 9) & 0x1ff, tick, [0.0, 0.0, 10.0])
+                );
+            }
+        }
+        // Eight consecutive 0x40-byte blocks share a page (and so a phase).
+        assert_eq!(wind_sway(2, 0x1c000, 3, [0.0; 3]), wind_sway(2, 0x1c1c0, 3, [0.0; 3]));
+        assert_ne!(wind_sway(2, 0x1c000, 3, [0.0; 3]), wind_sway(2, 0x1c200, 3, [0.0; 3]));
+    }
+
+    #[test]
+    fn winding_flag_flips_parity() {
+        let p = TiePacket { draws: vec![TieDraw { ad_gif: 3, winding: 1, vertices: vec![0, 1, 2, 3] }], ..Default::default() };
+        assert_eq!(tie_triangles(&p), [TieTriangle { a: 2, b: 1, c: 0, ad_gif: 3 }, TieTriangle { a: 1, b: 2, c: 3, ad_gif: 3 }]);
+    }
+
+    #[test]
+    fn dinky_double_phase_uses_marker_plus_four() {
+        // 8 dinky, no fat: single marker at index 0 -> indices 0..3 single, 4..7 double; double marker at index 5 (= 8 - 3).
+        let mut pk = TiePacket {
+            unpack: TieUnpackHeader { dinky_single_end: 40, dinky_double_end: 45, no_fat: 1, ..Default::default() },
+            colors: vec![0; 8],
+            ..Default::default()
+        };
+        pk.dinky = (0..8u16).map(|i| TieDinkyVertex { gs_slot: 40 + i, gs_slot_2: 100 + i, ..Default::default() }).collect();
+        resolve_vertices(&mut pk).unwrap();
+        let s2: Vec<u16> = pk.vertices.iter().map(|v| v.gs_slot_2).collect();
+        assert_eq!(s2, [0, 0, 0, 0, 104, 105, 106, 107]);
+        // Double marker not at D - 3: the VU would run past the dinky vertices.
+        pk.unpack.dinky_double_end = 44;
+        assert!(resolve_vertices(&mut pk).is_err());
+        // Single-only: the marker must be D - 4.
+        pk.unpack.dinky_single_only = 1;
+        pk.unpack.dinky_single_end = 44;
+        resolve_vertices(&mut pk).unwrap();
+        assert!(pk.vertices.iter().all(|v| v.gs_slot_2 == 0));
+        pk.unpack.dinky_single_end = 45;
+        assert!(resolve_vertices(&mut pk).is_err());
+    }
+
+    #[test]
+    fn malformed_packets_are_rejected() {
+        let (ph, d) = sample();
+        // A strip whose slots are not all written.
+        let mut bad = d.clone();
+        bad[0x2c] = 4;
+        assert!(parse_tie_class(&class_blob(ph, &bad, 2)).is_err());
+        // ad_gif_dest[3] > 0 never terminates the VU1 placement loop.
+        let mut bad = d.clone();
+        bad[0..16].copy_from_slice(&[16, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+        assert!(parse_tie_class(&class_blob(ph, &bad, 2)).is_err());
+        // shader_count disagreeing with the placed ad-gifs.
+        assert!(parse_tie_class(&class_blob(TiePacketHeader { shader_count: 1, ..ph }, &d, 2)).is_err());
+        // A missing marker.
+        let mut bad = d.clone();
+        bad[0x20 + 6] = 99;
+        assert!(parse_tie_class(&class_blob(ph, &bad, 2)).is_err());
+    }
+
+
+    /// Novalis (skipped without `extracted/`): a fat vertex at morph factor k = 1 (`position + delta`) lies on
+    /// the next LOD's surface (within 2.5 s16 units, the position quantisation), while at k = 0 it mostly does
+    /// not. So `TieProc`'s k = (depth − near) / (mid − near) turns LOD 0 into the LOD-1 surface exactly where it
+    /// switches to LOD 1 (same for LOD 1 → 2 over mid..far): no pop at the switch (tie_rac1.md §3.5).
+    #[test]
+    fn novalis_fat_vertices_morph_onto_the_next_lod() {
+        type V = [f64; 3];
+        fn sub(a: V, b: V) -> V { [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }
+        fn dot(a: V, b: V) -> f64 { a[0] * b[0] + a[1] * b[1] + a[2] * b[2] }
+        fn lerp(a: V, d: V, t: f64) -> V { [a[0] + t * d[0], a[1] + t * d[1], a[2] + t * d[2]] }
+        // Distance from p to triangle abc (closest-point regions, Ericson 5.1.5).
+        fn dist(p: V, a: V, b: V, c: V) -> f64 {
+            let (ab, ac, ap) = (sub(b, a), sub(c, a), sub(p, a));
+            let q = {
+                let (d1, d2) = (dot(ab, ap), dot(ac, ap));
+                let bp = sub(p, b);
+                let (d3, d4) = (dot(ab, bp), dot(ac, bp));
+                let cp = sub(p, c);
+                let (d5, d6) = (dot(ab, cp), dot(ac, cp));
+                let (va, vb, vc) = (d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2);
+                if d1 <= 0.0 && d2 <= 0.0 { a }
+                else if d3 >= 0.0 && d4 <= d3 { b }
+                else if d6 >= 0.0 && d5 <= d6 { c }
+                else if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 { lerp(a, ab, d1 / (d1 - d3)) }
+                else if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 { lerp(a, ac, d2 / (d2 - d6)) }
+                else if va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0 { lerp(b, sub(c, b), (d4 - d3) / ((d4 - d3) + (d5 - d6))) }
+                else { let den = 1.0 / (va + vb + vc); lerp(lerp(a, ab, vb * den), ac, vc * den) }
+            };
+            dot(sub(p, q), sub(p, q)).sqrt()
+        }
+        let dir = crate::test_data::root().join("levels/01");
+        let (Ok(idx), Ok(comp)) = (std::fs::read(dir.join("core_index.bin")), std::fs::read(dir.join("core_data.bin"))) else {
+            eprintln!("skipped: no extracted/");
+            return;
+        };
+        let data = crate::wad::decompress(&comp).unwrap();
+        let core = crate::level::parse_level_core(&idx, data.len()).unwrap();
+        let classes = parse_level_ties(&core, &data).unwrap();
+        for l in 0..2 {
+            let (mut n, mut on_target, mut on_base, mut worst) = (0usize, 0usize, 0usize, 0.0f64);
+            for c in &classes {
+                let tris: Vec<[V; 3]> = c.class.lods[l + 1]
+                    .iter()
+                    .flat_map(|p| tie_triangles(p).into_iter().map(move |t| [t.a, t.b, t.c].map(|i| p.vertices[i as usize].position.map(f64::from))))
+                    .collect();
+                if tris.is_empty() { continue; }
+                for v in c.class.lods[l].iter().flat_map(|p| p.vertices.iter()).filter(|v| v.is_fat()) {
+                    let base = v.position.map(f64::from);
+                    let target = lerp(base, v.morph_delta.map(f64::from), 1.0);
+                    let near = |p: V| tris.iter().map(|t| dist(p, t[0], t[1], t[2])).fold(f64::MAX, f64::min);
+                    let d = near(target);
+                    n += 1;
+                    worst = worst.max(d);
+                    on_target += (d < 2.5) as usize;
+                    on_base += (near(base) < 2.5) as usize;
+                }
+            }
+            eprintln!("LOD {l} fat vertices: {n}, at k = 1 on LOD {} surface: {on_target} (worst {worst:.2}), at k = 0: {on_base}", l + 1);
+            assert!(n > 0 && on_target == n, "LOD {l}: {on_target}/{n} (worst {worst})");
+            assert!(on_base < n / 2);
+        }
+    }
+
+}

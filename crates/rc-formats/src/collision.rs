@@ -330,4 +330,3 @@ pub(crate) struct CollisionTriangle {
     pub(crate) part: u8,
 }
 const _: () = assert!(std::mem::size_of::<CollisionTriangle>() == 44);
-

@@ -598,3 +598,15 @@ impl Snd989 {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lfo_sine_table() {
+        assert_eq!([lfo_sine(0), lfo_sine(1), lfo_sine(2), lfo_sine(3)], [32767, 32766, 32766, 32765]);
+        assert_eq!([lfo_sine(510), lfo_sine(511), lfo_sine(512), lfo_sine(513)], [201, 100, 0, -100]);
+        assert_eq!(lfo_sine(1024), -32767);
+    }
+
+}
