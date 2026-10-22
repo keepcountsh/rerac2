@@ -296,8 +296,7 @@ fn record(inp: &TieLodInput, eye: Vec3, rows: [Vec3; 3], fog: &LevelFog, force_l
     let [x, y, z, r] = inp.sphere;
     let d = Vec3::new(x, y, z) - eye;
     let p = Vec3::new(rows[0].dot(d), rows[1].dot(d), rows[2].dot(d));
-    // The cap 0x160fe0 (720, already in `inp.dist`): 144 in the Visibomb's view (crate::visibomb_view::SHORT_FAR).
-    let dist = if crate::visibomb_view::SHORT_FAR.load(std::sync::atomic::Ordering::Relaxed) { inp.dist.min(crate::visibomb_view::SHORT_TIE_CAP) } else { inp.dist };
+    let dist = inp.dist;
     let Some(depth) = tie_cull(p, r, dist, tans) else { return ([LOD_CULLED, 0, 0, 0], 0) };
     let dists = if scale == 1.0 { inp.dists } else { inp.dists.map(|d| d * scale) };
     let pick = if force_lod0 { TieLodPick::fixed(0) } else { tie_lod(depth, dists) };

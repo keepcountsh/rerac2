@@ -28,7 +28,7 @@ struct Last {
 #[allow(clippy::too_many_arguments)]
 fn log(
     mut clock: Local<Option<std::time::Instant>>,
-    play: Option<Res<crate::gameplay::Play>>,
+    play: Option<Res<crate::rac2_play::Play>>,
     entities: Query<Entity>,
     meshes: Res<Assets<Mesh>>,
     mats: Res<Assets<crate::moby_render::MobyMaterial>>,
@@ -38,11 +38,11 @@ fn log(
     // The wall clock: Bevy's clocks advance by whole game ticks (crate::frame_pace).
     let now = std::time::Instant::now();
     let ms = clock.replace(now).map_or(0.0, |t| (now - t).as_secs_f32() * 1000.0);
-    let counter = play.as_ref().map(|p| p.game.counter);
+    let counter = play.as_ref().map(|p| p.ticks);
     let counts = [entities.iter().count(), meshes.len(), mats.len(), images.len()];
     if ms > SLOW_MS {
         let ticks = counter.zip(last.counter).map_or(0, |(a, b)| a.saturating_sub(b));
-        let at = play.as_ref().map(|p| p.game.hero.position()).unwrap_or_default();
+        let at = play.as_ref().map(|p| p.hero.pos).unwrap_or_default();
         let d = |k: usize| counts[k] as i64 - last.counts[k] as i64;
         println!(
             "frame log: {ms:.1} ms, {ticks} ticks (tick {}), Ratchet at {:.1}, {:.1}, {:.1}; entities {} ({:+}), meshes {} ({:+}), moby materials {} ({:+}), images {} ({:+})",

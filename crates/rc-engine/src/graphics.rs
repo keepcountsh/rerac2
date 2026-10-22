@@ -23,7 +23,6 @@ pub trait GfxOption: Copy + PartialEq + Sized + 'static {
     const KEY: &'static str;
     fn key(self) -> &'static str;
     fn index(self) -> u8 { Self::ALL.iter().position(|&v| v == self).unwrap_or(0) as u8 }
-    fn from_index(i: u8) -> Self { Self::ALL.get(i as usize).copied().unwrap_or(Self::ALL[0]) }
     fn parse(v: &str) -> Option<Self> { Self::ALL.iter().copied().find(|a| a.key() == v.trim()) }
 }
 
@@ -167,9 +166,6 @@ pub enum Preset {
 }
 
 impl Preset {
-    pub const ALL: [Preset; 3] = [Preset::Original, Preset::Enhanced, Preset::Custom];
-    pub fn index(self) -> u8 { Self::ALL.iter().position(|&p| p == self).unwrap_or(0) as u8 }
-    pub fn from_index(i: u8) -> Self { Self::ALL.get(i as usize).copied().unwrap_or(Preset::Custom) }
 }
 
 /// The graphics options (module docs).
@@ -220,13 +216,6 @@ impl GraphicsSettings {
         s
     }
 
-    /// Writes every option into the port settings file.
-    pub fn save(&self) {
-        save(self.aa);
-        save(self.hud);
-        save(self.textures);
-        save(self.detail);
-    }
 }
 
 /// Before the Anti-aliasing row had Original, the file kept the sample count (`msaa = 0|2|4|8`): a count above 1 stays
@@ -243,8 +232,6 @@ fn file_value<T: GfxOption>(d: T) -> T { crate::render_settings::load_key(T::KEY
 fn env_value<T: GfxOption>(d: T) -> T {
     std::env::var(format!("RC_GFX_{}", T::KEY.to_ascii_uppercase())).ok().as_deref().and_then(T::parse).unwrap_or(d)
 }
-
-fn save<T: GfxOption>(v: T) { crate::render_settings::save_key(T::KEY, v.key()); }
 
 pub struct GraphicsPlugin;
 

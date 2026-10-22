@@ -175,32 +175,6 @@ pub struct LevelParticles {
     pub grid: Option<rc_formats::level::HeightGrid>,
 }
 
-/// Reads the particle textures and the level's emitters (class 27 on Novalis) with their pvars.
-pub fn load(core: &rc_formats::level::LevelCore, index: &[u8], core_data: &[u8], gameplay: &[u8], level: u32) -> anyhow::Result<LevelParticles> {
-    let textures = match rc_formats::particle_tex::parse_particle_textures(core, index, core_data) {
-        Ok(t) => Some(t),
-        Err(e) => {
-            eprintln!("particles: no textures ({e})");
-            None
-        }
-    };
-    let mut owners = Vec::new();
-    // The emitters: the instances whose class runs the emitter update 0x2bd100 in the level's class table
-    // (crate::gameplay::level_ports; class 27 on Novalis, no other level has the function).
-    let emitter = |oc: i32| crate::gameplay::level_ports().external(oc as i16) == Some(crate::gameplay::EMITTER_UPDATE);
-    {
-        let instances = rc_formats::gameplay::parse_moby_instances(gameplay)?;
-        let pvars = rc_formats::gameplay::parse_pvars(gameplay)?;
-        for (i, m) in instances.iter().enumerate().filter(|(_, m)| emitter(m.o_class)) {
-            let Some(p) = m.pvar(&pvars).filter(|p| p.len() >= 0xe0) else { continue };
-            let pos = m.position;
-            owners.push((Owner { instance: i, pos: [pos[0], pos[1], pos[2], 0.0], rot: m.rotation, pvars: p.to_vec() }, m.update_distance as u8));
-        }
-    }
-    let grid = rc_formats::level::HeightGrid::parse(&core.header, core_data);
-    Ok(LevelParticles { textures, owners, level, grid })
-}
-
 /// The live simulation.
 #[derive(Resource)]
 pub struct ParticleSim {
@@ -302,7 +276,7 @@ impl Plugin for ParticlePlugin {
             .add_systems(crate::level_switch::LevelStartup, setup)
             .add_systems(crate::level_switch::LevelUnload, (crate::level_switch::remove::<ParticleSim>, crate::level_switch::remove::<ParticleMesh>))
             .add_systems(FixedUpdate, tick)
-            .add_systems(PostUpdate, build_sprites.after(crate::fog_state::FogSet));
+            .add_systems(PostUpdate, build_sprites);
     }
 }
 

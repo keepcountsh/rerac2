@@ -56,7 +56,6 @@ pub fn bank_bytes(bank: &PointLights) -> Vec<u8> {
 struct WorldLights {
     /// Keeps the import module (`#import rerac::world_lights::…`) loaded.
     _shader: Handle<bevy::shader::Shader>,
-    enabled: bool,
     trace: bool,
     /// Wall clock of the previous update (the trace prints the frame time).
     last: std::time::Instant,
@@ -97,15 +96,13 @@ fn setup(level: &crate::Level, assets: &AssetServer) -> WorldLights {
     let tfrags = lv.tfrags.iter().map(|t| t.header.bsphere).collect();
     let spheres = WorldSpheres { ties, tfrags, shrubs };
     let lists = WorldLightLists::new(&spheres);
-    let enabled = !std::env::var("RC_WORLD_LIGHTS").is_ok_and(|v| v.trim() == "0");
     let trace = std::env::var("RC_WORLD_LIGHTS_TRACE").is_ok_and(|v| v.trim() == "1");
-    WorldLights { _shader: assets.load(IMPORT_PATH), enabled, trace, last: std::time::Instant::now(), spheres, lists, bank: bank_bytes(&PointLights::default()) }
+    WorldLights { _shader: assets.load(IMPORT_PATH), trace, last: std::time::Instant::now(), spheres, lists, bank: bank_bytes(&PointLights::default()) }
 }
 
 /// After the tick: `UpdateAllPointLights` on the lists, then the buffers that changed.
 #[allow(clippy::too_many_arguments)]
 fn update(
-    play: Option<Res<crate::gameplay::Play>>,
     level: Res<crate::Level>,
     assets: Res<AssetServer>,
     mut state: Local<Option<WorldLights>>,
@@ -118,11 +115,8 @@ fn update(
     // A runtime level change (crate::level_switch): the new level's lights.
     if generation.is_changed() { *state = None; }
     let w = state.get_or_insert_with(|| setup(&level, &assets));
-    let empty = PointLights::default();
-    let bank = match &play {
-        Some(p) if w.enabled => &p.svc.point_lights,
-        _ => &empty,
-    };
+    // The game's point lights (none yet: G-REN-006).
+    let bank = &PointLights::default();
     let changed = w.lists.update(bank, &w.spheres);
     let bytes = bank_bytes(bank);
     let bank_changed = bytes != w.bank;
@@ -136,8 +130,7 @@ fn update(
     w.last = std::time::Instant::now();
     if w.trace {
         let n = |l: &[u16]| l.iter().filter(|&&x| x != 0xffff).count();
-        let tick = play.as_ref().map_or(0, |p| p.game.counter);
         let lights: Vec<_> = bank.slots.iter().enumerate().filter_map(|(i, s)| s.map(|l| (i, l.pos, l.radius, l.color, l.intensity))).collect();
-        println!("world lights: tick {tick}: frame {frame_ms:.2} ms; listed tfrags {} ties {} shrubs {}; bank {lights:?}", n(&w.lists.tfrags), n(&w.lists.ties), n(&w.lists.shrubs));
+        println!("world lights: frame {frame_ms:.2} ms; listed tfrags {} ties {} shrubs {}; bank {lights:?}", n(&w.lists.tfrags), n(&w.lists.ties), n(&w.lists.shrubs));
     }
 }

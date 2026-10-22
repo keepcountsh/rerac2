@@ -232,7 +232,7 @@ impl Rac2 {
     pub(crate) fn done(&self) -> bool { self.done }
 }
 
-/// The front end runs: `RC_FRONTEND=1`, or no `RC_LEVEL` (crate::saves::front_end_requested's rule for R&C1).
+/// The front end runs: `RC_FRONTEND=1`, or no `RC_LEVEL` .
 pub fn requested() -> bool {
     match std::env::var("RC_FRONTEND").map(|v| v.trim().to_owned()) {
         Ok(v) if v == "1" => true,
@@ -257,7 +257,7 @@ impl FrontEndPlugin {
 impl Plugin for FrontEndPlugin {
     fn build(&self, app: &mut App) {
         let Some(data) = self.data.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
-        let seed = clock_seed(if crate::determinism::deterministic() { [0; 8] } else { crate::saves::clock_now() });
+        let seed = clock_seed(if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() });
         app.insert_resource(Rac2 {
             camera: None,
             done: false,

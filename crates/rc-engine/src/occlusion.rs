@@ -40,10 +40,7 @@ pub struct LevelOcclusionData {
 /// order of `FUN_00255958`. `tfrags` in header-table order, `ties` / `mobys` in gameplay order.
 pub fn load(core: &LevelCore, core_data: &[u8], gameplay: &[u8], tfrags: &[Tfrag], ties: &[TieInstance], mobys: &[MobyInstance]) -> anyhow::Result<LevelOcclusionData> {
     let grid = if core.blocks.iter().any(|b| b.name == "occlusion") { Some(occlusion::parse_occlusion(core, core_data)?) } else { None };
-    let maps = match core.game {
-        rc_formats::Game::Rac1 => occlusion::parse_gameplay_occlusion_mappings(gameplay)?,
-        rc_formats::Game::Rac2 => rc_formats::rac2::gameplay::section(gameplay, "occlusion_mappings")?.map(occlusion::parse_occlusion_mappings).transpose()?,
-    };
+    let maps = rc_formats::rac2::gameplay::section(gameplay, "occlusion_mappings")?.map(occlusion::parse_occlusion_mappings).transpose()?;
     let maps = maps.filter(|_| grid.is_some());
     let headers: Vec<_> = tfrags.iter().map(|t| t.header).collect();
     let tie_keys: Vec<i32> = ties.iter().map(|t| t.occlusion_index).collect();
@@ -138,20 +135,13 @@ fn report(level: &LoadedLevel, mode: OcclusionMode, freeze: bool) {
 }
 
 /// `UpdateOcclusion` once per frame, at the camera `tfrag_lod` scales by 1024 (the game's 0x167240).
-/// Fallback 0 (`0x15f608` is cleared at the end of every frame render), else the value a tick set for its frame (1 the
-/// Visibomb's missile, 2 `UpdateModeFreeze` and Gemlik's exploding ship: crate::visibomb_view::occlusion_fallback),
-/// debug camera off (`0x16c4ec` = 0 in play).
-fn update_occlusion(frame: Option<ResMut<OcclusionFrame>>, level: Res<crate::Level>, cams: Query<&Transform, With<Camera3d>>, play: Option<Res<crate::gameplay::Play>>) {
+/// The neighbours' fallback, debug camera off.
+fn update_occlusion(frame: Option<ResMut<OcclusionFrame>>, level: Res<crate::Level>, cams: Query<&Transform, With<Camera3d>>) {
     let (Some(mut f), Some(cam)) = (frame, cams.iter().next()) else { return };
     let eye = crate::game_camera::game_eye(cam);
     let grid = level.0.occlusion.grid.as_ref();
     let mode = f.mode;
-    let fallback = match crate::visibomb_view::occlusion_fallback(play.as_deref()) {
-        1 => OcclusionFallback::AllVisible,
-        2 => OcclusionFallback::Octants,
-        _ => OcclusionFallback::Neighbours,
-    };
-    f.mask = *f.state.update(grid, mode, fallback, false, eye.to_array());
+    f.mask = *f.state.update(grid, mode, OcclusionFallback::Neighbours, false, eye.to_array());
     if f.freeze_after_first && f.mode == OcclusionMode::Active { f.mode = OcclusionMode::Freeze; }
     f.camera = eye;
     f.cell = cell_coords(eye.to_array());

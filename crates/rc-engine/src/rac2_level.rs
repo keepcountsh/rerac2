@@ -101,7 +101,7 @@ pub struct ClassBlobs {
     pub blobs: std::collections::HashMap<i32, Vec<u8>>,
 }
 
-/// Level `index`'s code overlay (the data lump 0: Insomniac's sectioned executable, `crate::sky_stars::overlay_read`).
+/// Level `index`'s code overlay (the data lump 0: Insomniac's sectioned executable, [`overlay_read`]).
 pub fn overlay(root: &Path, index: u32) -> Result<Vec<u8>> {
     let name = file_name(index);
     let file = crate::disc_source::read(root, &name)?;
@@ -180,8 +180,8 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
         .ok();
     let ties = crate::tie_render::load_ties(&core, &core_data, gs_ram, &gameplay, &textures).context("loading ties")?;
     let shrubs = crate::shrub_render::load_shrubs(&core, &core_data, gs_ram, &gameplay, &textures).context("loading shrubs")?;
-    // Going Commando's shells turn by its own rotations (rc_game2::sky), not R&C1's per-level dispatch.
-    let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?.map(|s| crate::sky_render::LevelSky { dispatch: false, ..s });
+    // The shells turn by the game's own rotations (rc_game2::sky).
+    let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?;
     let mut textures = textures;
     let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
     if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("rac2: Ratchet's armour not attached ({e:#}); he has no mesh"); }
@@ -200,7 +200,6 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let death_z = rc_formats::rac2::gameplay::level_settings(&gameplay)?
         .and_then(|s| s.get(0x28..0x2c))
         .map_or(f32::NEG_INFINITY, |b| f32::from_le_bytes(b.try_into().unwrap()));
-    let moby_class_order = core.moby_classes.iter().map(|e| e.o_class).collect();
     println!(
         "rac2: level {index} ({name}): {} tfrags, {} textures, {} tie classes / {} instances, {} shrub classes / {} instances, {} moby classes / {} instances, sky {}, collision {}",
         tfrags.len(), textures.len(), ties.classes.len(), ties.instances.len(), shrubs.classes.len(), shrubs.instances.len(),
@@ -208,8 +207,8 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
         sky.is_some(), collision.is_some()
     );
     Ok(LoadedLevel {
-        tfrags, textures, fog, background, mobys, ties, shrubs, sky, occlusion, tfrag_lod, particles, hud: None,
-        water: Default::default(), sea: Default::default(), audio: audio(root, index, &wad, core_index, &core, &core_data, &gameplay, collision.clone()), collision, death_z, gameplay, moby_class_order, timings: t,
+        tfrags, textures, fog, background, mobys, ties, shrubs, sky, occlusion, tfrag_lod, particles,
+        audio: audio(root, index, &wad, core_index, &core, &core_data, &gameplay, collision.clone()), collision, death_z, gameplay, timings: t,
     })
 }
 
@@ -315,4 +314,22 @@ fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &leve
             None
         }
     }
+}
+
+/// `(vaddr, bytes)` from a level overlay (`overlay.bin`, Insomniac's "ratchet executable": `[dest, size, type,
+/// entry]` + data per section until the entry changes; docs/formats/wad_layouts_rac1.md §4).
+pub fn overlay_read(overlay: &[u8], vaddr: u32, len: usize) -> Option<Vec<u8>> {
+    let word = |o: usize| overlay.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let (mut pos, mut entry) = (0usize, None);
+    while pos + 16 <= overlay.len() {
+        let (dest, size, ty, ep) = (word(pos)?, word(pos + 4)? as usize, word(pos + 8)?, word(pos + 12)?);
+        if *entry.get_or_insert(ep) != ep { break; }
+        let data = overlay.get(pos + 16..pos + 16 + size)?;
+        if ty == 1 && vaddr >= dest && (vaddr - dest) as usize + len <= size {
+            let o = (vaddr - dest) as usize;
+            return Some(data[o..o + len].to_vec());
+        }
+        pos += 16 + size;
+    }
+    None
 }

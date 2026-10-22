@@ -24,8 +24,6 @@ impl Plugin for DrawStatsPlugin {
                 count::<crate::fx_draw::FxPrimMaterial>,
                 count::<crate::particle_render::ParticleMaterial>,
                 count::<crate::sky_render::SkyMaterial>,
-                count::<crate::sky_stars::SkyStarMaterial>,
-                count::<crate::water_render::WaterMaterial>,
                 count::<StandardMaterial>,
                 cameras,
             )
@@ -44,7 +42,6 @@ impl Plugin for DrawStatsPlugin {
                 changes::<crate::moby_render::MobyMetalMaterial>,
                 changes::<crate::fx_draw::FxPrimMaterial>,
                 changes::<crate::particle_render::ParticleMaterial>,
-                changes::<crate::water_render::WaterMaterial>,
                 changes::<crate::hud_render::HudMaterial>,
                 buffer_detail,
                 mesh_detail,

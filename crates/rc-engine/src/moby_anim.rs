@@ -65,9 +65,8 @@ fn ratchet_sequences<'a>(core: &LevelCore, block: &dyn Fn(&str) -> Option<&'a [u
     (0..core.ratchet_seqs.len())
         .map(|i| {
             let blob = block(&format!("ratchet_seq/{i:03}"))?;
-            // Going Commando's are compressed (`parse_sequence_joints`); R&C1's never are.
-            let joints = (core.game == rc_formats::Game::Rac2).then_some(joints);
-            moby_anim::parse_sequence_joints(blob, 0, joints).map_err(|e| eprintln!("ratchet_seq {i}: {e}")).ok()
+            // Compressed (`parse_sequence_joints`).
+            moby_anim::parse_sequence_joints(blob, 0, Some(joints)).map_err(|e| eprintln!("ratchet_seq {i}: {e}")).ok()
         })
         .collect()
 }
@@ -165,26 +164,7 @@ impl MobyAnim {
 }
 
 impl MobyAnim {
-    /// Instance `k` belongs to a class the moby scheduler runs (crate::gameplay): its animation state and
-    /// snapshot are the table's (`MobyAnimAdvance` ran in the scheduler), so this module never advances it
-    /// (`skip_advance`) and drops any spawn-rule change for it.
-    pub fn drive(&mut self, k: usize, mut state: AnimState, snapshot: Option<&MobyFrame>, mods: &[rc_formats::moby_anim::JointModifier]) {
-        let Some(i) = self.instances.get_mut(k) else { return };
-        if self.mods[k] != mods { self.mods[k] = mods.to_vec(); }
-        state.skip_advance = true;
-        i.state = state;
-        self.snapshots[k] = if state.seq_a == moby_anim::SNAPSHOT_SEQ { snapshot.cloned() } else { None };
-        self.pending[k] = None;
-        self.hidden[k] = false;
-    }
 
-    /// Instance `k`'s moby changed its class at run time (`MobyOcclusion::set_class`): its pose is evaluated with
-    /// class `class` (index into `LevelMobys::classes`) from now on; its palette range was made to fit it.
-    pub fn set_class(&mut self, k: usize, class: usize) {
-        let Some(i) = self.instances.get_mut(k) else { return };
-        i.class = class;
-        self.pose_dirty = true;
-    }
 }
 
 /// A sequence change waiting for the moby's first active update, with what the activity gate reads.

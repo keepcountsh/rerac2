@@ -220,8 +220,6 @@ impl Script {
         p
     }
 
-    /// The last tick any item covers.
-    pub fn end(&self) -> u64 { self.items.iter().map(|i| i.1).max().unwrap_or(0) }
 }
 
 #[cfg(test)]

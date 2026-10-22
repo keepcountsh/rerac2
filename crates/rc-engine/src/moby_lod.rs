@@ -142,8 +142,8 @@ pub fn moby_proc(v: [f32; 3], r: f32, inp: &ProcInput) -> Result<ProcPick, Cull>
 /// MobyProc with the view's half-angle tangents `tans` (x, y; `UpdateViewContext` writes the frustum planes vf20 /
 /// vf22 from them: a flown ship's wider view, or the 16:9 frame, culls less at the sides).
 pub fn moby_proc_view(v: [f32; 3], r: f32, inp: &ProcInput, tans: (f32, f32)) -> Result<ProcPick, Cull> {
-    // The cap 0x15fff0: 500, 0x90 in the Visibomb's view (crate::visibomb_view::SHORT_FAR).
-    let cap = if crate::visibomb_view::SHORT_FAR.load(std::sync::atomic::Ordering::Relaxed) { crate::visibomb_view::SHORT_MOBY_CAP } else { DRAW_CAP.load(std::sync::atomic::Ordering::Relaxed) };
+    // The cap (`$gp` moby cap, the view's far − 64: crate::rac2_play).
+    let cap = DRAW_CAP.load(std::sync::atomic::Ordering::Relaxed);
     let dd = inp.draw_distance.min(cap);
     // vf19.y = itof0(dd << 10) − r; vf1.xy = (vz + r, vz − r); vf3 = vf19 − vf1 (vf19.x = n).
     let far = ((dd.wrapping_shl(10)) as f32 - r) - (v[2] - r);
@@ -228,10 +228,6 @@ pub fn glow_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !std::env::var("RC_MOBY_GLOW").is_ok_and(|v| v.trim() == "0"))
 }
-
-/// The glow word of a fresh moby of a class with glow colour `class_glow` (class header +0x40): `InitMobyInstance`
-/// sets mode 0x10 and +0x90 = that word when it is non-zero.
-pub fn class_glow_word(class_glow: i32) -> u32 { if class_glow != 0 { glow_word(0x10, class_glow as u32) } else { 0 } }
 
 pub fn write_lod_record(out: &mut [u8], alpha: u8, flags: u32, shine: u8, glow: u32, e: &[[f32; 3]; 3]) {
     let mut w = |i: usize, v: u32| out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());

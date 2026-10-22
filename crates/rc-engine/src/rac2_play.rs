@@ -70,8 +70,8 @@ struct Rac2Script(Option<Script>);
 
 /// The running game.
 #[derive(Resource)]
-struct Play {
-    hero: Hero,
+pub(crate) struct Play {
+    pub(crate) hero: Hero,
     anim: RatchetAnim,
     /// Ratchet's class (index into `LevelMobys::classes` / `anim`) and static instance.
     class: usize,
@@ -88,7 +88,7 @@ struct Play {
     /// The help panel (rc_game2::help) and the level's English help texts.
     help: rc_game2::help::Panel,
     texts: Vec<rc_formats::strings::Message>,
-    ticks: u64,
+    pub(crate) ticks: u64,
     trace: bool,
     /// The level's objects spawned once (later spawns are respawns).
     loaded: bool,
@@ -181,7 +181,7 @@ fn tick(
         m.canopy = (crate::level_load::level_index() == 0)
             .then(|| crate::rac2_level::overlay(&crate::level_load::extracted_root(), 0).ok())
             .flatten()
-            .and_then(|ov| rc_game2::canopy::CanopyMesh::read(|a, n| crate::sky_stars::overlay_read(&ov, a, n)))
+            .and_then(|ov| rc_game2::canopy::CanopyMesh::read(|a, n| crate::rac2_level::overlay_read(&ov, a, n)))
             .map(rc_game2::canopy::Canopy::new);
         println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
@@ -199,7 +199,7 @@ fn tick(
             eprintln!("rac2: the game asks for the front end (level {to}): not ported, the level goes on");
         } else if p.leaving.is_none() {
             println!("rac2: leaving level {} for level {to}", p.game.level);
-            change.start_load(to as u32, Default::default());
+            change.start_load(to as u32);
             p.leaving = Some(to);
         }
     }

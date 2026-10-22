@@ -86,8 +86,6 @@ aa_copy!(
 fn after_world(system: ScheduleConfigs<BoxedSystem>) -> ScheduleConfigs<BoxedSystem> {
     system
         .after(bevy::core_pipeline::Core3dSystems::PostProcess)
-        .after(crate::gs_post::pass::<crate::mirror_render::MirrorFlip>)
-        .after(crate::gs_post::pass::<crate::screen_tint::ScreenTint>)
         .before(bevy::ui_render::ui_pass)
 }
 

@@ -1,34 +1,20 @@
-//! **The runtime level change** (one path for every way the game changes level): the old level ends and the next one
-//! is loaded in this process, exactly as the boot loads the first one. Spec: docs/plan/progression.md `## travel`.
+//! **The runtime level change**: the old level ends and the next one is loaded in this process, exactly as the boot
+//! loads the first one. The game asks for it when a level's main loop ends (`0x2f50f8`, crate::rac2_play: Aranos's
+//! last trigger sends Ratchet to Oozla).
 //!
-//! **API** (for the other lanes):
-//! * `crate::travel_render::request_leave(dest)`: the game's `0x15f5c0 = dest; 0x15f570 = 1` (the level's main loop
-//!   ends; `DoSpaceTransition` plays its cards / movies / flight and loads `dest` through this module; −1 = the front
-//!   end). New Game (after the state reset to the template, level 0) and Load (after the restore) call it with the
-//!   level to go to, Quit Game with −1 (`crate::media_render::request_level_exit` feeds it too).
-//! * [`LevelChange::start_load`] / [`LevelChange::loaded`] / [`LevelChange::swap`]: the loader the transition drives
-//!   (`read_file_entry_with_retry(level)` / `FUN_00257dc8` / the new overlay's `entry`). Every change goes through the
-//!   transition (crate::travel_render); there is no second path.
+//! **API**: [`LevelChange::start_load`] / [`LevelChange::loaded`] / [`LevelChange::swap`] (the async loader, its
+//! completion, the new overlay's entry).
 //!
-//! **What a change does** ([`apply_switch`], an exclusive system at the end of the frame the transition asks for it):
-//! 1. The new level was loaded on a worker thread ([`load_bundle`]: the level data, the loader's moby spawn pass with the
-//!    ship of `0x13e056`, the fog zones), as the game's async loader runs behind the flight or a card.
+//! **What a change does** ([`apply_switch`], an exclusive system at the end of the frame the game asks for it):
+//! 1. The new level was loaded on a worker thread ([`load_bundle`]).
 //! 2. The old level's entities are despawned: every mesh, camera and UI root that is not [`KeepAcrossLevels`] (the main
-//!    camera, the movie picture). The old level's state is dropped by each module's [`LevelUnload`] systems (the play
-//!    state, the renderer's per-level resources: [`remove`] / [`reset`]).
-//! 3. The level-wide resources are replaced: `Level`, `MobySpawn`, `FogState`, `GameFog`, `ClearColor`, the audio
-//!    system's level data (`crate::audio_out::AudioOut::swap_level`); the current level ([`crate::level_load::level_index`])
-//!    and the lumps the store keeps for the old one ([`rc_data::Lumps::forget_level`]).
+//!    camera, the frame's presentation). The old level's state is dropped by each module's [`LevelUnload`] systems.
+//! 3. The level-wide resources are replaced: `Level`, `GameFog`, `ClearColor`, the audio system's level data
+//!    (`crate::audio_out::AudioOut::swap_level`); the current level ([`crate::level_load::level_index`]) and the lumps
+//!    the store keeps for the old one ([`rc_data::Lumps::forget_level`]).
 //! 4. [`LevelGeneration`] + 1, then the level start runs again: [`LevelStartup`] / [`LevelPostStartup`] (the systems that
-//!    ran at the boot's `Startup` / `PostStartup` for the level: the tfrags, ties, shrubs, mobys, sky, water,
-//!    particles, HUD, shadows, occlusion), and on the next frame the lazy set-ups (`PreUpdate`: the gameplay set-up with
-//!    the moby table, the load pass and `Game::new`, the menus, the attachments, the vendor and menu models) whose
-//!    guards follow the generation.
-//!
-//! What the game keeps across a level change is the boot memory: the saved game (`Persistent`, the global chunks in
-//! core memory and every level's chunks), the session (`Session`: re-initialised by the level start's hero init), the
-//! ship index 0x13e056 ([`crate::level_load::set_ship`]), the options; this module keeps those and the app's own state
-//! (the window, the settings, the menu mode, the movie player, the audio output).
+//!    ran at the boot's `Startup` / `PostStartup` for the level), and on the next frame the lazy set-ups whose guards
+//!    follow the generation.
 
 use bevy::ecs::schedule::ScheduleLabel;
 use bevy::prelude::*;
@@ -61,24 +47,11 @@ pub struct LevelGeneration(pub u64);
 pub struct LevelBundle {
     pub index: u32,
     pub level: crate::level_load::LoadedLevel,
-    pub spawn: crate::moby_spawn::MobySpawn,
-    pub fog: crate::fog_state::FogState,
 }
 
-/// Loads level `index` (its data, the loader's moby spawn pass, the fog zones): the one load path of the boot and of
-/// every change.
-pub fn load_bundle(root: &std::path::Path, index: u32, save: &rc_formats::moby_spawn::SpawnSave) -> anyhow::Result<LevelBundle> {
-    let mut level = crate::level_load::load_level(root, index)?;
-    if crate::disc_source::game(root) == crate::disc_source::Game::Rac2 {
-        // Going Commando: no load-pass spawn rules (no mobys yet) and no fog zones (its section is not mapped yet).
-        let spawn = crate::moby_spawn::MobySpawn { enabled: false, states: Vec::new(), ship: None };
-        let data = crate::fog_state::FogLevelData { zones: Default::default(), mesh: level.collision.clone(), lights: Default::default() };
-        let fog = crate::fog_state::FogState::new(data, &level.fog);
-        return Ok(LevelBundle { index, level, spawn, fog });
-    }
-    let spawn = crate::moby_spawn::apply_load_pass(root, index, &mut level, save)?;
-    let fog = crate::fog_state::FogState::new(crate::fog_state::load(root, index)?, &level.fog);
-    Ok(LevelBundle { index, level, spawn, fog })
+/// Loads level `index`: the one load path of the boot and of every change.
+pub fn load_bundle(root: &std::path::Path, index: u32) -> anyhow::Result<LevelBundle> {
+    Ok(LevelBundle { index, level: crate::level_load::load_level(root, index)? })
 }
 
 /// The loader of the next level.
@@ -97,10 +70,10 @@ struct Load {
 
 impl LevelChange {
     /// `read_file_entry_with_retry(level)` and the async loader: level `index` loads on a worker thread.
-    pub fn start_load(&mut self, index: u32, save: rc_formats::moby_spawn::SpawnSave) {
+    pub fn start_load(&mut self, index: u32) {
         if self.load.as_ref().is_some_and(|l| l.index == index) { return; }
         let root: PathBuf = crate::level_load::extracted_root();
-        let t = std::thread::Builder::new().name(format!("level {index:02} load")).spawn(move || load_bundle(&root, index, &save));
+        let t = std::thread::Builder::new().name(format!("level {index:02} load")).spawn(move || load_bundle(&root, index));
         let (thread, result) = match t {
             Ok(h) => (Some(h), None),
             Err(e) => (None, Some(Err(anyhow::anyhow!("cannot start the level loader thread: {e}")))),
@@ -172,7 +145,7 @@ fn apply_switch(world: &mut World) {
     let old = crate::level_load::level_index();
     world.run_schedule(LevelUnload);
     despawn_level_entities(world);
-    let LevelBundle { index, mut level, spawn, fog } = bundle;
+    let LevelBundle { index, mut level } = bundle;
     crate::level_load::set_level_index(index);
     rc_data::global().forget_level(&crate::level_load::extracted_root(), old);
     if let Some(data) = level.audio.take() {
@@ -181,8 +154,6 @@ fn apply_switch(world: &mut World) {
     let bg = level.background;
     world.insert_resource(crate::game_camera::GameFog::new(level.fog, rc_game::fog_zones::PARTICLE_FAR12));
     world.insert_resource(ClearColor(Color::srgb_u8(bg[0], bg[1], bg[2])));
-    world.insert_resource(fog);
-    world.insert_resource(spawn);
     world.insert_resource(crate::Level(level));
     world.resource_mut::<LevelGeneration>().0 += 1;
     world.run_schedule(LevelStartup);

@@ -12,7 +12,7 @@
 //! * [`WorldScreens::layer`]`(id)`: the `RenderLayers` the caller puts on the entities the screen shows (off layer 0,
 //!   so the frame does not draw them);
 //! * [`WorldScreens::show`]`(id, Some(WorldScreenView { .. }))` every frame it is visible, `None` to hide it (the camera
-//!   is despawned, as crate::screen_canvas's: other systems take "the" `Camera3d`).
+//!   is despawned: other systems take "the" `Camera3d`).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
@@ -25,7 +25,7 @@ use bevy::render::view::Msaa;
 
 use crate::game_camera::GameProjection;
 
-/// The first render layer the screens take (one each; crate::screen_canvas's start at 40).
+/// The first render layer the screens take (one each).
 const FIRST_LAYER: usize = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -32,7 +32,6 @@ use bevy::render::render_resource::{Extent3d, TextureFormat, TextureUsages};
 use bevy::render::view::Msaa;
 use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode, WindowRef};
 
-use crate::game_camera::SCREEN_W;
 
 /// The present camera's own layer (nothing else draws in it).
 pub const PRESENT_LAYER: usize = 63;
@@ -55,8 +54,6 @@ pub enum Aspect {
 impl Aspect {
     /// The Port Options row's values, in order.
     pub const ALL: [Aspect; 3] = [Aspect::Original, Aspect::Wide16x10, Aspect::Wide16x9];
-    pub fn index(self) -> u8 { Self::ALL.iter().position(|&a| a == self).unwrap_or(0) as u8 }
-    pub fn from_index(i: u8) -> Self { Self::ALL.get(i as usize).copied().unwrap_or(Aspect::Original) }
     /// Width / height.
     pub fn ratio(self) -> f32 {
         match self {
@@ -79,10 +76,6 @@ impl Aspect {
 /// frame is that much wider at the same height, and the view keeps the TV's proportions).
 pub fn hor_scale(aspect: Aspect) -> f32 { aspect.ratio() / Aspect::Original.ratio() }
 
-/// The game pixels the frame extends past the 512-wide game screen on each side (0 at 4:3, 51 at 16:10, 85 at 16:9): the HUD's
-/// layer is that much wider (crate::hud_render), its left / right slots move out by it (`rc_game::hud`).
-pub fn side_extra(aspect: Aspect) -> i32 { ((SCREEN_W * hor_scale(aspect) - SCREEN_W) * 0.5).round() as i32 }
-
 /// The render resolution: fit to the window, or a fixed frame height (the width follows the aspect): the PS2's 416
 /// lines or a common screen height.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,9 +94,6 @@ impl Resolution {
         Resolution::Height(1440),
         Resolution::Height(2160),
     ];
-
-    pub fn index(self) -> u8 { Self::ALL.iter().position(|&r| r == self).unwrap_or(0) as u8 }
-    pub fn from_index(i: u8) -> Self { Self::ALL.get(i as usize).copied().unwrap_or(Resolution::Window) }
 
     /// `window`, or a height of the list (`720p` or `720`).
     fn parse(v: &str) -> Option<Self> {
@@ -267,15 +257,6 @@ fn sync_frame(mut frame: ResMut<GameFrame>, settings: Res<DisplaySettings>, wind
     if want == frame.size { return; }
     if let Some(mut img) = images.get_mut(&frame.image) { img.resize(Extent3d { width: want.x, height: want.y, depth_or_array_layers: 1 }); }
     frame.size = want;
-}
-
-/// A copy of the image target `old` at `size`, added as a new image: the caller points its cameras, nodes and
-/// materials at it. A target resized in place keeps a stale render-world size (its content came out scaled by the new /
-/// old width after an aspect switch); a fresh image starts clean. The old image drops with its last handle.
-pub fn fresh_target(images: &mut Assets<Image>, old: &Handle<Image>, size: UVec2) -> Option<Handle<Image>> {
-    let mut img = images.get(old)?.clone();
-    img.resize(Extent3d { width: size.x.max(1), height: size.y.max(1), depth_or_array_layers: 1 });
-    Some(images.add(img))
 }
 
 /// The PostUpdate systems that resize camera image targets (crate::menu_render's layer, crate::screen_canvas):

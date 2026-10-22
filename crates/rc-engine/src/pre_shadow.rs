@@ -88,7 +88,7 @@ impl Plugin for PreShadowPlugin {
             .add_systems(
             Core3d,
             (
-                (split, draw).chain().after(main_opaque_pass_3d).before(crate::shadow_render::ShadowPassSet),
+                (split, draw).chain().after(main_opaque_pass_3d),
                 restore.after(main_transparent_pass_3d),
             )
                 .in_set(Core3dSystems::MainPass),

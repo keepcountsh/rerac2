@@ -1,17 +1,13 @@
-//! Where the engine's game data comes from: one **data folder**, the Tier 0 archive `rerac-extract` writes
-//! (`docs/plan/launcher_extractor.md` §4.1; the development `extracted/` tree has the same layout). The engine
-//! never opens a disc image: the disc reader (`rc_formats::disc`) is the extractor's alone.
-//!
-//! Every request uses the archive's relative file name (`levels/NN/core_data.bin`, `boot/SCUS_971.99`, `toc.bin`,
-//! `levels/NN/{music,speech,scene}/…`, `global/spaceships/NNN.bin`, `global/save_game.bin`).
+//! Where the engine's game data comes from: one **data folder**, the disc's files as `rerac2-extract` copies them
+//! (`RC2.HDR`, `SCUS_972.68`, `G/LEVELn.WAD`, …; the development `extracted/` tree is the same). The engine never
+//! opens a disc image: the disc reader (`rc_formats::disc`) is the extractor's alone.
 //!
 //! **Data root** ([`startup`], once per process; launcher contract `docs/plan/launcher_contract.md`):
 //! 1. `--data-dir <dir>` (or `--data-dir=<dir>`), how the launcher starts the game;
 //! 2. `RC_DATA_DIR`, equivalent;
 //! 3. the development default: `RC_EXTRACTED`, else `<workspace>/extracted`.
 //!
-//! The folder must exist and hold `toc.bin` (Ratchet & Clank) or `RC2.HDR` (Going Commando: [`game`], which the
-//! engine starts instead, crate::rac2). `<data>/extract-info.json` (written last by the extractor) must be
+//! The folder must exist and hold `RC2.HDR`. `<data>/extract-info.json` (written last by the extractor) must be
 //! present for 1 and 2, and its `data_format` must equal [`DATA_FORMAT`]; the development tree may lack it (one
 //! warning). A failure prints one `error:` line naming the folder and the fix (re-extract via the launcher) and
 //! exits with [`EXIT_NO_DATA`] or [`EXIT_DATA_FORMAT`], before any window opens.
@@ -34,7 +30,7 @@ pub const EXIT_DATA_FORMAT: i32 = 4;
 
 /// The launcher contract's `--version-json` line.
 pub fn version_json() -> String {
-    format!(r#"{{"name":"rerac","version":"{}","game":"rac1","data_format":{DATA_FORMAT}}}"#, env!("CARGO_PKG_VERSION"))
+    format!(r#"{{"name":"rerac2","version":"{}","game":"rac2","data_format":{DATA_FORMAT}}}"#, env!("CARGO_PKG_VERSION"))
 }
 
 /// Which rule chose the data root.
@@ -105,14 +101,14 @@ fn json_str<'a>(text: &'a str, key: &str) -> Option<&'a str> {
 
 /// Checks the data folder; `Ok` carries the one line to print (a summary, or the development-tree warning).
 fn check(root: &Path, origin: Origin) -> std::result::Result<String, DataError> {
-    let fix = "Extract your disc with the ReRAC launcher (or `rerac-extract extract --iso <image> --out <folder>`) \
+    let fix = "Extract your disc with the ReRAC launcher (or `rerac2-extract extract --iso <image> --out <folder>`) \
                and start the game from it, or pass --data-dir <folder>.";
     let no_data = |what: String| DataError { code: EXIT_NO_DATA, message: format!("{what} {fix}") };
     if !root.is_dir() {
         return Err(no_data(format!("the game data folder {} ({}) does not exist.", root.display(), origin.describe())));
     }
-    if !root.join("toc.bin").is_file() && !root.join(RAC2_TOC).is_file() {
-        return Err(no_data(format!("{} ({}) is not a ReRAC game data folder (no toc.bin).", root.display(), origin.describe())));
+    if !root.join(TOC).is_file() {
+        return Err(no_data(format!("{} ({}) is not a Going Commando data folder (no {TOC}).", root.display(), origin.describe())));
     }
     let info_path = root.join("extract-info.json");
     let info = match std::fs::read_to_string(&info_path) {
@@ -137,29 +133,15 @@ fn check(root: &Path, origin: Origin) -> std::result::Result<String, DataError> 
             code: EXIT_DATA_FORMAT,
             message: format!(
                 "the game data in {} has data format {}, but this ReRAC build needs data format {DATA_FORMAT}. \
-                 Re-extract your disc via the ReRAC launcher (or rerac-extract from this build).",
+                 Re-extract your disc via the ReRAC launcher (or rerac2-extract from this build).",
                 root.display(), found.map_or("<unreadable>".into(), |n| n.to_string())
             ),
         }),
     }
 }
 
-/// Going Commando's table of contents: a data folder holding it is that game's (the extractor copies its disc files
-/// as they are).
-const RAC2_TOC: &str = "RC2.HDR";
-
-/// Which game a data folder holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Game { Rac1, Rac2 }
-
-/// The game of the data folder [`startup`] checked.
-pub fn game(root: &Path) -> Game { if root.join(RAC2_TOC).is_file() && !root.join("toc.bin").is_file() { Game::Rac2 } else { Game::Rac1 } }
-
-/// The game of the process's data folder ([`data_root`]), once.
-pub fn current() -> Game {
-    static GAME: OnceLock<Game> = OnceLock::new();
-    *GAME.get_or_init(|| game(&data_root()))
-}
+/// The disc's table of contents: a data folder holds it.
+const TOC: &str = "RC2.HDR";
 
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
 
@@ -177,7 +159,7 @@ pub fn startup() -> PathBuf {
     if !ignored.is_empty() { eprintln!("warning: ignoring unknown arguments {ignored:?}"); }
     for var in ["RC_ISO", "RC_SOURCE"] {
         if std::env::var_os(var).is_some_and(|v| !v.is_empty()) {
-            println!("note: {var} is ignored; the engine reads only the game data folder (disc images: rerac-extract)");
+            println!("note: {var} is ignored; the engine reads only the game data folder (disc images: rerac2-extract)");
         }
     }
     let (root, origin) = resolve(arg, std::env::var_os("RC_DATA_DIR"), std::env::var_os("RC_EXTRACTED"));
@@ -202,17 +184,6 @@ pub fn read(root: &Path, rel: &str) -> Result<Vec<u8>> {
     std::fs::read(&p).with_context(|| format!("reading {}", p.display()))
 }
 
-/// `levels/NN/<name>`: `core_index.bin`, `core_data.bin` (WAD-compressed), `gs_ram.bin`, `gameplay_ntsc.bin`, ...
-pub fn level_file(root: &Path, index: u32, name: &str) -> Result<Vec<u8>> { read(root, &format!("levels/{index:02}/{name}")) }
-
-/// `read` for a full path under `root` (e.g. `root.join("boot/SCUS_971.99")`).
-pub fn read_path(root: &Path, p: &Path) -> Result<Vec<u8>> {
-    match p.strip_prefix(root) {
-        Ok(rel) => read(root, &rel.to_string_lossy().replace('\\', "/")),
-        Err(_) => std::fs::read(p).with_context(|| format!("reading {}", p.display())),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,9 +193,9 @@ mod tests {
     #[test]
     fn version_json_is_the_contract_line() {
         let v = version_json();
-        assert_eq!(v, format!(r#"{{"name":"rerac","version":"{}","game":"rac1","data_format":1}}"#, env!("CARGO_PKG_VERSION")));
+        assert_eq!(v, format!(r#"{{"name":"rerac2","version":"{}","game":"rac2","data_format":1}}"#, env!("CARGO_PKG_VERSION")));
         assert_eq!(json_uint(&v, "data_format"), Some(1));
-        assert_eq!(json_str(&v, "game"), Some("rac1"));
+        assert_eq!(json_str(&v, "game"), Some("rac2"));
     }
 
     #[test]
@@ -249,21 +220,10 @@ mod tests {
 
     /// A fresh empty folder under the system temp dir.
     fn temp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("rerac-disc-source-{}-{name}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("rerac2-disc-source-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
-    }
-
-    #[test]
-    fn a_going_commando_folder() {
-        let d = temp("rac2");
-        std::fs::write(d.join("RC2.HDR"), [0u8; 4]).unwrap();
-        assert_eq!(game(&d), Game::Rac2);
-        assert!(check(&d, Origin::Dev).is_ok());
-        std::fs::write(d.join("toc.bin"), [0u8; 4]).unwrap();
-        assert_eq!(game(&d), Game::Rac1);
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -272,17 +232,17 @@ mod tests {
         let missing = d.join("nope");
         assert_eq!(check(&missing, Origin::Arg).unwrap_err().code, EXIT_NO_DATA);
         assert_eq!(check(&missing, Origin::Dev).unwrap_err().code, EXIT_NO_DATA);
-        assert_eq!(check(&d, Origin::Env).unwrap_err().code, EXIT_NO_DATA, "no toc.bin");
-        std::fs::write(d.join("toc.bin"), [0u8; 4]).unwrap();
+        assert_eq!(check(&d, Origin::Env).unwrap_err().code, EXIT_NO_DATA, "no RC2.HDR");
+        std::fs::write(d.join("RC2.HDR"), [0u8; 4]).unwrap();
         // No extract-info.json: an incomplete extraction, except in the development tree.
         let e = check(&d, Origin::Arg).unwrap_err();
         assert!(e.code == EXIT_NO_DATA && e.message.contains("incomplete"), "{}", e.message);
         assert!(check(&d, Origin::Dev).unwrap().starts_with("warning:"));
         let info = |f: &str| std::fs::write(d.join("extract-info.json"),
-            format!(r#"{{"disc":"SCUS_971.99","data_format":{f},"extractor_version":"0.1.0","ntsc_only":false,"files":2937,"bytes":1}}"#)).unwrap();
+            format!(r#"{{"game":"rac2","disc":"SCUS_972.68","data_format":{f},"extractor_version":"0.1.0","ntsc_only":false,"files":96,"bytes":1}}"#)).unwrap();
         info("1");
         let ok = check(&d, Origin::Arg).unwrap();
-        assert!(ok.contains("SCUS_971.99") && ok.contains("2937 files"), "{ok}");
+        assert!(ok.contains("SCUS_972.68") && ok.contains("96 files"), "{ok}");
         info("2");
         for o in [Origin::Arg, Origin::Env, Origin::Dev] {
             let e = check(&d, o).unwrap_err();
@@ -296,11 +256,11 @@ mod tests {
     #[test]
     fn reads_are_relative_to_the_root() {
         let d = temp("read");
-        std::fs::create_dir_all(d.join("levels/01")).unwrap();
-        std::fs::write(d.join("levels/01/gs_ram.bin"), b"abc").unwrap();
-        assert_eq!(level_file(&d, 1, "gs_ram.bin").unwrap(), b"abc");
-        assert_eq!(read_path(&d, &d.join("levels/01/gs_ram.bin")).unwrap(), b"abc");
-        assert!(read(&d, "toc.bin").is_err());
+        std::fs::create_dir_all(d.join("G")).unwrap();
+        std::fs::write(d.join("G/LEVEL0.WAD"), b"abc").unwrap();
+        assert_eq!(read(&d, "G/LEVEL0.WAD").unwrap(), b"abc");
+        assert_eq!(read_path(&d, &d.join("G/LEVEL0.WAD")).unwrap(), b"abc");
+        assert!(read(&d, "RC2.HDR").is_err());
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

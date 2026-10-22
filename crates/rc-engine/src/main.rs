@@ -1,33 +1,23 @@
-//! Runtime entry point: loads one level from the game data folder and runs it.
+//! Runtime entry point: loads one level from the game data folder and runs it (the front end over it unless a
+//! level is asked for).
 //!
 //! Arguments (launcher contract, docs/plan/launcher_contract.md; crate::disc_source):
-//! - `--data-dir <dir>` the game data folder (`rerac-extract` output); `--version-json` print the version and exit
+//! - `--data-dir <dir>` the game data folder (`rerac2-extract` output); `--version-json` print the version and exit
 //!
 //! Environment:
 //! - `RC_DATA_DIR`   the game data folder when `--data-dir` is absent; else `RC_EXTRACTED`, else `<workspace>/extracted`
-//! - `RC_LEVEL`      start straight in this level (skips the front end unless `RC_FRONTEND=1`; without it the front
-//!   end's New Game / Load decides)
+//! - `RC_LEVEL`      start straight in this level (skips the front end unless `RC_FRONTEND=1`), crate::rac2
 //! - `RC_SCREENSHOT` if set, save a PNG of the window there after the scene has rendered, then exit
 //! - `RC_SCREENSHOT_DELAY` seconds to wait before that capture (default 3); with `RC_SCREENSHOT_FRAME`
 //!   the capture is frame-exact instead (crate::determinism) and this wall-clock one is not scheduled
 //! - `RC_CAM`        optional camera override in game coordinates: `eye_x,eye_y,eye_z,target_x,target_y,target_z`
 //! - `RC_GS_ALPHA=0` the previous alpha mapping (one blended draw without Z for any As != 0x80), crate::gs_state
-//! - `RC_FOG_ZONES=0`, `RC_UNDERWATER=1`, `RC_CAM_PATH` fog zones / underwater / camera walk-through, crate::fog_state
-//! - `RC_PLAY=0`, `RC_PLAY_SCRIPT`, `RC_PLAY_TRACE=1` the game tick / scripted pad / per-tick trace, crate::gameplay
-//! - `RC_PLAY_FLY=1` start on the fly camera with the game ticking; `RC_DEBUG_HIT=moby@tick,...` debug hits
-//!   (flags 0x10000, damage 1) before those ticks' moby loop, crate::gameplay
-//! - `RC_FRONTEND`   the front end (card check, logos, title, main menu) is the default start; `0` skips it, `1` keeps it
-//!   with `RC_LEVEL`, crate::saves; `RC_SAVE_DIR=<dir>` the
-//!   memory-card folder (`0`: no card), `RC_SAVE_TRACE=1` the card's states
-//! - `RC_SCENE=0` / `RC_SCENE=<k>`, `RC_SUBTITLES=0` in-engine scenes (Novalis arrival = scene 5), crate::scene_render
-//! - `RC_UNLOCK_PLANETS=<p>,…` planets unlocked from the start (the ship's planet page), crate::gameplay;
-//!   `RC_TRAVEL_TRACE=1` the ship / mode-6 / transition trace, crate::travel_render
-//! - `RC_HUD=0`, `RC_HUD_DEMO=1`, `RC_HUD_TEXT`, `RC_HUD_HELP=<id>`, `RC_LANG` the HUD and its demos, crate::hud_render
-//! - `RC_SCREEN_TINT=<rgba hex>:<alpha hex>` one forced full-screen tint every frame (dev check), crate::screen_tint
-//! - `RC_MSAA=0|2|4|8` the Anti-aliasing option at start: Off or that multisampling (default: Original, the game's own softening passes), crate::graphics
-//! - `RC_SETTINGS_FILE=<path>` the port-settings file (`0` or empty: none), crate::render_settings;
-//!   `RC_SETTINGS_PAGE=0` no "Port Options" page in the Options menu, crate::menu_render
-//! - `RC_SHADOWS=0|1`, `RC_SHADOW_DEBUG=1`, `RC_SHADOW_TRACE=1` the moby shadows, crate::shadow_render
+//! - `RC_PLAY=0`, `RC_PLAY_FLY=1`, `RC_PLAY_SCRIPT`, `RC_PLAY_TRACE=1`, `RC_SCENES=0`, `RC_HERO_AT`, `RC_MOBY_TRACE` the
+//!   game tick and its dev switches, crate::rac2_play
+//! - `RC_MSAA=0|2|4|8` the Anti-aliasing option at start: Off or that multisampling (default: Original, the game's own
+//!   softening passes), crate::graphics
+//! - `RC_SETTINGS_FILE=<path>` the port-settings file (`0` or empty: none), crate::render_settings
+//! - `RC_AUDIO=0` no sound, crate::audio_out
 
 mod crash_log;
 mod asset_write;
@@ -38,75 +28,42 @@ mod display_blend;
 mod disc_source;
 mod fly_cam;
 mod fx_draw;
-mod fog_state;
-mod screen_tint;
 mod game_camera;
-mod gameplay;
 mod gs_state;
 mod hud_render;
-mod hud_images;
 mod input_map;
-mod interact_render;
 mod level_load;
 mod level_switch;
-mod media_render;
 mod draw_stats;
 mod frame_pace;
 mod graphics;
-mod menu_models;
-mod menu_render;
-mod mirror_render;
 mod moby_anim;
-mod moby_attach;
 mod moby_light;
 mod moby_lod;
 mod moby_render;
-mod moby_spawn;
-mod movie_render;
 mod no_clusters;
 mod occlusion;
 mod particle_render;
 mod play_camera;
 mod render_settings;
-mod reticle_render;
-mod marker_render;
-mod tesla_render;
-mod walloper_render;
-mod visibomb_view;
 mod gs_post;
-mod reactive_render;
 mod rac2;
 mod rac2_level;
 mod rac2_mobys;
 mod rac2_play;
-mod saves;
-mod scene_render;
-mod sea_render;
-mod screen_canvas;
+mod clock;
+
 mod world_screen;
-mod shadow_render;
-mod pre_shadow;
 mod frame_log;
+mod pre_shadow;
 mod shrub_billboard;
-mod shrub_light;
 mod shrub_render;
 mod sky_render;
-mod sky_stars;
-mod text_render;
-mod tfrag_light;
 mod tfrag_lod;
 mod tfrag_render;
-mod tie_light;
 mod tie_lod;
 mod tie_render;
-mod travel_render;
-mod flight_render;
-mod title_world;
-mod vendor_render;
-mod water_render;
 mod aa_blit;
-mod afterimage_render;
-mod thruster_render;
 mod world_lights;
 
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
@@ -134,17 +91,9 @@ fn main() -> anyhow::Result<()> {
     crash_log::install();
     // `--version-json` exits here; a missing or wrong data folder exits with a clear error (crate::disc_source).
     let root = disc_source::startup();
-    // Going Commando's data folder: its own front end (crate::rac2).
-    // Going Commando runs the same app on its level (crate::rac2_level), its front end over it (crate::rac2).
-    let rac2 = disc_source::game(&root) == disc_source::Game::Rac2;
     let index = level_load::level_index();
-    // The one level load (the boot's and every runtime level change's, crate::level_switch): the level data, the loader's
-    // ship and the load-time update pass (crate::moby_spawn; RC_SPAWN_RULES=0 skips it), the fog zones and the
-    // underwater test (crate::fog_state).
-    // The boot's game state first: the level's spawn test reads its save bits (crate::gameplay::level_spawn_save).
-    let boot = if rac2 { None } else { gameplay::boot_state(&root, index) };
-    let save = gameplay::level_spawn_save(boot.as_ref().map(|(gs, _)| gs), index);
-    let level_switch::LevelBundle { mut level, spawn, fog: fog_state, .. } = level_switch::load_bundle(&root, index, &save)?;
+    // The one level load (the boot's and every runtime level change's, crate::level_switch).
+    let level_switch::LevelBundle { mut level, .. } = level_switch::load_bundle(&root, index)?;
     let t = &level.timings;
     let bg = level.background;
     println!(
@@ -160,7 +109,7 @@ fn main() -> anyhow::Result<()> {
         DefaultPlugins
             .set(WindowPlugin {
                 // 4:3, as the TV showed the 512x416 GS draw buffer (crate::display; docs/plan/render_pipeline.md).
-                primary_window: Some(Window { title: "ReRAC".into(), resolution: (1024u32, 768u32).into(), ..default() }),
+                primary_window: Some(Window { title: "ReRAC2".into(), resolution: (1024u32, 768u32).into(), ..default() }),
                 ..default()
             })
             .set(AssetPlugin { file_path: asset_dir(), ..default() })
@@ -191,13 +140,8 @@ fn main() -> anyhow::Result<()> {
     .add_plugins(occlusion::OcclusionPlugin)
     .add_plugins(tfrag_lod::TfragLodPlugin)
     .add_plugins(moby_render::MobyRenderPlugin)
-    .add_plugins(moby_spawn::MobySpawnPlugin)
-    .add_plugins(moby_attach::MobyAttachPlugin)
-    // The moby shadows: the game's shadow rules and a native shadow-volume pass (crate::shadow_render).
-    .add_plugins(shadow_render::ShadowPlugin)
     .add_plugins(pre_shadow::PreShadowPlugin)
     .add_plugins(frame_log::FrameLogPlugin)
-    .insert_resource(spawn)
     .add_plugins(tie_render::TieRenderPlugin)
     .add_plugins(shrub_render::ShrubRenderPlugin)
     // Point lights on tfrags, ties and shrubs (the game's Light* point passes; crate::world_lights).
@@ -205,48 +149,24 @@ fn main() -> anyhow::Result<()> {
     .add_plugins(sky_render::SkyRenderPlugin)
     .add_plugins(display_blend::DisplayBlendPlugin)
     .add_plugins(particle_render::ParticlePlugin)
-    .add_plugins(water_render::WaterPlugin)
-    .add_plugins(sea_render::SeaRenderPlugin)
     .add_plugins(fx_draw::FxDrawPlugin)
-    .add_plugins(afterimage_render::AfterImagePlugin)
-    .add_plugins(reticle_render::ReticlePlugin)
-    .add_plugins(tesla_render::TeslaPlugin)
-    .add_plugins(walloper_render::WalloperPlugin)
-    .add_plugins(reactive_render::ReactivePlugin)
-    .add_plugins(sky_stars::SkyStarsPlugin)
-    .add_plugins(fog_state::FogStatePlugin)
-    .add_plugins(screen_tint::ScreenTintPlugin)
-    .add_plugins(visibomb_view::VisibombViewPlugin)
     .add_plugins(hud_render::HudPlugin)
-    // The game tick (hero, pad, follow camera) driving Ratchet and the view; RC_PLAY=0 keeps the fly camera only.
-    .add_plugins(gameplay::GameplayPlugin { boot: std::sync::Mutex::new(boot) })
-    .add_plugins(menu_render::MenuPlugin)
-    .add_plugins((screen_canvas::CanvasPlugin, world_screen::WorldScreenPlugin, vendor_render::VendorRenderPlugin))
-    // The Gadgets / Weapons pages' 3D Ratchet and item preview (crate::menu_models, on crate::screen_canvas).
-    .add_plugins(menu_models::MenuModelsPlugin)
-    // In-engine scenes (mode 2) and the Novalis arrival (crate::scene_render; RC_SCENE=0 / RC_SCENE=<k>).
-    .add_plugins(scene_render::SceneRenderPlugin)
-    // PSS movies (mode 1) played from the original files (crate::movie_render; RC_PLAY_MOVIE=<n>).
-    .add_plugins(movie_render::MovieRenderPlugin)
-    .add_plugins(mirror_render::MirrorRenderPlugin)
+    .add_plugins(world_screen::WorldScreenPlugin)
     .add_plugins(aa_blit::AaBlitPlugin)
     // Sound slots, 989snd, music and the software SPU2 mixed per game tick (crate::audio_out; RC_AUDIO=0 off).
     .add_plugins(audio_out::AudioOutPlugin::new(level.audio.take()))
-    .insert_resource(fog_state)
     // The GS frame clear: level settings +0x00..+0x08 via `set_background_color` (game_camera::level_background).
     // srgb_u8: the bytes are display-encoded like every GS colour; the sRGB view target stores them back exactly.
     .insert_resource(ClearColor(Color::srgb_u8(bg[0], bg[1], bg[2])))
     .insert_resource(Level(level))
-    // The runtime level change and the level start's schedules (crate::level_switch), planet travel (crate::travel_render).
+    // The runtime level change and the level start's schedules (crate::level_switch).
     .add_plugins(level_switch::LevelSwitchPlugin)
-    .add_plugins(travel_render::TravelPlugin)
-    .add_plugins(flight_render::FlightRenderPlugin)
-    .add_plugins(title_world::TitleWorldPlugin)
     .add_systems(Startup, setup_camera)
     .add_systems(level_switch::LevelStartup, setup)
     .add_systems(Update, report_fps);
-    if rac2 && rac2::requested() { app.add_plugins(rac2::FrontEndPlugin::new(&root)?); }
-    if rac2 { app.add_plugins(rac2_play::Rac2PlayPlugin); }
+    // The front end over the loaded level (crate::rac2), then the game tick (crate::rac2_play).
+    if rac2::requested() { app.add_plugins(rac2::FrontEndPlugin::new(&root)?); }
+    app.add_plugins(rac2_play::Rac2PlayPlugin);
     // RC_RENDER_DIAG=1: Bevy's per-pass render timings (CPU only on Metal) and the views rendered, logged every 5 s.
     if std::env::var("RC_RENDER_DIAG").is_ok_and(|v| v.trim() == "1") {
         app.add_plugins((

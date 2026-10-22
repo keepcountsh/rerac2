@@ -11,7 +11,7 @@
 //! Projection: `p = v·SkyM·C` with C = boot 0x187040 = the rotation-only view 0x186f40 (translation row
 //! zero) times the world projection with rows 0/1 ×4, which the screen scale 0x18ce90·¼ cancels. So the
 //! sky uses the world camera's exact projection and a view without translation; SkyM is the per-shell
-//! rotation of the level's dispatch (identity or Euler about Z-up, [`level_rotations`]).
+//! rotation the game steps each frame (`0x35dfa0`: Euler angles, [`GameSkyRotations`]).
 //!
 //! Bevy mapping: a second `Camera3d` on [`SKY_LAYER`], ordered before the main camera, with the same
 //! projection and transform; the shader drops the view translation (`w = 0`), SkyM is the entity's
@@ -32,14 +32,11 @@
 //! the sky's own copy of the main texture to it was a full-frame blit thrown away every frame.
 //!
 //! Frame clear: the game clears (colour = level background, Z = 0) before the sky only while sky header
-//! +4 is non-zero. The loader sets it to 1, and the per-level dispatch zeroes it every frame on all levels
-//! except 05, 07, 10, 13, 14, 15, so those levels clear every frame and the others only on the first
-//! frame, after which the gouraud dome is the clear ([`level_zeroes_clear_flag`]).
+//! +4 is non-zero. The loader sets it to 1; [`level_zeroes_clear_flag`] says on which levels the frame code zeroes
+//! it (the frame then cleared only on the first frame, after which the gouraud dome is the clear).
 //!
-//! Star sprites (levels 00, 02, 05, 06, 07, 13, 15, 17): `crate::sky_stars` draws them in the order slot
-//! [`SkyStarOrder`] that `spawn_sky` reserves between the shells the level's dispatch names
-//! (`rc_game::sky_stars::level_stars`). Not ported: the per-cluster
-//! bounding-sphere and per-face clip-flag rejection (GPU clipping replaces them).
+//! Not ported: the star sprites, the per-cluster bounding-sphere and per-face clip-flag rejection (GPU clipping
+//! replaces them).
 
 use crate::game_camera;
 use crate::gs_state::GsPass;
@@ -62,7 +59,6 @@ use bevy::shader::ShaderRef;
 use bevy::transform::TransformSystems;
 use rc_formats::level::LevelCore;
 use rc_formats::sky::{self, Sky, SkyTexture};
-use std::f32::consts::PI;
 
 const SHADER_PATH: &str = "shaders/sky.wgsl";
 
@@ -76,14 +72,8 @@ pub const ORDER_SPACING: f32 = 1.0e6;
 /// The parsed sky and its decoded textures.
 pub struct LevelSky {
     pub level: u32,
-    /// The shells turn by R&C1's per-level dispatch ([`level_rotations`]); false: by the game's rotations each frame
-    /// ([`GameSkyRotations`], Going Commando's `0x35dfa0`).
-    pub dispatch: bool,
     pub sky: Sky,
     pub textures: Vec<SkyTexture>,
-    /// The star records' memory as loaded: `maximum_sprite_count` × 0x20 bytes at header +0x1c (empty when
-    /// the block has none). Generators leave some bytes untouched (e.g. a moving star's rotation).
-    pub sprite_scratch: Vec<u8>,
 }
 
 /// Parses the level's sky block (None when the core index has none; every retail level has one).
@@ -91,72 +81,13 @@ pub fn load(core: &LevelCore, core_data: &[u8], level: u32) -> Result<Option<Lev
     let Some(block) = sky::sky_block(core, core_data).context("locating sky block")? else { return Ok(None) };
     let sky = sky::parse_sky_block(block).context("parsing sky")?;
     let textures = sky::parse_sky_textures(block, &sky).context("decoding sky textures")?;
-    let h = &sky.header;
-    let scratch_len = h.maximum_sprite_count.max(0) as usize * rc_game::sky_stars::RECORD;
-    let sprite_scratch = match usize::try_from(h.sprites) {
-        Ok(o) if o > 0 => block.get(o..o + scratch_len).map(<[u8]>::to_vec).unwrap_or_default(),
-        _ => Vec::new(),
-    };
-    Ok(Some(LevelSky { level, dispatch: true, sky, textures, sprite_scratch }))
+    Ok(Some(LevelSky { level, sky, textures }))
 }
 
-/// Whether the level's sky dispatch zeroes header +4 (`clear_screen`) every frame, i.e. the frame is cleared
-/// only on the first frame after load. Levels 05, 07, 10, 13, 14, 15 never zero it and clear every frame.
+/// Whether the level's frame code zeroes sky header +4 (`clear_screen`) every frame, i.e. the frame is cleared only on
+/// the first frame after load. Not read from Going Commando's code yet: R&C1's rule (every level but 05, 07, 10, 13,
+/// 14, 15 zeroes it), which on Aranos clears the first frame only (G-REN-009).
 pub fn level_zeroes_clear_flag(level: u32) -> bool { !matches!(level, 5 | 7 | 10 | 13 | 14 | 15) }
-
-/// One animated shell of a level's sky dispatch: SkyM = Rz(θ)·Ry(`ry`) (row-vector, Z applied first) with
-/// θ = ((`mul`·c) mod `period`)·2π/`period` − π, c = the 60 Hz tick counter 0x15f5cc.
-#[derive(Clone, Copy, Debug)]
-pub struct ShellRotation {
-    pub shell: usize,
-    pub mul: u64,
-    pub period: u64,
-    pub ry: f32,
-}
-
-impl ShellRotation {
-    const fn z(shell: usize, period: u64) -> Self { ShellRotation { shell, mul: 1, period, ry: 0.0 } }
-
-    pub fn theta(&self, counter: u64) -> f32 {
-        let c = self.mul.wrapping_mul(counter) % self.period;
-        (c as f64 * (std::f64::consts::TAU / self.period as f64)) as f32 - PI
-    }
-
-    /// SkyM as a Bevy rotation. The Euler builder 0x1fa070 gives v' = v·Rz·Ry·Rx with counter-clockwise
-    /// rotations about the game's +Z (up) and +Y; conjugating by `game_to_bevy` maps a game axis `a` to
-    /// the Bevy axis `game_to_bevy(a)` with the same angle.
-    pub fn rotation(&self, counter: u64) -> Quat {
-        let axis = |a: [f32; 3]| game_to_bevy(a);
-        Quat::from_axis_angle(axis([0.0, 1.0, 0.0]), self.ry) * Quat::from_axis_angle(axis([0.0, 0.0, 1.0]), self.theta(counter))
-    }
-}
-
-/// Per-level rotating shells (all others are identity), from the level overlays' sky dispatch
-/// (level01: 0x252570 → 0x29ee10 when the current level 0x15ed84 == 1; survey of levels 00–18).
-pub fn level_rotations(level: u32) -> Vec<ShellRotation> {
-    use ShellRotation as R;
-    match level {
-        0 => vec![R::z(3, 0x8000)],
-        1 | 11 | 12 | 16 => {
-            let s = if level == 1 { 2 } else { 1 };
-            vec![R::z(s, 0x40000), R::z(s + 1, 0x20000), R::z(s + 2, 0x10000)]
-        }
-        3 | 4 => vec![R::z(1, 0x10000), R::z(2, 0x20000)],
-        5 => vec![R::z(1, 50000)],
-        7 => vec![R::z(2, 50000)],
-        8 => vec![R::z(1, 40000)],
-        9 => vec![ShellRotation { shell: 3, mul: 1, period: 25000, ry: 0.3 }],
-        10 => vec![
-            ShellRotation { shell: 0, mul: 2, period: 0x20000, ry: 0.0 },
-            ShellRotation { shell: 1, mul: 5, period: 0x20000, ry: 0.0 },
-            ShellRotation { shell: 2, mul: 10, period: 0x40000, ry: 0.0 },
-            ShellRotation { shell: 3, mul: 10, period: 0x20000, ry: 0.0 },
-        ],
-        14 => vec![R::z(1, 50000), R::z(2, 100000)],
-        18 => vec![R::z(4, 40000), R::z(5, 60000)],
-        _ => Vec::new(),
-    }
-}
 
 /// Pipeline key: gouraud shells write depth (ZMSK 0), textured ones do not (ZMSK 1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -209,12 +140,6 @@ impl Material for SkyMaterial {
     }
 }
 
-/// The sky draw-order slot of the star step (`crate::sky_stars`), reserved by `spawn_sky` between the
-/// shells its level's dispatch draws before and after it; the star draws use `depth_bias` = slot ×
-/// [`ORDER_SPACING`] (+ a sub-slot per texture group).
-#[derive(Resource, Clone, Copy, Debug)]
-pub struct SkyStarOrder(pub u32);
-
 /// Marks the sky camera.
 #[derive(Component)]
 pub struct SkyCamera;
@@ -236,13 +161,10 @@ pub fn euler_rotation(a: [f32; 3]) -> Quat {
     Quat::from_axis_angle(axis([1.0, 0.0, 0.0]), a[0]) * Quat::from_axis_angle(axis([0.0, 1.0, 0.0]), a[1]) * Quat::from_axis_angle(axis([0.0, 0.0, 1.0]), a[2])
 }
 
-/// Rotating shells of this level and whether the rotation runs (`RC_SKY_ROT`).
+/// The level's sky state.
 #[derive(Resource)]
 struct SkyAnim {
-    rotations: Vec<ShellRotation>,
-    /// Ticks per 60 Hz tick (`RC_SKY_ROT`: 0 freezes at the first tick, other values speed up).
-    speed: f64,
-    /// The level's sky dispatch zeroes the clear flag: clear on the first frame only.
+    /// The frame code zeroes the clear flag: clear on the first frame only.
     clear_first_frame_only: bool,
 }
 
@@ -253,17 +175,10 @@ impl Plugin for SkyRenderPlugin {
         app.add_plugins(MaterialPlugin::<SkyMaterial>::default())
             .add_systems(crate::level_switch::LevelStartup, spawn_sky)
             .add_systems(crate::level_switch::LevelPostStartup, main_camera_loads)
-            .add_systems(crate::level_switch::LevelUnload, (crate::level_switch::remove::<SkyAnim>, crate::level_switch::remove::<SkyStarOrder>))
+            .add_systems(crate::level_switch::LevelUnload, crate::level_switch::remove::<SkyAnim>)
             .add_systems(Update, (animate_shells, stop_clearing))
             .add_systems(PostUpdate, follow_main_camera.before(TransformSystems::Propagate));
     }
-}
-
-/// The counter 0x15f5cc after `ticks` 60 Hz logic ticks ([`crate::determinism::GameTicks`], never wall
-/// time): reset to 0 at level init, +1 at level start, then +1 per logic tick (the main loop runs one tick
-/// per frame at 60 fps and catch-up ticks at 30 fps). `speed` scales the tick rate (`RC_SKY_ROT`).
-fn tick_counter(ticks: u64, speed: f64) -> u64 {
-    if speed == 1.0 { 1 + ticks } else { 1 + (ticks as f64 * speed) as u64 }
 }
 
 fn spawn_sky(
@@ -278,17 +193,10 @@ fn spawn_sky(
         println!("sky: none in this level; the frame is cleared to the level background");
         return;
     };
-    let rotations = if ls.dispatch { level_rotations(ls.level) } else { Vec::new() };
-    let speed = match std::env::var("RC_SKY_ROT") { Ok(v) => v.trim().parse().unwrap_or(1.0), Err(_) => 1.0 };
-    let counter = tick_counter(0, speed);
-    // The star step runs after shells 0..before_shell (SkyDrawShell skips shells ≥ the header count, so a
-    // step "before" a missing shell still runs after the last one).
-    let star_before = rc_game::sky_stars::level_stars(ls.level).map(|s| s.before_shell);
-    let s = spawn_shells(&mut commands, ls, star_before, RenderLayers::layer(SKY_LAYER), &mut meshes, &mut images, &mut materials, |e, si| {
-        let rot = rotations.iter().find(|r| r.shell == si).map_or(Quat::IDENTITY, |r| r.rotation(counter));
-        e.insert((Transform::from_rotation(rot), SkyShellEntity { shell: si }));
+    let s = spawn_shells(&mut commands, ls, RenderLayers::layer(SKY_LAYER), &mut meshes, &mut images, &mut materials, |e, si| {
+        e.insert((Transform::IDENTITY, SkyShellEntity { shell: si }));
     });
-    let (order, n_tris, star_order) = (s.order, s.triangles, s.star_order);
+    let (order, n_tris) = (s.order, s.triangles);
     let has_dome = ls.sky.shells.iter().any(|s| !s.textured());
     let clear_first_frame_only = level_zeroes_clear_flag(ls.level);
     commands.spawn((
@@ -303,43 +211,31 @@ fn spawn_sky(
         // Same MSAA as the main camera (crate::render_settings): the main pass loads this pass's depth.
         crate::render_settings::WorldCamera,
     ));
-    let desc = |r: &ShellRotation| format!("shell {} period {} ×{}{}", r.shell, r.period, r.mul, if r.ry != 0.0 { format!(" Ry {}", r.ry) } else { String::new() });
     println!(
-        "sky: {} shells ({} gouraud), {} draws, {} triangles, {} textures; rotating: [{}]{}; frame clear: {}",
+        "sky: {} shells ({} gouraud), {} draws, {} triangles, {} textures; frame clear: {}",
         ls.sky.shells.len(), ls.sky.shells.iter().filter(|s| !s.textured()).count(), order, n_tris, ls.textures.len(),
-        rotations.iter().map(desc).collect::<Vec<_>>().join(", "),
-        if speed == 1.0 { String::new() } else { format!(" (RC_SKY_ROT speed {speed})") },
         match (clear_first_frame_only, has_dome) {
             (true, true) => "first frame only (the gouraud dome is the clear)",
             (true, false) => "first frame only (no gouraud shell: previous frames persist where the sky is transparent)",
             (false, _) => "every frame",
         }
     );
-    if let Some(o) = star_order { commands.insert_resource(SkyStarOrder(o)); }
-    commands.insert_resource(SkyAnim { rotations, speed, clear_first_frame_only });
+    commands.insert_resource(SkyAnim { clear_first_frame_only });
 }
 
 /// What [`spawn_shells`] made.
-pub(crate) struct SpawnedShells {
-    /// The next draw-order slot after the shells (and the star slot).
-    pub order: u32,
-    pub triangles: usize,
-    /// The star step's slot (`star_before`'s), if the shells reached it.
-    pub star_order: Option<u32>,
-    /// Every shell draw entity with its shell index.
-    pub entities: Vec<(Entity, usize)>,
+struct SpawnedShells {
+    /// The next draw-order slot after the shells.
+    order: u32,
+    triangles: usize,
 }
 
 /// The shells of a sky block as draws (one per run of consecutive faces with the same texture, in shell, cluster and
 /// face order) on render layer `layer`, each given its components by `extra(entity, shell)` (the shell's SkyM
-/// `Transform`, a marker). `star_before`: the shell the star step's draw slot comes before. Used by the level sky
-/// ([`spawn_sky`]) and the space skies the camera of [`SKY_LAYER`] is switched to (the flight between planets,
-/// crate::flight_render; the title world, crate::title_world).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_shells(
+/// `Transform`, a marker).
+fn spawn_shells(
     commands: &mut Commands,
     ls: &LevelSky,
-    star_before: Option<usize>,
     layer: RenderLayers,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
@@ -355,13 +251,7 @@ pub(crate) fn spawn_shells(
     ));
     let tex_images: Vec<Handle<Image>> = ls.textures.iter().map(|t| images.add(sky_image(t))).collect();
     let (mut order, mut n_tris) = (0u32, 0usize);
-    let mut star_order = None;
-    let mut entities = Vec::new();
     for (si, shell) in ls.sky.shells.iter().enumerate() {
-        if star_before == Some(si) {
-            star_order = Some(order);
-            order += 1;
-        }
         // Runs of consecutive faces with the same texture, in cluster and face order: one draw each.
         let mut runs: Vec<(u8, Vec<sky::SkyGsVertex>)> = Vec::new();
         for c in &shell.clusters {
@@ -399,23 +289,10 @@ pub(crate) fn spawn_shells(
                 Name::new(format!("sky shell {si} tex {tex}")),
             ));
             extra(&mut e, si);
-            entities.push((e.id(), si));
             order += 1;
         }
     }
-    if star_before.is_some() && star_order.is_none() { star_order = Some(order); }
-    SpawnedShells { order, triangles: n_tris, star_order, entities }
-}
-
-/// A space sky shell's SkyM (`DrawSkyShells` 0x29f260): the Euler rotation (x, y, z) (the builder 0x1fa070:
-/// `v·Rz·Ry·Rx`), the rows scaled by `scale`, the translation row `t` (sky units, game axes). The shader applies the
-/// whole matrix to `(x, y, z, 1)` as the game's 0x22bf94 does.
-pub(crate) fn shell_transform(euler: [f32; 3], scale: f32, t: [f32; 3]) -> Transform {
-    let axis = |a: [f32; 3]| game_to_bevy(a);
-    let rot = Quat::from_axis_angle(axis([1.0, 0.0, 0.0]), euler[0])
-        * Quat::from_axis_angle(axis([0.0, 1.0, 0.0]), euler[1])
-        * Quat::from_axis_angle(axis([0.0, 0.0, 1.0]), euler[2]);
-    Transform { translation: game_to_bevy(t), rotation: rot, scale: Vec3::splat(scale) }
+    SpawnedShells { order, triangles: n_tris }
 }
 
 /// Decoded sky texture as the GS sees it: display-encoded RGB, raw texel alpha 0..0x80.
@@ -468,25 +345,12 @@ fn stop_clearing(anim: Option<Res<SkyAnim>>, mut cams: Query<&mut Camera, With<S
     for mut cam in &mut cams { cam.clear_color = ClearColorConfig::None; }
 }
 
-/// SkyM per shell from the 60 Hz tick counter.
-fn animate_shells(
-    anim: Option<Res<SkyAnim>>,
-    game: Option<Res<GameSkyRotations>>,
-    ticks: Res<crate::determinism::GameTicks>,
-    mut shells: Query<(&SkyShellEntity, &mut Transform)>,
-) {
-    if let Some(g) = game {
-        for (s, mut t) in &mut shells {
-            let r = g.0.get(s.shell).copied().unwrap_or(Quat::IDENTITY);
-            if t.rotation != r { t.rotation = r; }
-        }
-        return;
-    }
-    let Some(anim) = anim else { return };
-    if anim.rotations.is_empty() || anim.speed == 0.0 { return; }
-    let counter = tick_counter(ticks.0, anim.speed);
+/// SkyM per shell from the game's rotations.
+fn animate_shells(game: Option<Res<GameSkyRotations>>, mut shells: Query<(&SkyShellEntity, &mut Transform)>) {
+    let Some(g) = game else { return };
     for (s, mut t) in &mut shells {
-        if let Some(r) = anim.rotations.iter().find(|r| r.shell == s.shell) { t.rotation = r.rotation(counter); }
+        let r = g.0.get(s.shell).copied().unwrap_or(Quat::IDENTITY);
+        if t.rotation != r { t.rotation = r; }
     }
 }
 
@@ -520,23 +384,12 @@ pub(crate) fn follow_main_camera(main: MainView, mut sky: SkyView) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// θ = (c & mask)·2π/(mask + 1) − π, as level01 0x29ee10 computes it for shell 4 (mask 0xffff).
-    #[test]
-    fn theta_matches_dispatch() {
-        let r = ShellRotation::z(4, 0x10000);
-        assert!((r.theta(0) + PI).abs() < 1e-6);
-        assert!(r.theta(0x8000).abs() < 1e-6);
-        assert!((r.theta(0x10000 + 0x4000) - (-PI / 2.0)).abs() < 1e-6);
-        // level01's constant for shell 4 is 9.58738e-05 = 2π/65536 per tick.
-        assert!(((r.theta(1000) - r.theta(0)) - 1000.0 * 9.58738e-5).abs() < 1e-5);
-    }
+    use std::f32::consts::PI;
 
     /// Rz(θ) row-vector form: rows (c, s, 0), (−s, c, 0): game +X turns toward +Y (counter-clockwise about up).
     #[test]
     fn rotation_is_ccw_about_game_up() {
-        let r = ShellRotation::z(0, 4);
-        let q = r.rotation(3); // θ = 3·π/2 − π = π/2
+        let q = euler_rotation([0.0, 0.0, PI / 2.0]);
         let x = q * game_to_bevy([1.0, 0.0, 0.0]);
         assert!((x - game_to_bevy([0.0, 1.0, 0.0])).length() < 1e-6, "{x}");
     }

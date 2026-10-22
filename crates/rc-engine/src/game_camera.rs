@@ -331,22 +331,6 @@ impl LevelFog {
         (q_num, slope, offset)
     }
 
-    /// The level fog globals (0x15f444..) these values are a copy of, for `rc_game::fog_zones`.
-    pub fn globals(&self) -> rc_game::fog_zones::FogGlobals {
-        rc_game::fog_zones::FogGlobals {
-            color: self.color,
-            near_dist: self.near_dist,
-            far_dist: self.far_dist,
-            near_intensity: self.near_intensity,
-            far_intensity: self.far_intensity,
-        }
-    }
-
-    /// `UpdateFog`'s copy of the globals into the view context.
-    pub fn from_globals(g: &rc_game::fog_zones::FogGlobals) -> Self {
-        LevelFog { color: g.color, near_dist: g.near_dist, far_dist: g.far_dist, near_intensity: g.near_intensity, far_intensity: g.far_intensity }
-    }
-
     /// VU1 constants qw656 and qw661 as the EE uploads them for tfrags (0x1de750 / 0x1de7a0).
     pub fn vu_constants(&self) -> ([f32; 4], [f32; 4]) {
         let (q_num, _, offset) = self.vu_terms();

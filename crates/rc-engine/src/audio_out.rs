@@ -1,19 +1,9 @@
 //! Audio output: the game's audio (`rc_game::audio`: sound slots, 989snd, music, software SPU2) run once per
-//! 60 Hz game tick and played through Bevy's audio as one endless rodio source (docs/plan/audio.md §6.7).
+//! 60 Hz game tick and played through Bevy's audio as one endless rodio source.
 //!
-//! * **With the game tick** (crate::gameplay): the sound layer is part of the tick
-//!   (`rc_game::audio::class_sounds`): the moby loop's class sounds get their slot during the moby loop, and
-//!   the tick's sound step (after the camera, before the counter increment) plays Ratchet's animation-trigger
-//!   sounds and runs the EE frame (`sound_update`) and its 800 samples ([`AudioOut::push_frame`]), all on the
-//!   game's one `rand` stream (`Game::rng`). The listener is the game camera 0x167240 of that tick (also while
-//!   the fly camera is shown: the game's draws must not depend on the debug view), the owners' positions come
-//!   from the moby table. A rendered frame whose game ticks did not run (a menu pausing the tick, a frame the
-//!   catch-up rule skipped) gets IOP-only frames here (989snd and the SPU keep playing; no EE update, no draw).
-//! * **In a scene** (crate::scene_render, game mode 2: the gameplay tick is suspended): [`scene_sound`] runs
-//!   the audio frame of each scene frame (`AudioSystem::scene_frame_with`): the scene's requests (music pause,
-//!   speech, speech stop, music resume) apply at once, the EE frame (`sound_update`, `music_Update`) runs on the
-//!   frames whose world update runs (`CutsceneModeUpdate`), on the game's stream with the scene camera as the
-//!   listener (0x167240), and the blocking fades / vsync waits get IOP-only frames.
+//! * **With the game tick** (crate::rac2_play): the tick runs the EE frame (`sound_update`) and its 800 samples
+//!   ([`AudioOut::push_frame`]) itself ([`AudioOut::external`]). A rendered frame whose game ticks did not run gets
+//!   IOP-only frames here (989snd and the SPU keep playing; no EE update).
 //! * **Without it** (`RC_PLAY=0`): each 60 Hz tick ([`GameTicks`]) runs the EE part of the frame on the audio
 //!   system's private stream (`srand(1234)`) with the listener = the main camera and the hero position = the
 //!   camera, then renders exactly 800 samples (48 kHz stereo).
@@ -22,11 +12,6 @@
 //! * The samples go to a ring buffer read by [`MixerDecoder`], a `rodio::Source` behind the `Decodable` asset
 //!   [`MixerStream`] (bevy_audio 0.19, `add_audio_source`). The reader waits for 50 ms of audio before it
 //!   starts (and again after an underrun, outputting silence meanwhile); the ring is capped at 0.25 s.
-//! * The underwater flag 0x167494 comes from crate::fog_state (`UnderwaterTest` 0x20e9f0 in its camera update, which
-//!   runs after the frame's ticks: the sound step reads the flag of the previous frame's camera, one tick late
-//!   [L]); [`sync_underwater`] copies it into the audio system before the tick. The reverb (zones and effect:
-//!   `rc_game::audio::reverb`) runs inside the audio system.
-//! * Not connected yet: the flag-0x40 rotated owner offsets.
 //!
 //! Environment:
 //! - `RC_AUDIO=0`: no audio (nothing is loaded).
@@ -44,44 +29,14 @@ use crate::determinism::GameTicks;
 use bevy::audio::{AddAudioSource, AudioPlayer, ChannelCount, Decodable, SampleRate, Source};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
-use rc_formats::level::LevelCore;
 use rc_game::audio::{self, AudioSystem, FrameInput, LevelAudio};
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 /// `RC_AUDIO` is not "0".
 pub fn enabled() -> bool { !std::env::var("RC_AUDIO").is_ok_and(|v| v.trim() == "0") }
 
-/// Loads the level's audio data (bank, defs, sound instances, music VAGs; the collision mesh for the occlusion
-/// rays). None when disabled or when the bank is missing (with a warning).
-pub fn load(root: &Path, index: u32, core_index: &[u8], core: &LevelCore, core_data: &[u8], gameplay: &[u8], collision: Option<rc_formats::collision::Collision>) -> Option<LevelAudio> {
-    if !enabled() { return None; }
-    let t0 = Instant::now();
-    let read = |name: &str| crate::disc_source::level_file(root, index, name);
-    let run = move || -> anyhow::Result<LevelAudio> {
-        let bank = read("sound_bank.bin")?;
-        let header = read("level_header.bin")?;
-        let table = rc_formats::sound_bank::music_table(&header)?;
-        let music: [Option<Vec<u8>>; 15] = std::array::from_fn(|k| (table[k] != 0).then(|| read(&format!("music/{k:03}.bin")).ok()).flatten());
-        Ok(LevelAudio::from_parts(&bank, core_index, core, core_data, gameplay, &header, &music, collision)?)
-    };
-    match run() {
-        Ok(a) => {
-            let names: Vec<&str> = a.music.iter().flatten().map(|m| m.name.as_str()).collect();
-            println!(
-                "audio: {} sounds, {} samples, {} level defs, {} sound instances, music {:?}; load {:.1} ms (RC_AUDIO=0 disables, RC_AUDIO_WAV=path records 10 s)",
-                a.bank.sounds.len(), a.bank.vags.len(), a.sounds.level_defs.len(), a.instances.len(), names, t0.elapsed().as_secs_f64() * 1e3
-            );
-            Some(a)
-        }
-        Err(e) => {
-            eprintln!("audio: cannot load the level's sound data ({e:#}); no audio");
-            None
-        }
-    }
-}
 
 /// Frames the reader waits for before (re)starting: 50 ms.
 const PREFILL: usize = 2400;
@@ -204,8 +159,6 @@ pub struct AudioOut {
     /// `RC_AUDIO_TRACE`.
     trace: bool,
     /// `RC_AUDIO_SFX` / `RC_AUDIO_MUSIC` given: they win over the saved game's options ([`sync_options`]).
-    fixed_sfx: bool,
-    fixed_music: bool,
     /// A game other than R&C1's tick runs the EE frames and pushes them (Going Commando's, crate::rac2_play): the
     /// frames it did not run get IOP-only ones here.
     pub external: bool,
@@ -227,16 +180,8 @@ impl AudioOut {
         self.system = system;
     }
 
-    pub fn stats(&self) -> audio::AudioStats { self.system.stats }
-
     /// The audio system and the frame buffer, borrowed together (the sound step renders into `buf`).
     pub fn parts(&mut self) -> (&mut AudioSystem, &mut Vec<[i16; 2]>) { (&mut self.system, &mut self.buf) }
-
-    /// Frames rendered but not yet taken by the audio device (the output latency the movie clock subtracts).
-    pub fn queued(&self) -> usize { self.ring.0.lock().map(|r| r.frames.len()).unwrap_or(0) }
-
-    /// 800-sample frames output so far (one per 60 Hz tick).
-    pub fn frames_out(&self) -> u64 { self.done }
 
     /// Output the rendered frame [`AudioOut::buf`] (ring and WAV capture) and clear it.
     pub fn push_frame(&mut self) {
@@ -316,34 +261,10 @@ impl Plugin for AudioOutPlugin {
             println!("audio: RC_REVERB=0: no reverb output");
         }
         app.add_audio_source::<MixerStream>()
-            .insert_resource(AudioOut { system, ring, wav, done: 0, buf: Vec::new(), last_report: 0, trace, fixed_sfx: fixed_sfx.is_some(), fixed_music: fixed_music.is_some(), external: false })
+            .insert_resource(AudioOut { system, ring, wav, done: 0, buf: Vec::new(), last_report: 0, trace, external: false })
             .add_systems(Startup, start_output)
-            // After the scene frame (which runs before the tick) and the tick, which a running scene suspends.
-            .add_systems(FixedUpdate, scene_sound.after(crate::gameplay::GameTick))
-            .add_systems(FixedUpdate, sync_underwater.before(crate::gameplay::GameTick))
-            .add_systems(FixedUpdate, sync_options.before(crate::gameplay::GameTick))
             .add_systems(PostUpdate, run_audio);
     }
-}
-
-/// The underwater flag 0x167494 into the audio system (the sound step's listener; module docs).
-fn sync_underwater(mut out: ResMut<AudioOut>, fog: Option<Res<crate::fog_state::FogState>>) {
-    let flag = fog.is_some_and(|f| f.underwater_flag());
-    if out.system.underwater != flag { out.system.underwater = flag; }
-}
-
-/// The saved game's sound options into the mixer every frame, as the game's `sound_update` resends the master volumes
-/// from them: effects 0x15edf0 and music 0x15edec (0..0x400; `voices::master_volumes`), and mono when the stereo option
-/// 0x15ede8 is 0 (`snd_SetPlaybackMode`). `RC_AUDIO_SFX` / `RC_AUDIO_MUSIC` keep their values.
-fn sync_options(mut out: ResMut<AudioOut>, gs: Option<Res<crate::gameplay::Persistent>>) {
-    let Some(gs) = gs else { return };
-    let g = &gs.0.global;
-    let (fixed_sfx, fixed_music) = (out.fixed_sfx, out.fixed_music);
-    let s = &mut out.system;
-    if !fixed_sfx && s.sfx_option != g.effects_volume.clamp(0, 0x400) { s.sfx_option = g.effects_volume.clamp(0, 0x400); }
-    if !fixed_music && s.music_option != g.music_volume.clamp(0, 0x400) { s.music_option = g.music_volume.clamp(0, 0x400); }
-    let mono = g.stereo & 0xff == 0;
-    if s.snd.vm.mono != mono { s.snd.vm.mono = mono; }
 }
 
 fn start_output(mut commands: Commands, out: Res<AudioOut>, mut streams: ResMut<Assets<MixerStream>>) {
@@ -351,42 +272,10 @@ fn start_output(mut commands: Commands, out: Res<AudioOut>, mut streams: ResMut<
     commands.spawn(AudioPlayer(handle));
 }
 
-/// The audio frame of a scene frame while the scene suspends the gameplay tick (module docs): the EE frame
-/// on the game's stream and counter when the world runs, the listener = the scene camera (the play camera
-/// before the first scene tick), the hero position and the owners from the game.
-fn scene_sound(
-    mut out: ResMut<AudioOut>,
-    scene: Option<Res<crate::scene_render::ActiveScene>>,
-    play: Option<ResMut<crate::gameplay::Play>>,
-    mut counter_seen: Local<Option<u64>>,
-) {
-    let Some(scene) = scene else { return };
-    let ran = play.as_ref().map(|p| p.game.counter);
-    let tick_ran = ran.is_some() && *counter_seen != ran;
-    *counter_seen = ran;
-    if !scene.running { return; }
-    // A world-running scene frame whose gameplay tick ran (its mode-2 form) already made the EE audio frame in the
-    // tick's sound step (crate::scene_render); only the frames without one are made here.
-    if tick_ran && scene.world_runs { return; }
-    let (Some(mut play), Some(last)) = (play, scene.last.as_ref()) else { return };
-    let game = &mut play.game;
-    let mut listener = rc_game::audio::class_sounds::listener_with_water(&game.camera.out, out.system.underwater, &game.hero);
-    if let Some(c) = &last.camera { (listener.pos, listener.rows) = (c.eye, c.rows); }
-    let h = game.hero.pos;
-    let input = FrameInput { listener, hero_pos: [h[0].to_f32(), h[1].to_f32(), h[2].to_f32()] };
-    let counter = game.counter as u32;
-    let table = &game.mobys;
-    let (sys, buf) = out.parts();
-    buf.clear();
-    sys.scene_frame_with(last.world_runs, &input, counter, &mut game.rng, &|id| rc_game::audio::class_sounds::owner_position(table, id), buf);
-    out.push_frame();
-}
-
 fn run_audio(
     mut out: ResMut<AudioOut>,
     ticks: Res<GameTicks>,
     cams: Query<&Transform, With<crate::fly_cam::FlyCam>>,
-    play: Option<Res<crate::gameplay::Play>>,
 ) {
     let Some(cam) = cams.iter().next() else { return };
     let eye = crate::game_camera::game_eye(cam);
@@ -395,7 +284,7 @@ fn run_audio(
     let input = FrameInput { listener, hero_pos: listener.pos };
     let out = &mut *out;
     // With the game tick the EE frames ran in its sound step; fill the ticks it did not run with IOP-only frames.
-    let driven = play.is_some() || out.external;
+    let driven = out.external;
     while out.done < ticks.0 {
         out.buf.clear();
         if driven {

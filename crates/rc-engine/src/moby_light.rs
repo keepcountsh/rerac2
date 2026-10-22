@@ -18,7 +18,7 @@ use rc_formats::gameplay::MobyInstance;
 use rc_formats::moby::LevelMobyClass;
 use rc_formats::moby_anim::Rows;
 use rc_formats::moby_light::{self, MobyLights, V4};
-use rc_formats::tfrag_light::{self, LightBank, NormalTable, BOOT_NORMAL_TABLE_VADDR};
+use rc_formats::tfrag_light::{self, LightBank, NormalTable};
 use std::path::Path;
 
 pub struct MobyLighting {
@@ -26,25 +26,16 @@ pub struct MobyLighting {
     pub table: NormalTable,
 }
 
-/// `None` when `RC_NO_LIGHT` is set.
+/// The normal table: the boot ELF `SCUS_972.68` holds its 256 entries at this address.
+pub const NORMAL_TABLE_VADDR: u32 = 0x0023_8e80;
+
+/// The level's light bank (gameplay word 0x04) and the normal table from the boot ELF; `None` when `RC_NO_LIGHT` is
+/// set.
 pub fn load(root: &Path, gameplay: &[u8]) -> Result<Option<MobyLighting>> {
     if std::env::var("RC_NO_LIGHT").is_ok_and(|v| v != "0") { return Ok(None); }
     let bank = tfrag_light::parse_light_bank(gameplay).context("parsing directional lights")?;
-    let elf_path = root.join("boot/SCUS_971.99");
-    let elf = crate::disc_source::read_path(root, &elf_path)?;
-    let table = NormalTable::from_elf(&elf, BOOT_NORMAL_TABLE_VADDR).context("reading the normal table from the boot ELF")?;
-    Ok(Some(MobyLighting { bank, table }))
-}
-
-/// Going Commando's normal table: the boot ELF `SCUS_972.68` holds the same 256 entries at this address.
-pub const RAC2_NORMAL_TABLE_VADDR: u32 = 0x0023_8e80;
-
-/// [`load`] for a Going Commando level: the same light bank (gameplay word 0x04), the normal table from its boot ELF.
-pub fn load_rac2(root: &Path, gameplay: &[u8]) -> Result<Option<MobyLighting>> {
-    if std::env::var("RC_NO_LIGHT").is_ok_and(|v| v != "0") { return Ok(None); }
-    let bank = tfrag_light::parse_light_bank(gameplay).context("parsing directional lights")?;
     let elf = crate::disc_source::read(root, "SCUS_972.68")?;
-    let table = NormalTable::from_elf(&elf, RAC2_NORMAL_TABLE_VADDR).context("reading the normal table from the boot ELF")?;
+    let table = NormalTable::from_elf(&elf, NORMAL_TABLE_VADDR).context("reading the normal table from the boot ELF")?;
     Ok(Some(MobyLighting { bank, table }))
 }
 

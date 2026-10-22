@@ -70,7 +70,7 @@ use bevy::render::render_resource::{
 };
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
-use rc_formats::gameplay::{self, MobyInstance};
+use rc_formats::gameplay::MobyInstance;
 use rc_formats::level::LevelCore;
 use rc_formats::moby::{self, LevelMobyClass, MobySubmesh};
 use rc_formats::moby_anim::{AnimState, MobyAnimClass};
@@ -105,8 +105,7 @@ const GREY: usize = usize::MAX;
 /// Metal packet textures (TEX0 data_lo): the level's chrome and glass maps.
 const TEX_CHROME: i32 = -2;
 const TEX_GLASS: i32 = -3;
-/// The port's key for the level's gold map (0x182c70): not a packet value, the game writes that TEX0 into a gold
-/// weapon's metal ad-gif ([`ExtraMobys::set_gold`]).
+/// The port's key for the level's gold map (0x182c70): not a packet value.
 const TEX_GOLD: i32 = -4;
 
 /// Level mobys after load: classes, animation data, instances and their light blocks.
@@ -163,35 +162,20 @@ fn decode_env_maps(core: &LevelCore, gs_ram: &[u8]) -> [Option<Texture>; 3] {
     ]
 }
 
-/// Parses the classes, their sequences and the instances, and builds every instance's light block.
-/// `mesh`: the level collision, for the records' ground snap (`rc_game::moby_update::scheduler::root_instances`).
-pub fn load_mobys(root: &Path, core: &LevelCore, core_data: &[u8], gameplay_file: &[u8], mesh: Option<&rc_formats::collision::Collision>) -> Result<LevelMobys> {
-    let gs_ram = crate::disc_source::level_file(root, crate::level_load::level_index(), "gs_ram.bin").context("reading gs_ram for the moby env maps")?;
-    load_mobys_with_gs(root, core, core_data, gameplay_file, &gs_ram, mesh)
-}
-
-/// [`load_mobys`] with the GS image given (the level's gs_ram, or the title world's GS upload, crate::title_world).
+/// Parses the classes, their sequences and the instances, and builds every instance's light block, with the level's
+/// GS image (its env maps).
 pub fn load_mobys_with_gs(root: &Path, core: &LevelCore, core_data: &[u8], gameplay_file: &[u8], gs_ram: &[u8], mesh: Option<&rc_formats::collision::Collision>) -> Result<LevelMobys> {
     let t0 = Instant::now();
     let classes = moby::parse_level_mobys(core, core_data).context("parsing moby classes")?;
     let anim = moby_anim::load_anim_classes(core, core_data, &classes);
-    let rac2 = core.game == rc_formats::Game::Rac2;
-    let mut instances = match core.game {
-        rc_formats::Game::Rac1 => gameplay::parse_moby_instances(gameplay_file),
-        rc_formats::Game::Rac2 => rc_formats::rac2::gameplay::moby_instances(gameplay_file).map(|v| v.into_iter().map(|m| m.base).collect()),
-    }
-    .context("parsing moby instances")?;
-    // The loader's ground snap of the rooted records (`InitLevelRenderGlobals`), before anything reads a position.
-    // Not for Going Commando until its loader's snap is read (docs/plan/rac2_bringup.md §6.3 C).
-    if let Some(mesh) = mesh.filter(|_| !rac2) {
-        let n = rc_game::moby_update::scheduler::root_instances(&mut instances, mesh);
-        if n != 0 { println!("mobys: {n} rooted instances put on the ground"); }
-    }
+    let _ = mesh;
+    // Not done: the loader's ground snap of the rooted records (G-CLS-004).
+    let instances = rc_formats::rac2::gameplay::moby_instances(gameplay_file).map(|v| v.into_iter().map(|m| m.base).collect::<Vec<_>>()).context("parsing moby instances")?;
     let env_maps = decode_env_maps(core, gs_ram);
     let parse_time = t0.elapsed();
 
     let t0 = Instant::now();
-    let lighting: Option<MobyLighting> = if rac2 { moby_light::load_rac2(root, gameplay_file)? } else { moby_light::load(root, gameplay_file)? };
+    let lighting: Option<MobyLighting> = moby_light::load(root, gameplay_file)?;
     let cpu_light = env_on("RC_MOBY_CPU_LIGHT");
     let check = env_on("RC_MOBY_LIGHT_CHECK");
     let by_class: HashMap<i32, usize> = classes.iter().enumerate().map(|(i, c)| (c.o_class, i)).collect();
@@ -705,13 +689,7 @@ fn spawn_system(
     mut metal_materials: ResMut<Assets<MobyMetalMaterial>>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
-    // The classes a placed moby may become at run time (rc_game::moby_update::class_swap, G-CLS-031): only where the
-    // moby loop runs the level's class code.
-    let swaps = |o: i16| -> Vec<i16> {
-        if !crate::gameplay::enabled() { return Vec::new(); }
-        rc_game::moby_update::class_swap::targets(crate::gameplay::level_ports(), o)
-    };
-    let s = spawn_mobys(&mut commands, &level.0, &swaps, &mut meshes, &mut images, &mut materials, &mut metal_materials, &mut buffers);
+    let s = spawn_mobys(&mut commands, &level.0, &mut meshes, &mut images, &mut materials, &mut metal_materials, &mut buffers);
     let m = &level.0.mobys;
     let mode = if m.cpu_light { "CPU bit-exact colours, bind pose (RC_MOBY_CPU_LIGHT=1)" } else if m.lighting.is_none() { "unlit (RC_NO_LIGHT)" } else { "GPU skinning + lighting" };
     println!(
@@ -780,23 +758,9 @@ struct Part {
 #[derive(Clone)]
 struct MetalPart {
     kind: i32,
-    /// Drawn with the texture of the first metal packet's ad-gif, the one a gold weapon's gets ([`gold_chain`]).
-    gold: bool,
     mesh: Handle<Mesh>,
     triangles: usize,
     caster: bool,
-}
-
-/// Per metal packet: whether its triangles of texture `t` are drawn with the ad-gif `select_world_object_resource_tables`
-/// (L01 0x259788) patches for a gold weapon: the last ad-gif block of the first metal packet (`list + (qwc − 4)·16`,
-/// its TEX0 at +0x20) and the packets after it that set none (the GS keeps the texture). Exact while the first packet
-/// has one ad-gif, as on every gadget class of the disc; with more, its triangles of the last block's texture value.
-fn gold_chain(class: &LevelMobyClass) -> Vec<Option<i32>> {
-    let mut on = None;
-    class.class.metal.iter().enumerate().map(|(si, sub)| {
-        if si == 0 { on = sub.texture_indices.last().copied(); } else if !sub.texture_indices.is_empty() { on = None; }
-        on
-    }).collect()
 }
 
 /// Texture key of a regular triangle: the moby texture table index, [`GREY`] for −1, None for an unused class
@@ -883,13 +847,12 @@ fn build_parts(class: &LevelMobyClass, lod: &[MobySubmesh], identity: bool, glow
 fn build_metal_parts(class: &LevelMobyClass, meshes: &mut Assets<Mesh>) -> (Vec<MetalPart>, u8) {
     #[derive(Default)]
     struct B { pos: Vec<[f32; 3]>, skin: Vec<[u32; 4]>, idx: Vec<u32>, remap: HashMap<(usize, u32), u32>, tris: usize }
-    let mut by_kind: BTreeMap<(i32, bool), B> = BTreeMap::new();
+    let mut by_kind: BTreeMap<i32, B> = BTreeMap::new();
     let mut max_joint = 0u8;
-    let gold = gold_chain(class);
     for (si, sub) in class.class.metal.iter().enumerate() {
         for t in &sub.triangles {
             if t.texture != TEX_CHROME && t.texture != TEX_GLASS { continue; }
-            let b = by_kind.entry((t.texture, gold[si] == Some(t.texture))).or_default();
+            let b = by_kind.entry(t.texture).or_default();
             b.tris += 1;
             for vi in [t.a, t.b, t.c] {
                 let v = *b.remap.entry((si, vi)).or_insert_with(|| {
@@ -911,12 +874,12 @@ fn build_metal_parts(class: &LevelMobyClass, meshes: &mut Assets<Mesh>) -> (Vec<
     }
     let parts = by_kind
         .into_iter()
-        .map(|((kind, gold), b)| {
+        .map(|(kind, b)| {
             let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, b.pos)
                 .with_inserted_attribute(ATTRIBUTE_MOBY_SKIN, VertexAttributeValues::Uint32x4(b.skin))
                 .with_inserted_indices(Indices::U32(b.idx));
-            MetalPart { kind, gold, mesh: meshes.add(mesh), triangles: b.tris, caster: class.class.header.shadow != 0 }
+            MetalPart { kind, mesh: meshes.add(mesh), triangles: b.tris, caster: class.class.header.shadow != 0 }
         })
         .collect();
     (parts, max_joint)
@@ -935,13 +898,6 @@ fn write_record(out: &mut Vec<u8>, model: &Mat4, g: &GpuLights, misc: [u32; 4]) 
     for v in misc { out.extend_from_slice(&v.to_le_bytes()); }
 }
 const RECORD_SIZE: usize = 208;
-
-/// A class texture scroll on a record (`misc.w`: s | t << 16, s16 each in 1/4096 of the texture: the offset
-/// `FUN_00263d90(class, s, t)` has added to every vertex ST of the class's packets; the Pyrocitor's pilot flame 179).
-pub fn set_uv_scroll(rec: &mut [u8], s: i16, t: i16) {
-    let w = (s as u16 as u32) | (t as u16 as u32) << 16;
-    rec[RECORD_SIZE - 4..RECORD_SIZE].copy_from_slice(&w.to_le_bytes());
-}
 
 /// A moby texture as an image (repeat, bilinear), with the raw GS alpha like tfrag_render; [`GREY`] is the
 /// reserved 0x80808080 texture (clamp, as CLAMP_1 = 5 for −1 blocks; the texture is uniform anyway).
@@ -1000,7 +956,6 @@ type ClassDraws = ((Vec<Part>, u8), Vec<Part>, (Vec<MetalPart>, u8));
 fn spawn_mobys(
     commands: &mut Commands,
     level: &LoadedLevel,
-    swaps: &dyn Fn(i16) -> Vec<i16>,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
     materials: &mut Assets<MobyMaterial>,
@@ -1012,14 +967,8 @@ fn spawn_mobys(
     let mut st = Stats::default();
     let lod_on = moby_lod::lod_enabled() && !m.cpu_light;
 
-    // Per placed instance, the other classes it may take at run time (`swaps`: a class swap of its class code): their
-    // meshes, palette slots and metal entities are made with the level (MobyOcclusion::set_class).
-    let class_ix: HashMap<i32, usize> = m.classes.iter().enumerate().map(|(i, c)| (c.o_class, i)).collect();
-    let swap_to: Vec<Vec<usize>> = m.instances.iter().zip(&m.placed)
-        .map(|(inst, p)| if p.is_none() { Vec::new() } else { swaps(inst.o_class as i16).into_iter().filter_map(|o| class_ix.get(&(o as i32)).copied()).collect() })
-        .collect();
-    // Class meshes, only for classes something instances (or may become), in class order (asset ids follow it).
-    let used: BTreeSet<usize> = m.placed.iter().flatten().map(|p| p.class).chain(swap_to.iter().flatten().copied()).collect();
+    // Class meshes, only for classes something instances, in class order (asset ids follow it).
+    let used: BTreeSet<usize> = m.placed.iter().flatten().map(|p| p.class).collect();
     st.classes_used = used.len();
     let mut parts: HashMap<usize, ClassDraws> = HashMap::new();
     for &ci in &used {
@@ -1061,9 +1010,7 @@ fn spawn_mobys(
             let max_joint = parts[&ci].0 .1.max(*metal_joint);
             ((m.anim[ci].joint_count as u32).max(max_joint as u32 + 1).max(1), max_joint)
         };
-        let (own, max_joint) = slots_of(p.class);
-        // The palette range fits every class the instance may take.
-        let slots = swap_to[ii].iter().map(|&ci| slots_of(ci).0).fold(own, u32::max);
+        let (slots, max_joint) = slots_of(p.class);
         if (max_joint as usize) >= ac.joint_count.max(1) { st.joint_past_count += 1; }
         let (mode, cpu_base) = match (m.cpu_light, p.colors, &p.lights) {
             (true, Some(c), _) => (MODE_CPU_TABLE, set_base[c]),
@@ -1158,8 +1105,9 @@ fn spawn_mobys(
                 d.groups.insert(GroupKey { low, blend }, ents);
             }
         }
-        // The metal entities of the placed class, then of each class it may become (kept hidden in `other`).
-        for (n, &ci) in std::iter::once(&p.class).chain(&swap_to[ii]).enumerate() {
+        // The metal entities of the placed class.
+        {
+            let ci = p.class;
             let cls = &m.classes[ci];
             let (_, _, (metal, _)) = &parts[&ci];
             let mut ents = Vec::new();
@@ -1198,12 +1146,7 @@ fn spawn_mobys(
                     st.entities += 1;
                 }
             }
-            if n == 0 {
-                d.metal = ents;
-            } else {
-                let h = &cls.class.header;
-                d.other.push(OtherClass { class: ci, class_sphere: h.bsphere, lod_trans: h.lod_trans, groups: BTreeMap::new(), metal: ents });
-            }
+            d.metal = ents;
         }
         // Triangles on an unused class slot (0xff): not drawn (none on the disc, docs/plan/moby_untextured.md).
         for sub in &class.class.high_lod {
@@ -1226,7 +1169,6 @@ fn spawn_mobys(
         class_parts: parts.into_iter().map(|(ci, (high, low, _))| (ci, [high.0, low])).collect(),
         cache,
         bits: level.occlusion.objects.moby.clone(),
-        loader_bits: level.occlusion.objects.moby.clone(),
         anim_index,
         draws,
         shown,
@@ -1256,19 +1198,6 @@ struct InstanceDraws {
     metal: Vec<Entity>,
     /// The translation the entities carry (the Transparent3d sort key), updated when a driven instance moves.
     translation: Vec3,
-    /// The other classes the instance may take at run time (a class swap, [`MobyOcclusion::set_class`]): their
-    /// entities, kept hidden, swapped with the fields above when the moby's class changes.
-    other: Vec<OtherClass>,
-}
-
-/// A class a placed instance is not showing now ([`InstanceDraws::other`]): what [`InstanceDraws`] holds per class.
-struct OtherClass {
-    class: usize,
-    class_sphere: [f32; 4],
-    /// Class +0x0e (MobyProc's LOD switch).
-    lod_trans: u8,
-    groups: BTreeMap<GroupKey, Vec<Entity>>,
-    metal: Vec<Entity>,
 }
 
 /// One entity group of an instance: LOD and GS state ([`MobyBlend`]).
@@ -1343,7 +1272,7 @@ pub struct MobyOcclusion {
     records_dirty: bool,
     bits: Vec<OcclBits>,
     /// The loader's words (`bits` as resolved at load), what a moby +0x36 of 0 stands for.
-    loader_bits: Vec<OcclBits>,
+
     anim_index: Vec<Option<usize>>,
     draws: Vec<InstanceDraws>,
     shown: Vec<Option<Shown>>,
@@ -1798,16 +1727,6 @@ pub struct ExtraMobys {
     slot_metal_shown: HashMap<u32, i32>,
     /// The caster order each slot's shown group has ([`queue_late`]).
     slot_late: HashMap<u32, bool>,
-    /// [`ExtraMobys::set_gold`]: per (slot, class), the metal entities drawn with the first metal ad-gif's texture.
-    gold: HashMap<(u32, i32), GoldParts>,
-}
-
-/// The metal entities of one (slot, class) a gold weapon's patch reaches, their own map and the gold map.
-struct GoldParts {
-    ents: Vec<Entity>,
-    own: Handle<Image>,
-    gold: Handle<Image>,
-    on: bool,
 }
 
 /// What a slot of an extra record set shows ([`ExtraMobys::show_slot`]).
@@ -1873,140 +1792,12 @@ impl ExtraMobys {
             slot_metal: HashMap::new(),
             slot_metal_shown: HashMap::new(),
             slot_late: HashMap::new(),
-            gold: HashMap::new(),
         }
     }
 
-    /// The highest joint index any high-LOD or metal vertex of `class` skins to (palette slots needed: this + 1).
-    pub fn max_skinned_joint(class: &LevelMobyClass) -> u8 {
-        class.class.high_lod.iter().chain(&class.class.metal).flat_map(|s| &s.vertices).map(|v| *v.skin.joints[..v.skin.count.max(1) as usize].iter().max().unwrap()).max().unwrap_or(0)
-    }
-
-    /// Builds `class`'s meshes (as for a gameplay instance) and spawns one entity per (texture, GS pass),
-    /// tagged `MeshTag(slot)`, at `transform`, plus its metal entities. Returns the entities.
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn(
-        &mut self,
-        commands: &mut Commands,
-        level: &LoadedLevel,
-        class: &LevelMobyClass,
-        slot: u32,
-        transform: Transform,
-        name: &str,
-        meshes: &mut Assets<Mesh>,
-        images: &mut Assets<Image>,
-        materials: &mut Assets<MobyMaterial>,
-    ) -> Vec<Entity> {
-        let (mut out, metal) = self.spawn_split(commands, level, class, slot, transform, name, meshes, images, materials);
-        out.extend(metal);
-        out
-    }
-
-    /// Draw this set's mobys in their slot order, as `DrawMobys` walks its list ([`MobyMaterial::order`]): every slot's
-    /// Z-writing draws late, then its colour-only half (TEST_1 0x5360b's As < AREF: RGB, no Z), then its shine, before
-    /// the next slot's. A later moby behind an earlier one's colour-only pixels then draws over them, as on the GS
-    /// (Rilgar's broadcast: Qwark 920 stands behind the TV 984's screen and shows untinted). For sets whose slots are
-    /// the game's draw order (the scene actors, crate::scene_render); spawn after calling it.
-    pub fn set_ordered(&mut self) { self.cache.ordered = true; }
-
-    /// [`Self::spawn`] with the high-LOD entities and the metal entities apart.
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_split(
-        &mut self,
-        commands: &mut Commands,
-        level: &LoadedLevel,
-        class: &LevelMobyClass,
-        slot: u32,
-        transform: Transform,
-        name: &str,
-        meshes: &mut Assets<Mesh>,
-        images: &mut Assets<Image>,
-        materials: &mut Assets<MobyMaterial>,
-    ) -> (Vec<Entity>, Vec<Entity>) {
-        let parts = self.parts.entry(class.o_class).or_insert_with(|| build_parts(class, &class.class.high_lod, false, glow_from(class, false), meshes).0).clone();
-        let out = self.cache.spawn(commands, level, &parts, MobyBlend::Plain, true, transform, slot, Visibility::Inherited, &format!("{name} class {}", class.o_class), images, materials);
-        // The shine pass, its gate and basis written each frame by update_extra_metal.
-        let mut metal = Vec::new();
-        if moby_lod::metal_enabled() {
-            let tracked = ExtraMetal { slot, records: self.instances.clone(), lods: self.lods.clone(), sphere: class.class.header.bsphere };
-            metal = self.spawn_metal(commands, level, class, slot, transform, Visibility::Inherited, name, Some(tracked), meshes, images);
-        }
-        // The glow list: a fresh moby of the class glows in the class colour (`InitMobyInstance`, crate::moby_lod).
-        let glow = moby_lod::class_glow_word(class.class.header.glow_rgba);
-        if glow != 0 {
-            let h = self.lods.clone();
-            commands.queue(move |world: &mut World| {
-                set_lod_bytes(&mut world.resource_mut::<Assets<ShaderBuffer>>(), &h, slot as usize, 12, &glow.to_le_bytes());
-            });
-        }
-        (out, metal)
-    }
-
-    /// The low-LOD entities of `class` for record `slot` (shown: the caller hides them; empty without a low LOD): MobyProc's
-    /// LOD pick shows them instead of the high ones (crate::moby_lod).
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_low(
-        &mut self,
-        commands: &mut Commands,
-        level: &LoadedLevel,
-        class: &LevelMobyClass,
-        slot: u32,
-        transform: Transform,
-        name: &str,
-        meshes: &mut Assets<Mesh>,
-        images: &mut Assets<Image>,
-        materials: &mut Assets<MobyMaterial>,
-    ) -> Vec<Entity> {
-        if class.class.low_lod.is_empty() { return Vec::new(); }
-        let identity = class.class.header.low_lod_joint_count == 0;
-        let parts = build_parts(class, &class.class.low_lod, identity, glow_from(class, true), meshes).0;
-        self.cache.spawn(commands, level, &parts, MobyBlend::Plain, true, transform, slot, Visibility::Inherited, &format!("{name} class {} low", class.o_class), images, materials)
-    }
 }
 
 impl ExtraMobys {
-    /// Takes slot `slot` off the glow list (its glow packets drawn lit), for a moby the game's glow overwrite does not
-    /// reach (docs/plan/moby_skinning_lighting.md §10). Two ways, per caller:
-    /// * its mode bits lose 0x10 after `InitMobyInstance`: the page menus' widget mobys (+0x34 = 0 / 4, crate::menu_models);
-    /// * it is drawn in a `DrawMobyList` batch whose last list has no glow records: each `MobyProc` call restarts the list
-    ///   at SPR 0x3400 and rewrites 0x1ac680 and its length 0x15fff8 (level01 0x26a8ac, 0x26b4c8..0x26b4dc), and
-    ///   `DrawMobysCleanUp` (0x264d68 → `fun_002116b8`) runs once after the batch, so only the **last** list's glow
-    ///   packets are recoloured: the vendor's mode-5 screens (`DrawWorld_Mode5` 0x2b4020: the salesman or the popup
-    ///   last, neither with glow packets; crate::vendor_render).
-    pub fn clear_glow(&self, commands: &mut Commands, slot: u32) {
-        let h = self.lods.clone();
-        commands.queue(move |world: &mut World| {
-            set_lod_bytes(&mut world.resource_mut::<Assets<ShaderBuffer>>(), &h, slot as usize, 12, &0u32.to_le_bytes());
-        });
-    }
-
-    /// Writes slot `slot`'s glow word (`moby_lod::glow_word` of the moby's mode and +0x90), for an owner that rewrites
-    /// +0x90 every frame (Clank's pulse, crate::moby_attach).
-    pub fn set_glow(&self, commands: &mut Commands, slot: u32, word: u32) {
-        let h = self.lods.clone();
-        commands.queue(move |world: &mut World| {
-            set_lod_bytes(&mut world.resource_mut::<Assets<ShaderBuffer>>(), &h, slot as usize, 12, &word.to_le_bytes());
-        });
-    }
-
-    /// Slot `slot`'s class `o_class` as a gold weapon or not: `select_world_object_resource_tables` (L01 0x259788), loading
-    /// a gadget class, finds the first item definition of that class (0x179f50 + 0x4c·item, 0x25 items) and, when the
-    /// item's gold flag 0x13e520[item] is set, writes the gold map's TEX0 / its next word (0x182c70 / 0x182c80, built
-    /// from `LevelCore::gold_map` by `LoadLevelCoreData`) into the class's first metal packet's ad-gif: the metal it
-    /// textures ([`gold_chain`]) shines with the gold map instead of its own. A class without such metal is unchanged.
-    /// The callers decide the flag (`rc_game::hero::items::gold_class`).
-    pub fn set_gold(&mut self, commands: &mut Commands, slot: u32, o_class: i32, on: bool) {
-        let Some(g) = self.gold.get_mut(&(slot, o_class)).filter(|g| g.on != on) else { return };
-        g.on = on;
-        let (ents, image) = (g.ents.clone(), if on { g.gold.clone() } else { g.own.clone() });
-        commands.queue(move |world: &mut World| {
-            let hs: Vec<_> = ents.iter().filter_map(|&e| world.get::<MeshMaterial3d<MobyMetalMaterial>>(e).map(|m| m.0.clone())).collect();
-            let mut mats = world.resource_mut::<Assets<MobyMetalMaterial>>();
-            for h in hs {
-                if let Some(mut m) = mats.get_mut(&h) { m.texture = image.clone(); }
-            }
-        });
-    }
 
     /// The metal entities of `class` for record `slot` (one per metal texture and GS pass), with `tracked` when
     /// update_extra_metal owns their shine. The caller only lends the regular material store, so the metal materials
@@ -2028,13 +1819,7 @@ impl ExtraMobys {
         let metal = self.metal_parts.entry(class.o_class).or_insert_with(|| build_metal_parts(class, meshes).0).clone();
         let mut out = Vec::new();
         for part in &metal {
-            let (image, mut texel_alpha) = self.metal_images.entry(part.kind).or_insert_with(|| metal_image(level, part.kind, images)).clone();
-            // A part the gold patch reaches may draw either map: its passes cover both maps' alphas.
-            if part.gold {
-                let (gold, gold_alpha) = self.metal_images.entry(TEX_GOLD).or_insert_with(|| metal_image(level, TEX_GOLD, images)).clone();
-                texel_alpha = texel_alpha.union(gold_alpha);
-                self.gold.entry((slot, class.o_class)).or_insert_with(|| GoldParts { ents: Vec::new(), own: image.clone(), gold, on: false });
-            }
+            let (image, texel_alpha) = self.metal_images.entry(part.kind).or_insert_with(|| metal_image(level, part.kind, images)).clone();
             for pass in metal_passes(texel_alpha) {
                 let pass = if self.cache.ordered { ordered_pass(pass) } else { pass };
                 let mat = MobyMetalMaterial {
@@ -2059,7 +1844,6 @@ impl ExtraMobys {
                 if let Some(t) = &tracked { ec.insert(t.clone()); }
                 if pass.state().display { ec.insert(crate::display_blend::DisplayEffect); }
                 let e = ec.id();
-                if part.gold { if let Some(g) = self.gold.get_mut(&(slot, class.o_class)) { g.ents.push(e); } }
                 commands.queue(move |world: &mut World| {
                     let h = world.resource_mut::<Assets<MobyMetalMaterial>>().add(mat);
                     if let Ok(mut ent) = world.get_entity_mut(e) { ent.insert(MeshMaterial3d(h)); }
@@ -2222,12 +2006,6 @@ fn update_extra_metal(
 }
 
 impl MobyOcclusion {
-    /// Moby +0x36 of static instance `ii` (`MobyProc` tests it): 0, the game's "unchanged", is the loader's word for
-    /// the instance; any other value (0x7f80 for a creature revived or moved elsewhere, a thrown crate) is used as is.
-    pub fn set_occlusion_word(&mut self, ii: usize, word: u16) {
-        let w = if word == 0 { self.loader_bits.get(ii).copied() } else { Some(OcclBits(word)) };
-        if let (Some(b), Some(w)) = (self.bits.get_mut(ii), w) { *b = w; }
-    }
 
     /// Going Commando's moby fields MobyProc reads of static instance `ii` this tick: its alpha (`+0x23`), the glow list
     /// (mode bit 0x10 and the word `+0x78`) and its draw distance (`+0x32`). Its other mode bits do not mean R&C1's
@@ -2241,43 +2019,9 @@ impl MobyOcclusion {
         }
     }
 
-    /// What MobyProc reads from static instance `ii` this tick ([`MobyLook`]): its vertex alpha, blend mode, glow and
-    /// shine distance.
-    pub fn look(&mut self, ii: usize, look: MobyLook) {
-        if let Some(l) = self.look.get_mut(ii) {
-            let late = l.late;
-            *l = look;
-            if look.late.is_none() { l.late = late; }
-        }
-    }
-
-    /// Whether instance `ii`'s caster draws come after the shadow pass this frame ([`MobyLook::late`]).
-    pub fn set_late(&mut self, ii: usize, late: bool) {
-        if let Some(l) = self.look.get_mut(ii) { l.late = Some(late); }
-    }
-
     /// The `MobyAnim` instance of gameplay instance `ii` (None without geometry).
     pub fn anim_index(&self, ii: usize) -> Option<usize> { self.anim_index.get(ii).copied().flatten() }
 
-    /// Static instance `ii` now shows class `ci` (index into `LevelMobys::classes`): its moby changed its class at
-    /// run time (rc_game::moby_update::class_swap, G-CLS-031: +0xa6, +0x24 header, +0x72). The entities, sphere and
-    /// LOD switch of `ci`, made with the level for the classes the instance may become, take the place of the shown
-    /// class's (hidden next frame); MobyProc then picks the new class's group as on a first show. False (nothing
-    /// changes) when `ci` is the shown class or one the instance was not made for. The caller points the instance's
-    /// `MobyAnim` entry at `ci` ([`crate::moby_anim::MobyAnim::set_class`]).
-    pub fn set_class(&mut self, ii: usize, ci: usize) -> bool {
-        let Some(d) = self.draws.get_mut(ii) else { return false };
-        if d.class == ci { return false; }
-        let Some(o) = d.other.iter_mut().find(|o| o.class == ci) else { return false };
-        std::mem::swap(&mut d.class, &mut o.class);
-        std::mem::swap(&mut d.class_sphere, &mut o.class_sphere);
-        std::mem::swap(&mut d.groups, &mut o.groups);
-        std::mem::swap(&mut d.metal, &mut o.metal);
-        if let Some(inp) = d.input.as_mut() { std::mem::swap(&mut inp.lod_trans, &mut o.lod_trans); }
-        self.pending_hide.extend(o.groups.values().flatten().copied().chain(o.metal.iter().copied()));
-        if let Some(s) = self.shown.get_mut(ii) { *s = None; }
-        true
-    }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -2289,12 +2033,6 @@ impl MobyOcclusion {
     /// loop, occlusion and the draw-distance / near / frustum culls passed). Spawn-hidden instances
     /// (crate::moby_spawn) are the caller's to exclude.
     pub fn drawn(&self, ii: usize) -> bool { self.shown.get(ii).is_some_and(|s| s.is_some()) }
-
-    /// Forgets the group instance `ii` shows, for a caller that made all of its entities hidden (a spawn-hidden
-    /// instance revealed): the next [`update_moby_occlusion`] switches on exactly the group (and metal) it picks.
-    /// Showing every entity instead would show all its LOD / blend groups at once, and a later hide would then only
-    /// switch off the picked one.
-    pub fn reshow(&mut self, ii: usize) { if let Some(s) = self.shown.get_mut(ii) { *s = None; } }
 
     /// The placement the moby loop gave static instance `ii` this tick: position (+0x10), rotation rows
     /// (+0xc0.., row i = image of model axis i), scale (+0x2c), the light block for those rows (None: keep
