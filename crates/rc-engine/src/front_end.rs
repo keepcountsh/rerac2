@@ -33,7 +33,7 @@ use rc_formats::disc::toc::{self, Toc, MISC_FRONT_END, MOVIE_FILES};
 use rc_formats::disc::{gui_sprite, Picture};
 use rc_formats::texture::Texture;
 use rc_game::front_end::{clock_seed, Assets as FrontAssets, FrontEnd, Request};
-use rc_game::gui;
+use rc_game::{gui, menus};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Mutex;
@@ -51,6 +51,8 @@ pub struct Data {
     /// Per movie row: its bytes' range across [`MOVIE_FILES`], and the files' sizes.
     movies: Vec<Option<toc::Movie>>,
     movie_files: Vec<u64>,
+    /// The pages' GUI images (`(icon, frame)` → layer texture and texel size), from the level's HUD registry.
+    icons: std::collections::HashMap<(u16, u16), (usize, [f32; 2])>,
 }
 
 impl Data {
@@ -80,13 +82,27 @@ impl Data {
         textures.push(opaque(blob.backdrop()?));
         textures.push(Texture { width: 512, height: 416, rgba: [0, 0, 0, 0x80].repeat(512 * 416) });
         let movies = (0..64).map(|r| t.movie(r)).collect::<rc_formats::buf::Result<Vec<_>>>()?;
+        // The save pages' images (rc_game::menus): the slots' icons, the bolt, the page's picture.
+        let mut icons = std::collections::HashMap::new();
+        match crate::level_wad::hud(root, crate::level_load::level_index()) {
+            Ok(h) => {
+                for (id, f) in [(menus::ICON_SLOT, 2), (menus::ICON_SLOT, 3), (menus::ICON_SLOT, 4), (menus::ICON_BOLT, 0), (menus::ICON_PICTURE, 0)] {
+                    if !h.has_icon(id) { continue; }
+                    if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {
+                        icons.insert((id, f), (textures.len(), [t.width as f32, t.height as f32]));
+                        textures.push(t);
+                    }
+                }
+            }
+            Err(e) => eprintln!("front end: no HUD icons ({e:#})"),
+        }
         let movie_files = MOVIE_FILES.iter().map(|f| std::fs::metadata(root.join(f)).map(|m| m.len()).with_context(|| format!("{f} in {}", root.display()))).collect::<Result<Vec<_>>>()?;
         println!(
             "front end loaded: {} strings, {} GUI sprites, main menu {:?}",
             assets.strings.0.len(), assets.sprites.len(),
             assets.main_menu.iter().map(|r| String::from_utf8_lossy(assets.strings.get(r.text)).into_owned()).collect::<Vec<_>>()
         );
-        Ok(Data { root: root.to_path_buf(), assets, textures, movies, movie_files })
+        Ok(Data { root: root.to_path_buf(), assets, textures, movies, movie_files, icons })
     }
 }
 
@@ -227,6 +243,8 @@ pub(crate) struct FrontEndState {
     ticks: u64,
     trace: bool,
     layer: Option<Layer>,
+    /// A loaded save's level, loading (crate::level_switch) while the front end stays up.
+    level: Option<u32>,
 }
 
 impl FrontEndState {
@@ -272,9 +290,10 @@ impl Plugin for FrontEndPlugin {
             ticks: 0,
             trace: std::env::var("RC_FRONT_END_TRACE").is_ok_and(|v| v.trim() == "1"),
             layer: None,
+            level: None,
         })
         .add_systems(Startup, setup)
-        .add_systems(FixedUpdate, tick)
+        .add_systems(FixedUpdate, tick.after(crate::card::CardStep))
         .add_systems(Update, (hide_world, draw, finish).chain());
     }
 }
@@ -286,13 +305,19 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<HudMaterial>>,
     mut composites: ResMut<Assets<HudComposite>>,
+    card: Option<ResMut<crate::card::Card>>,
 ) {
     // Above every world, HUD and menu camera of the shared app; the frame's present camera (order 1000) draws after it.
-    let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() }, Name::new("front end camera"))).id();
+    // A loaded save's level change keeps them (crate::level_switch).
+    let keep = crate::level_switch::KeepAcrossLevels;
+    let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() }, keep, Name::new("front end camera"))).id();
     fe.camera = Some(cam);
     let scaling = hud_render::scaling(crate::graphics::Hud::Original);
     let layer = Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &fe.data.textures, scaling, cam);
+    for e in layer.entities { commands.entity(e).insert(keep); }
     fe.layer = Some(layer);
+    // `0x1a8c88`: the card monitor runs the front end's variants.
+    if let Some(mut c) = card { c.mc.front_end = true; }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -303,21 +328,49 @@ fn tick(
     motion: Res<AccumulatedMouseMotion>,
     gamepads: Query<&Gamepad>,
     audio: Option<ResMut<crate::audio_out::AudioOut>>,
+    mut card: Option<ResMut<crate::card::Card>>,
+    mut change: ResMut<crate::level_switch::LevelChange>,
+    mut commands: Commands,
 ) {
     let r = &mut *fe;
     if r.done { return; }
+    // A loaded save's level: loading, then swapped in; the game starts on it.
+    if let Some(level) = r.level {
+        if crate::level_load::level_index() == level {
+            r.done = true;
+        } else if change.loaded() {
+            change.swap();
+        }
+        return;
+    }
     let held = match &r.script {
         Some(s) => s.at(r.ticks).buttons,
         None => crate::input_map::sample(&keys, &mouse, &motion, gamepads.iter().next()).buttons,
     };
     let ended = std::mem::take(&mut r.movie_ended);
-    for req in r.front.tick(held, ended, &r.data.assets) {
+    let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
+    let mut cx = card.as_deref_mut().map(|c| menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock });
+    for req in r.front.tick(held, ended, &r.data.assets, cx.as_mut()) {
         match req {
             Request::Sound(n) => if r.trace { println!("front end: frame {}: sound {n} (not played)", r.ticks) },
-            // New Game (kind 4): the level. The save-slot page in between is not ported (module docs).
-            Request::Row { kind: 4, .. } => {
+            // New Game without a card: the level as it is.
+            Request::Row { kind: 4, .. } | Request::NewGame => {
                 println!("front end: New Game: level {:02}", crate::level_load::level_index());
                 r.done = true;
+            }
+            Request::Load { level } => {
+                let c = card.as_deref().expect("a load needs the card");
+                let mut game = rc_game::game::GameState::default();
+                game.load(&c.save);
+                commands.insert_resource(crate::play::Carry(game));
+                println!("front end: Load: level {level:02}");
+                match u32::try_from(level) {
+                    Ok(l) if l != crate::level_load::level_index() => {
+                        change.start_load(l);
+                        r.level = Some(l);
+                    }
+                    _ => r.done = true,
+                }
             }
             Request::Row { kind, target } => println!("front end: main menu row (kind {kind}, target {target:#x}): not in this version yet"),
         }
@@ -370,13 +423,17 @@ fn hide_world(
     }
 }
 
-fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>) {
+fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, card: Option<Res<crate::card::Card>>) {
     let r = &mut *fe;
     if r.done { return; }
     let Some(layer) = r.layer.as_ref() else { return };
     if let Some(p) = r.picture.take() { layer.write(&mut images, MOVIE, &p); }
     let mut d = Hud2d::default();
-    for q in r.front.draw(&r.data.assets) {
+    let icons = &r.data.icons;
+    let icon = |id: u16, f: u16| icons.get(&(id, f)).map(|&(i, s)| (gui::Tex::Slot(i), s));
+    // A loaded save's level loading: black.
+    let quads = if r.level.is_some() { let mut q = Vec::new(); gui::fill(&mut q, [0, 0, 0, 0x80]); q } else { r.front.draw(&r.data.assets, card.as_deref().map(|c| &c.mc), &icon) };
+    for q in quads {
         let (tex, nearest) = match q.tex {
             gui::Tex::None => (Tex::None, false),
             gui::Tex::Slot(i) => (Tex::Frame(i), false),

@@ -48,6 +48,7 @@ mod play_camera;
 mod render_settings;
 mod gs_post;
 mod front_end;
+mod card;
 mod level_wad;
 mod mobys;
 mod play;
@@ -165,6 +166,8 @@ fn main() -> anyhow::Result<()> {
     .add_systems(level_switch::LevelStartup, setup)
     .add_systems(Update, report_fps);
     // The front end over the loaded level (crate::front_end), then the game tick (crate::play).
+    // The memory card (crate::card) the front end's pages and the game's saves use.
+    app.add_plugins(card::CardPlugin(root.to_path_buf()));
     if front_end::requested() { app.add_plugins(front_end::FrontEndPlugin::new(&root)?); }
     app.add_plugins(play::PlayPlugin);
     // RC_RENDER_DIAG=1: Bevy's per-pass render timings (CPU only on Metal) and the views rendered, logged every 5 s.

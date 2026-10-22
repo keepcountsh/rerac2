@@ -56,7 +56,7 @@ impl Plugin for PlayPlugin {
 /// The game state a level change keeps (`GameState::enter_level` keeps its game-wide part), for the next level's
 /// [`start`].
 #[derive(Resource)]
-struct Carry(rc_game::game::GameState);
+pub(crate) struct Carry(pub(crate) rc_game::game::GameState);
 
 /// [`crate::level_switch::LevelUnload`]: the running game ends with its level; its game state is carried over.
 fn unload(mut commands: Commands, play: Option<Res<Play>>) {

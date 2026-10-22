@@ -134,15 +134,21 @@ pub fn settings_path() -> Option<std::path::PathBuf> {
         return (!v.is_empty() && v != "0").then(|| PathBuf::from(v));
     }
     if crate::determinism::deterministic() { return None; }
+    Some(settings_file_in(&config_base()?))
+}
+
+/// The per-OS config base dir: `~/Library/Application Support` on macOS, `%APPDATA%` on Windows,
+/// `$XDG_CONFIG_HOME` (or `~/.config`) elsewhere.
+pub fn config_base() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
     let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    let base = if cfg!(target_os = "macos") {
-        var("HOME")?.join("Library/Application Support")
+    if cfg!(target_os = "macos") {
+        Some(var("HOME")?.join("Library/Application Support"))
     } else if cfg!(windows) {
-        var("APPDATA")?
+        var("APPDATA")
     } else {
-        var("XDG_CONFIG_HOME").or_else(|| var("HOME").map(|h| h.join(".config")))?
-    };
-    Some(settings_file_in(&base))
+        var("XDG_CONFIG_HOME").or_else(|| var("HOME").map(|h| h.join(".config")))
+    }
 }
 
 /// The engine's own settings folder name under the per-OS config base dir (R&C1's port keeps its own, `rerac`).

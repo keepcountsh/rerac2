@@ -161,6 +161,9 @@ impl Hud {
         self.icons.iter().position(|e| e.id == 0xffff || e.id == id).unwrap_or(self.icons.len() - 1)
     }
 
+    /// The registry has icon `id`.
+    pub fn has_icon(&self, id: u16) -> bool { self.icons.get(self.icon_index(id)).is_some_and(|e| e.id == id) }
+
     /// `GetIconFrame__Fii(id, k)` with every bank resident: `first_frame + k` if the icon exists and
     /// `k < frame_count`, else frame 0. (The game also returns 0 while the frame's palette or texture is
     /// not linked, i.e. its bank is not loaded.)

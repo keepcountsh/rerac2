@@ -17,9 +17,12 @@
 //!
 //! **Main menu** (mode 3, kind 6, page 0x259438): sub-states 1, 2, 3 (one frame each: the backdrop darkened) then 4,
 //! the page: Up / Down move the selection (wrapping; sound 3), Cross takes a row. 0x708 idle frames go back to the
-//! title.
+//! title. New Game and Load open the save-slot pages behind the card dialog (crate::menus) when the front end is
+//! given the card ([`FrontEnd::tick`]'s context).
 
-use crate::gui::{self, Picture, Quad};
+use crate::gui::{self, Picture, Quad, Tex};
+use crate::memcard::MemCard;
+use crate::menus::{self, Menus};
 use rc_formats::disc::boot::{Glyph, MenuRow};
 use rc_formats::disc::gui_sprite::Sprite;
 use rc_formats::disc::front_end::Strings;
@@ -59,8 +62,12 @@ pub struct Assets {
 pub enum Request {
     /// Sound effect n of the front end's set (`FUN_002e6c90(n, 0, 0)`).
     Sound(u32),
-    /// A main-menu row was taken (its kind and target); nothing past the main menu is ported yet.
+    /// A main-menu row was taken (its kind and target) that the front end does not run itself.
     Row { kind: u32, target: u32 },
+    /// A new game starts (`0x2f7328`; the card's save data holds the blank save).
+    NewGame,
+    /// A save was loaded (the card's save data): the game goes to `level`.
+    Load { level: i32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +100,9 @@ pub struct FrontEnd {
     pulse: u32,
     /// The C library's `rand` state (`FUN_001163b0`).
     rand: u32,
+    /// The pages past the main menu (New Game's, Load's), and the slot they select (`0x1a7c10`).
+    pub menus: Option<Menus>,
+    slot: usize,
 }
 
 /// The splash timeline: fade in (65), hold, fade out (32), black (30, the first splash only).
@@ -116,6 +126,8 @@ impl FrontEnd {
             idle: 0,
             pulse: 0,
             rand: seed,
+            menus: None,
+            slot: 0,
         }
     }
 
@@ -163,8 +175,9 @@ impl FrontEnd {
         self.released = false;
     }
 
-    /// One frame. `held`: the pad's buttons down now; `movie_ended`: the movie asked for last frame has ended.
-    pub fn tick(&mut self, held: u16, movie_ended: bool, assets: &Assets) -> Vec<Request> {
+    /// One frame. `held`: the pad's buttons down now; `movie_ended`: the movie asked for last frame has ended; `cx`:
+    /// the card and the save data (without them New Game and Load come back as [`Request::Row`]).
+    pub fn tick(&mut self, held: u16, movie_ended: bool, assets: &Assets, cx: Option<&mut menus::Ctx>) -> Vec<Request> {
         let pressed = held & !self.held_before;
         let mut req = Vec::new();
         match self.phase {
@@ -194,6 +207,22 @@ impl FrontEnd {
                 }
             }
             Phase::Menu { sub } if sub < 4 => self.phase = Phase::Menu { sub: sub + 1 },
+            Phase::Menu { .. } if self.menus.is_some() => {
+                if let (Some(m), Some(cx)) = (self.menus.as_mut(), cx) {
+                    for o in m.tick(pressed, cx) {
+                        match o {
+                            menus::Out::Sound(n) => req.push(Request::Sound(n)),
+                            menus::Out::MainMenu => self.close_menus(),
+                            menus::Out::Close => {
+                                self.close_menus();
+                                self.start_title();
+                            }
+                            menus::Out::NewGame => req.push(Request::NewGame),
+                            menus::Out::Loaded { level } => req.push(Request::Load { level }),
+                        }
+                    }
+                }
+            }
             Phase::Menu { .. } => {
                 self.idle += 1;
                 self.pulse += 1;
@@ -204,7 +233,22 @@ impl FrontEnd {
                     self.selected = if pressed & button::UP != 0 { (self.selected + n - 1) % n } else { (self.selected + 1) % n };
                     self.pulse = 0;
                 } else if pressed & button::CROSS != 0 {
-                    if let Some(r) = assets.main_menu.get(self.selected) { req.push(Request::Row { kind: r.kind, target: r.target }); }
+                    if let Some(r) = assets.main_menu.get(self.selected) {
+                        // `0x2d67c0`: kind 4 New Game, kind 5 Load.
+                        let opened = match (r.kind, cx) {
+                            (4, Some(cx)) => Some(Menus::new_game(cx.card, self.slot)),
+                            (5, Some(cx)) => Some(Menus::load_game(cx.card, self.slot)),
+                            _ => None,
+                        };
+                        match opened {
+                            Some((m, menus::Out::Sound(n))) => {
+                                self.menus = Some(m);
+                                req.push(Request::Sound(n));
+                            }
+                            Some((m, _)) => self.menus = Some(m),
+                            None => req.push(Request::Row { kind: r.kind, target: r.target }),
+                        }
+                    }
                 }
                 // `FUN_0026ede8`, mode 3: any button down resets the counter.
                 if held != 0 { self.idle = 0; }
@@ -215,8 +259,14 @@ impl FrontEnd {
         req
     }
 
-    /// The frame's 2D draws.
-    pub fn draw(&self, a: &Assets) -> Vec<Quad> {
+    /// The main menu again: the pages close (their slot is kept).
+    fn close_menus(&mut self) {
+        if let Some(m) = self.menus.take() { self.slot = m.slot; }
+        self.pulse = 0;
+    }
+
+    /// The frame's 2D draws; `card` and `icon(id, frame)` (a GUI image's texture and texel size) for the pages.
+    pub fn draw(&self, a: &Assets, card: Option<&MemCard>, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) -> Vec<Quad> {
         let mut out = Vec::new();
         match self.phase {
             Phase::Splash { i, k } => {
@@ -247,7 +297,13 @@ impl FrontEnd {
             Phase::Menu { sub } => {
                 gui::picture(&mut out, Picture::Backdrop);
                 gui::fill(&mut out, [0, 0, 0, 0x38]);
-                if sub == 4 { self.draw_menu(a, &mut out); }
+                match (&self.menus, card) {
+                    (Some(m), Some(card)) => {
+                        if m.over_main_menu() { self.draw_menu(a, &mut out); }
+                        out.extend(m.draw(a, card, icon));
+                    }
+                    _ => if sub == 4 { self.draw_menu(a, &mut out); },
+                }
             }
         }
         out
@@ -296,7 +352,7 @@ mod tests {
     /// Runs until the front end asks for a movie; returns the frames it took.
     fn frames_to_movie(fe: &mut FrontEnd, a: &Assets) -> u32 {
         let mut n = 0;
-        while fe.movie().is_none() { fe.tick(0, false, a); n += 1; }
+        while fe.movie().is_none() { fe.tick(0, false, a, None); n += 1; }
         n
     }
 
@@ -308,10 +364,10 @@ mod tests {
         assert_eq!(frames_to_movie(&mut fe, &a), 172 + 122 + 1);
         assert_eq!(fe.movie(), Some(MOVIE_LOGO));
         // Buttons do not skip the logo.
-        fe.tick(button::START, false, &a);
-        fe.tick(0, false, &a);
+        fe.tick(button::START, false, &a, None);
+        fe.tick(0, false, &a, None);
         assert_eq!(fe.movie(), Some(MOVIE_LOGO));
-        fe.tick(0, true, &a);
+        fe.tick(0, true, &a, None);
         let first = fe.movie().unwrap();
         assert!((0xb3..=0xbb).contains(&first));
     }
@@ -331,24 +387,24 @@ mod tests {
         let a = assets();
         let mut fe = FrontEnd::new(7);
         frames_to_movie(&mut fe, &a);
-        fe.tick(0, true, &a);
+        fe.tick(0, true, &a, None);
         // Held from before the title: no skip until released.
-        fe.tick(button::CROSS, false, &a);
+        fe.tick(button::CROSS, false, &a, None);
         assert!(fe.movie().is_some());
-        fe.tick(0, false, &a);
-        fe.tick(button::CROSS, false, &a);
+        fe.tick(0, false, &a, None);
+        fe.tick(button::CROSS, false, &a, None);
         assert_eq!(fe.movie(), None);
         // Three frames of backdrop, then the page; Down moves and wraps.
-        for _ in 0..3 { fe.tick(0, false, &a); }
-        assert_eq!(fe.tick(button::DOWN, false, &a), [Request::Sound(3)]);
+        for _ in 0..3 { fe.tick(0, false, &a, None); }
+        assert_eq!(fe.tick(button::DOWN, false, &a, None), [Request::Sound(3)]);
         assert_eq!(fe.selected, 1);
-        fe.tick(0, false, &a);
-        fe.tick(button::UP, false, &a);
-        fe.tick(0, false, &a);
-        fe.tick(button::UP, false, &a);
+        fe.tick(0, false, &a, None);
+        fe.tick(button::UP, false, &a, None);
+        fe.tick(0, false, &a, None);
+        fe.tick(button::UP, false, &a, None);
         assert_eq!(fe.selected, 2);
-        fe.tick(0, false, &a);
-        assert_eq!(fe.tick(button::CROSS, false, &a), [Request::Row { kind: 4, target: 0 }]);
+        fe.tick(0, false, &a, None);
+        assert_eq!(fe.tick(button::CROSS, false, &a, None), [Request::Row { kind: 4, target: 0 }]);
     }
 
     #[test]
@@ -356,7 +412,7 @@ mod tests {
         let a = assets();
         let mut fe = FrontEnd::new(7);
         fe.phase = Phase::Menu { sub: 4 };
-        for _ in 0..IDLE_FRAMES { fe.tick(0, false, &a); }
+        for _ in 0..IDLE_FRAMES { fe.tick(0, false, &a, None); }
         assert!(fe.movie().is_some());
     }
 

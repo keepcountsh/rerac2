@@ -178,9 +178,140 @@ pub fn text(out: &mut Vec<Quad>, glyphs: &[Glyph; 256], slot: usize, text: &[u8]
     }
 }
 
+/// `FUN_0027e4d0(top, bottom, left, right, colour)`: an untextured rectangle.
+pub fn rect(out: &mut Vec<Quad>, top: i32, bottom: i32, left: i32, right: i32, rgba: [u8; 4]) {
+    let (t, b, l, r) = (top as f32, bottom as f32, left as f32, right as f32);
+    out.push(Quad { pos: [[l, t], [r, t], [l, b], [r, b]], uv: [[0.0; 2]; 4], tex: Tex::None, rgba });
+}
+
+/// `FUN_0027f208(top, bottom, left, right, alpha, rgb)`: the dialogs' panel, a rectangle with three bars stepping in
+/// at either side.
+pub fn frame(out: &mut Vec<Quad>, top: i32, bottom: i32, left: i32, right: i32, alpha: i32, rgb: u32) {
+    let c = rgba(((alpha as u32) << 24) | (rgb & 0xff_ffff));
+    rect(out, top, bottom, left, right, c);
+    for (dy, x0, x1) in [(1, -2, 0), (2, -3, -2), (4, -4, -3)] { rect(out, top + dy, bottom - dy, left + x0, left + x1, c); }
+    for (dy, x0, x1) in [(1, 0, 2), (2, 2, 3), (4, 3, 4)] { rect(out, top + dy, bottom - dy, right + x0, right + x1, c); }
+}
+
+/// `FUN_00280550`'s box (its 0x18-byte record): the clip rows and columns, the anchor (`x` the left edge, or the
+/// centre with [`text_box::CENTRE`]; `y` the first line's top, or the block's centre with [`text_box::MIDDLE`]), the
+/// line height; the widest line and the block's height come back in `width` / `height`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextBox {
+    pub top: i32,
+    pub bottom: i32,
+    pub left: i32,
+    pub right: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub line: i32,
+    pub flags: u16,
+}
+
+pub mod text_box {
+    /// Lines centred on `x`.
+    pub const CENTRE: u16 = 1;
+    /// The block centred on `y`.
+    pub const MIDDLE: u16 = 2;
+    /// Measure only (`width` / `height`), nothing drawn.
+    pub const MEASURE: u16 = 4;
+}
+
+/// The lines of `text` as inclusive `(start, end)` indices (an empty line ends before it starts) and the last line's
+/// width: a line takes characters while its width is below `budget`, then ends at the last space or control
+/// character seen (else where it stopped); characters 0 and 1 end it.
+fn wrap(text: &[u8], glyphs: &[Glyph; 256], budget: i32, last_w: i32) -> (Vec<(usize, isize)>, i32) {
+    let at = |i: usize| text.get(i).copied().unwrap_or(0);
+    let adv = |c: u8| glyphs[c as usize].advance as i8 as i32;
+    let mut lines = Vec::new();
+    let mut w_last = last_w;
+    if at(0) == 0 { return (lines, w_last); }
+    let mut i = 0usize;
+    loop {
+        let start = i;
+        let (mut brk, mut j, mut width) = (i, i, 0);
+        if 0 < budget {
+            loop {
+                let c = at(j);
+                if c == 0x20 || c < 0x10 { brk = j; }
+                if c < 2 { break; }
+                j += 1;
+                width += adv(c);
+                if width >= budget { break; }
+            }
+        }
+        w_last = width;
+        let e = if brk == start { j } else { brk };
+        let end = if at(e) == 0x20 || at(e) < 0x10 { e as isize - 1 } else { e as isize };
+        lines.push((start, end));
+        if at(e) == 0 { break; }
+        i = e + 1;
+        if at(i) == 0 || lines.len() > 0x4e { break; }
+    }
+    (lines, w_last)
+}
+
+/// `FUN_00280550(1.0, box, colour, text, −1, slot, glyphs)`: `text` wrapped into the box's width (twice the
+/// nearer side's distance from `x` when centred), the width narrowed by 16 at a time while the last line stays under a
+/// third of it (the first width again when that adds a line); each line in the box's rows drawn at the box's
+/// line height.
+pub fn text_in_box(out: &mut Vec<Quad>, glyphs: &[Glyph; 256], slot: usize, b: &mut TextBox, text: &[u8], colour: [u8; 4]) {
+    let centred = b.flags & text_box::CENTRE != 0;
+    let budget0 = if centred { 2 * (b.right - b.x).min(b.x - b.left) } else { b.right - b.x };
+    let (mut budget, mut first, mut last_w, mut redo) = (budget0, 0, 0, false);
+    let lines = loop {
+        let (lines, w) = wrap(text, glyphs, budget, last_w);
+        if redo { break lines; }
+        if first == 0 { first = lines.len(); }
+        if lines.len() < 2 { break lines; }
+        last_w = w;
+        if first < lines.len() {
+            redo = true;
+            budget = budget0;
+            continue;
+        }
+        let third = budget / 3;
+        budget -= 16;
+        if w >= third { break lines; }
+    };
+    let n = lines.len() as i32;
+    b.width = 0;
+    b.height = n * b.line;
+    let mut y = if b.flags & text_box::MIDDLE != 0 { b.y - (n * b.line >> 1) } else { b.y };
+    for (s, e) in lines {
+        if b.top <= y + b.line && y <= b.bottom {
+            let part = &text[s..((e + 1).max(s as isize) as usize).min(text.len())];
+            let w = text_width(glyphs, part, 1.0);
+            b.width = b.width.max(w);
+            if b.flags & text_box::MEASURE == 0 {
+                let x = if centred { b.x - (w >> 1) } else { b.x };
+                self::text(out, glyphs, slot, part, x as f32, y as f32, 1.0, colour);
+            }
+        }
+        y += b.line;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_box_wraps_at_spaces_and_line_breaks() {
+        let mut g = [Glyph::default(); 256];
+        for c in 0x20..0x80 { g[c] = Glyph { u: 0, v: 0, y: 0, advance: 10 }; }
+        // 8 characters a line at most (width < 80 before the 8th is added).
+        let text = b"aaa bbb ccc\x01\x01dd";
+        let (lines, _) = wrap(text, &g, 80, 0);
+        let s = |(a, e): (usize, isize)| String::from_utf8_lossy(&text[a..(e + 1).max(a as isize) as usize]).into_owned();
+        assert_eq!(lines.into_iter().map(s).collect::<Vec<_>>(), ["aaa bbb", "ccc", "", "dd"]);
+        let mut b = TextBox { top: 0, bottom: 416, left: 0, right: 80, x: 0, y: 10, line: 16, ..Default::default() };
+        let mut out = Vec::new();
+        text_in_box(&mut out, &g, 1, &mut b, text, [0x80; 4]);
+        assert_eq!((b.width, b.height), (70, 64));
+    }
 
     fn key(tx: f32, parent: Option<usize>) -> BoneKey { BoneKey { rotation: [0.0, 0.0, 0.0, 1.0], scale: [1.0; 3], translation: [tx, 0.0, 0.0], parent } }
 
