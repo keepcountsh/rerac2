@@ -29,10 +29,22 @@ pub enum PictureTable {
     HelpMoves,
     HelpWeapons,
     HelpGadgets,
+    /// The Help Controls page's two halves of the pad (`0x14c310` / `0x14c338`), by controller configuration.
+    ControlsLeft,
+    ControlsRight,
 }
 
 impl PictureTable {
-    pub const ALL: [PictureTable; 6] = [PictureTable::Gadgets, PictureTable::Weapons, PictureTable::Items, PictureTable::HelpMoves, PictureTable::HelpWeapons, PictureTable::HelpGadgets];
+    pub const ALL: [PictureTable; 8] = [
+        PictureTable::Gadgets,
+        PictureTable::Weapons,
+        PictureTable::Items,
+        PictureTable::HelpMoves,
+        PictureTable::HelpWeapons,
+        PictureTable::HelpGadgets,
+        PictureTable::ControlsLeft,
+        PictureTable::ControlsRight,
+    ];
 
     fn table(self) -> (usize, usize) {
         match self {
@@ -42,6 +54,8 @@ impl PictureTable {
             PictureTable::HelpMoves => (0xab8, 18),
             PictureTable::HelpWeapons => (0xb48, 45),
             PictureTable::HelpGadgets => (0xcb0, 12),
+            PictureTable::ControlsLeft => (0xa68, 5),
+            PictureTable::ControlsRight => (0xa90, 5),
         }
     }
 

@@ -1,5 +1,5 @@
-//! A pause page's item picture (`HUD.WAD`, [`super::toc::Toc::item_picture`]): a WAD stream that unpacks to an
-//! 8-bit indexed image as `0x306378` uploads it: the width at `+0x08`, the height at `+0x0c`, the 256-entry RGBA32
+//! A pause page's item picture (`HUD.WAD`, [`super::toc::Toc::item_picture`]): a WAD stream (the Controls pictures:
+//! stored as they are) of an 8-bit indexed image (`PIF2`) as `0x306378` uploads it: the width at `+0x08`, the height at `+0x0c`, the 256-entry RGBA32
 //! CLUT (CSM1 order) at `+0x20`, the indices at `+0x420`.
 
 use super::Picture;
@@ -9,9 +9,9 @@ use crate::texture::clut_index;
 const CLUT: usize = 0x20;
 const PIXELS: usize = 0x420;
 
-/// From the picture's WAD stream.
+/// From the picture's WAD stream or its bytes.
 pub fn parse(stream: &[u8]) -> Result<Picture> {
-    let d = crate::wad::decompress(stream)?;
+    let d = if crate::wad::is_wad(stream) { crate::wad::decompress(stream)? } else { stream.to_vec() };
     let b = Buf(&d);
     let (w, h) = (b.u32(8)?, b.u32(0xc)?);
     let n = w as usize * h as usize;

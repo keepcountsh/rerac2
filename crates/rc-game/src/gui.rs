@@ -33,8 +33,8 @@ pub enum Picture {
     Backdrop,
     /// The movie's current picture.
     Movie,
-    /// The pause page's item picture (the panel `0x3548f0`'s, 256 × 256).
-    Item,
+    /// The pause page's item pictures (the panel `0x3548f0`'s, 256 × 256): two slots.
+    Item(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

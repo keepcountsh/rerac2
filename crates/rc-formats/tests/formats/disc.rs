@@ -133,7 +133,7 @@ fn item_pictures_decode() {
         }
         n += 1;
     }
-    assert_eq!(n, 74 + 16 + 42 + 11);
+    assert_eq!(n, 74 + 16 + 42 + 11 + 10);
 }
 
 #[test]

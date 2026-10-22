@@ -220,6 +220,21 @@ mod moves {
     pub const DESCRIPTIONS: [u32; 15] = [0x2c15, 0x2c16, 0x2c17, 0x2c18, 0x2c19, 0x2c1a, 0x2c1b, 0x2c1c, 0x2c1d, 0x2c1e, 0x2c1f, 0x2c21, 0x2c20, 0x2c26, 0x2c25];
 }
 
+/// The Help Controls page (`0x286948`): the window (`0x34f580`: sprites 0x8b..0x8d at (256, 206), the first two at
+/// keyframe 0.9), "Controls", "△ Exit" (centred), and the pad's two halves (`0x355430`) for the controller
+/// configuration (`0x1a7bbc`, through `gp−0x31c0`).
+mod help_controls {
+    use crate::save::{SaveData, Scope};
+    pub const AT: [f32; 2] = [256.0, 206.0];
+    pub const SPRITES: [(u32, u32, f32); 3] = [(0x8b, 0x6044_2d00, 0.9), (0x8c, 0x55f0_c070, 0.9), (0x8d, 0x80ff_de8d, 0.0)];
+    pub const TITLE: (u32, [f32; 2]) = (0x2bf7, [0.0, -143.0]);
+    pub const EXIT_AT: [f32; 2] = [0.0, 128.0];
+    pub const PICTURES: [[f32; 4]; 2] = [[10.0, 105.0, 246.0, 181.0], [256.0, 105.0, 246.0, 181.0]];
+    const CONFIGS: [u16; 6] = [0, 0, 1, 2, 4, 3];
+
+    pub fn config(save: &SaveData) -> u16 { CONFIGS[(save.u8(Scope::Global, 0x1a7bbc) as usize).min(5)] }
+}
+
 /// The Help item list's state (`+0x14` the selected item, `+0x18` scrolling, `+0x1c` upwards, `+0x90` the offset).
 #[derive(Clone, Copy, Debug, Default)]
 struct HelpList {
@@ -882,6 +897,13 @@ impl Menus {
                 self.items_tick(pressed, &mut out);
                 self.description_tick(self.items_description(cx.tables, cx.save), items::DESCRIPTION[3], cx.held);
             }
+            Page::HelpTopic(HelpTopic::Controls) => {
+                if pressed & pad::TRIANGLE != 0 {
+                    self.back(&mut out);
+                } else if pressed & (pad::START | pad::SELECT) != 0 {
+                    self.close(&mut out);
+                }
+            }
             Page::HelpTopic(HelpTopic::Moves) => {
                 self.moves_tick(pressed, &mut out);
                 self.description_tick(moves::DESCRIPTIONS[self.moves_row], moves::DESCRIPTION[3], cx.held);
@@ -1236,9 +1258,18 @@ impl Menus {
         }
     }
 
+    /// The pictures the page shows: [`Menus::picture`], and the Controls page's second half.
+    pub fn pictures(&self, v: &View) -> [Option<(PictureTable, u16)>; 2] {
+        if self.page == Page::HelpTopic(HelpTopic::Controls) {
+            let c = help_controls::config(v.save);
+            return [Some((PictureTable::ControlsLeft, c)), Some((PictureTable::ControlsRight, c))];
+        }
+        [self.picture(v), None]
+    }
+
     /// The item picture the page shows (`0x347aa0`: the picture panel's row `gp−0x11c0`, set by the page's update): the
     /// selected item's when had (its record's `−0x0a`), on the Items page's counters the counter's (`0x1ae588`).
-    pub fn picture(&self, v: &View) -> Option<(PictureTable, u16)> {
+    fn picture(&self, v: &View) -> Option<(PictureTable, u16)> {
         let of = |item: i32| (0 < item && had(v.save, item)).then(|| record(v.tables, v.save, item)).flatten().and_then(|r| u16::try_from(r.picture).ok());
         let cell = |g: Grid, k: usize| v.tables.grid(g).get(k).map_or(0, |c| c.item as i32);
         match self.page {
@@ -1270,12 +1301,7 @@ impl Menus {
 
     /// The picture panel's box on the page (`0x354f70`, the page's rect: Weapons 10, Gadgets and Items 4), drawn
     /// when the engine has the page's picture (`0x347aa0` keeps the panel hidden until it is loaded).
-    fn draw_picture(&self, out: &mut Vec<Quad>, v: &View, [x, y, w, h]: [f32; 4]) {
-        let Some(p) = self.picture(v) else { return };
-        if v.picture != Some(p) { return; }
-        let th = p.0.height() as f32;
-        out.push(Quad { pos: [[x, y], [x + w, y], [x, y + h], [x + w, y + h]], uv: [[0.0, 0.0], [256.0, 0.0], [0.0, th], [256.0, th]], tex: Tex::Picture(gui::Picture::Item), rgba: [0x80; 4] });
-    }
+    fn draw_picture(&self, out: &mut Vec<Quad>, v: &View, rect: [f32; 4]) { draw_slot(out, v, 0, self.pictures(v)[0], rect); }
 
     /// The Items page's selected cell's item (`+0x4b4`); in the counters, the counter.
     fn items_current(&self, tables: &MenuTables) -> i32 {
@@ -1353,6 +1379,7 @@ impl Menus {
                     (self.moves_row, self.moves_scroll) = (0, 0);
                     self.go(Page::HelpTopic(HelpTopic::Moves), out);
                 }
+                HelpTopic::Controls => self.go(Page::HelpTopic(HelpTopic::Controls), out),
                 _ => out.push(Out::Sound(5)),
             }
         }
@@ -1879,6 +1906,7 @@ impl Menus {
             Page::PauseOptions => return self.draw_pause_options(out, a, icon),
             Page::Help => return self.draw_help(out, a, icon),
             Page::HelpTopic(HelpTopic::Moves) => return self.draw_moves(out, a, v),
+            Page::HelpTopic(HelpTopic::Controls) => return self.draw_help_controls(out, a, v),
             Page::HelpTopic(t) => return self.draw_help_items(out, a, v, icon, t),
             Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
             Page::Weapons => return self.draw_weapons(out, a, v, icon),
@@ -2201,6 +2229,21 @@ impl Menus {
         self.draw_list(out, a, icon, list::HELP_TEXT, 0.0, list::HELP_ICON, &rows, self.help_row);
     }
 
+    /// The Help Controls page (see [`help_controls`]).
+    fn draw_help_controls(&self, out: &mut Vec<Quad>, a: &Assets, v: &View) {
+        use help_controls::*;
+        for (id, c, k) in SPRITES {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, AT, k, [1.0, 1.0], gui::rgba(c)); }
+        }
+        for (t, [x, y]) in [(TITLE.0, TITLE.1), (options::EXIT_TEXT, EXIT_AT)] {
+            let t = a.strings.get(t);
+            let w = gui::text_width(&a.glyphs, t, 1.0);
+            gui::text(out, &a.glyphs, 1, t, AT[0] + x - (w >> 1) as f32, AT[1] + y, 1.0, gui::rgba(0x80f0_f0f0));
+        }
+        let want = self.pictures(v);
+        for (k, rect) in PICTURES.into_iter().enumerate() { draw_slot(out, v, k, want[k], rect); }
+    }
+
     /// The Moves page (see [`moves`]).
     fn draw_moves(&self, out: &mut Vec<Quad>, a: &Assets, v: &View) {
         use moves::*;
@@ -2506,6 +2549,14 @@ fn record<'a>(tables: &'a MenuTables, save: &SaveData, item: i32) -> Option<&'a 
     tables.items.get(if row == 0 { i as usize } else { row as usize })
 }
 
+/// Picture slot `slot` in `rect` when the engine has `want` there.
+fn draw_slot(out: &mut Vec<Quad>, v: &View, slot: usize, want: Option<(PictureTable, u16)>, [x, y, w, h]: [f32; 4]) {
+    let Some(p) = want else { return };
+    if v.pictures[slot] != Some(p) { return; }
+    let th = p.0.height() as f32;
+    out.push(Quad { pos: [[x, y], [x + w, y], [x, y + h], [x + w, y + h]], uv: [[0.0, 0.0], [256.0, 0.0], [0.0, th], [256.0, th]], tex: Tex::Picture(gui::Picture::Item(slot as u8)), rgba: [0x80; 4] });
+}
+
 /// A Help item page's items: its grid walked (`0x34dcd8`: the Weapons grid; `0x34dd58`: the hand items), those had.
 fn help_items_of(t: HelpTopic, tables: &MenuTables, save: &SaveData) -> Vec<i32> {
     let g = if t == HelpTopic::Gadgets { Grid::Hand } else { Grid::Weapons };
@@ -2536,8 +2587,8 @@ pub struct View<'a> {
     pub port: &'a PortValues,
     pub option_rows: &'a [OptionRow],
     pub tables: &'a MenuTables,
-    /// The item picture in [`gui::Picture::Item`] now ([`Menus::picture`]'s, once the engine has it).
-    pub picture: Option<(PictureTable, u16)>,
+    /// The item pictures in [`gui::Picture::Item`]'s slots now ([`Menus::pictures`]', once the engine has them).
+    pub pictures: [Option<(PictureTable, u16)>; 2],
 }
 
 /// A toggle page's state: 16:9 is the port's aspect being wide; the others their option byte.
