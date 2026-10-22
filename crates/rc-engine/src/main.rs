@@ -49,6 +49,7 @@ mod render_settings;
 mod gs_post;
 mod front_end;
 mod card;
+mod port_options;
 mod level_wad;
 mod mobys;
 mod play;

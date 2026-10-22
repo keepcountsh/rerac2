@@ -27,7 +27,7 @@ use crate::hud_render::{self, Hud2d, HudComposite, HudMaterial, Layer, Tex};
 use anyhow::{Context, Result};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
-use rc_formats::disc::boot::{BootElf, GLYPHS, GLYPHS_2, MAIN_MENU};
+use rc_formats::disc::boot::{BootElf, GLYPHS, GLYPHS_2, MAIN_MENU, OPTIONS_MENU};
 use rc_formats::disc::front_end::FrontEnd as Blob;
 use rc_formats::disc::toc::{self, Toc, MISC_FRONT_END, MOVIE_FILES};
 use rc_formats::disc::{gui_sprite, Picture};
@@ -53,6 +53,8 @@ pub struct Data {
     movie_files: Vec<u64>,
     /// The pages' GUI images (`(icon, frame)` → layer texture and texel size), from the level's HUD registry.
     icons: std::collections::HashMap<(u16, u16), (usize, [f32; 2])>,
+    /// The Options page's rows.
+    option_rows: Vec<menus::OptionRow>,
 }
 
 impl Data {
@@ -73,7 +75,7 @@ impl Data {
         let sprites = gui_sprite::parse(hud.get(block.bytes()).context("HUD.WAD: the GUI block is past the file")?)?;
         let elf = read("SCUS_972.68")?;
         let boot = BootElf::parse(&elf)?;
-        let assets = FrontAssets { glyphs: boot.glyphs(GLYPHS)?, glyphs_2: boot.glyphs(GLYPHS_2)?, strings: blob.strings(0)?, main_menu: boot.menu(MAIN_MENU)?, sprites };
+        let assets = FrontAssets { glyphs: boot.glyphs(GLYPHS)?, glyphs_2: boot.glyphs(GLYPHS_2)?, strings: blob.strings(0)?, main_menu: boot.menu(MAIN_MENU)?, options_menu: boot.menu(OPTIONS_MENU)?, sprites };
         // The frame buffer's pictures are opaque; the texture set keeps its own alpha.
         let opaque = |p: Picture| { let mut rgba = p.rgba; rgba.chunks_mut(4).for_each(|c| c[3] = 0x80); Texture { width: p.width, height: p.height, rgba } };
         let mut textures: Vec<Texture> = blob.textures()?.into_iter().map(|p| Texture { width: p.width, height: p.height, rgba: p.rgba }).collect();
@@ -86,7 +88,8 @@ impl Data {
         let mut icons = std::collections::HashMap::new();
         match crate::level_wad::hud(root, crate::level_load::level_index()) {
             Ok(h) => {
-                for (id, f) in [(menus::ICON_SLOT, 2), (menus::ICON_SLOT, 3), (menus::ICON_SLOT, 4), (menus::ICON_BOLT, 0), (menus::ICON_PICTURE, 0)] {
+                let options = [(0xeaa6, 1), (0xeaa6, 2), (0xeaa6, 3), (0xea9e, 6)];
+                for (id, f) in [(menus::ICON_SLOT, 2), (menus::ICON_SLOT, 3), (menus::ICON_SLOT, 4), (menus::ICON_BOLT, 0), (menus::ICON_PICTURE, 0)].into_iter().chain(options) {
                     if !h.has_icon(id) { continue; }
                     if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {
                         icons.insert((id, f), (textures.len(), [t.width as f32, t.height as f32]));
@@ -102,7 +105,8 @@ impl Data {
             assets.strings.0.len(), assets.sprites.len(),
             assets.main_menu.iter().map(|r| String::from_utf8_lossy(assets.strings.get(r.text)).into_owned()).collect::<Vec<_>>()
         );
-        Ok(Data { root: root.to_path_buf(), assets, textures, movies, movie_files, icons })
+        let option_rows = menus::option_rows(&assets.options_menu);
+        Ok(Data { root: root.to_path_buf(), assets, textures, movies, movie_files, icons, option_rows })
     }
 }
 
@@ -245,6 +249,8 @@ pub(crate) struct FrontEndState {
     layer: Option<Layer>,
     /// A loaded save's level, loading (crate::level_switch) while the front end stays up.
     level: Option<u32>,
+    /// The Port Options rows' values (crate::port_options).
+    port: menus::port::PortValues,
 }
 
 impl FrontEndState {
@@ -291,6 +297,7 @@ impl Plugin for FrontEndPlugin {
             trace: std::env::var("RC_FRONT_END_TRACE").is_ok_and(|v| v.trim() == "1"),
             layer: None,
             level: None,
+            port: Default::default(),
         })
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, tick.after(crate::card::CardStep))
@@ -331,9 +338,12 @@ fn tick(
     mut card: Option<ResMut<crate::card::Card>>,
     mut change: ResMut<crate::level_switch::LevelChange>,
     mut commands: Commands,
+    mut gfx: ResMut<crate::graphics::GraphicsSettings>,
+    mut display: ResMut<crate::display::DisplaySettings>,
 ) {
     let r = &mut *fe;
     if r.done { return; }
+    r.port = crate::port_options::values(&gfx, &display);
     // A loaded save's level: loading, then swapped in; the game starts on it.
     if let Some(level) = r.level {
         if crate::level_load::level_index() == level {
@@ -349,7 +359,7 @@ fn tick(
     };
     let ended = std::mem::take(&mut r.movie_ended);
     let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
-    let mut cx = card.as_deref_mut().map(|c| menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock });
+    let mut cx = card.as_deref_mut().map(|c| menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut r.port, option_rows: &r.data.option_rows });
     for req in r.front.tick(held, ended, &r.data.assets, cx.as_mut()) {
         match req {
             Request::Sound(n) => if r.trace { println!("front end: frame {}: sound {n} (not played)", r.ticks) },
@@ -372,6 +382,7 @@ fn tick(
                     _ => r.done = true,
                 }
             }
+            Request::Port(s, v) => crate::port_options::apply(s, v, &mut gfx, &mut display),
             Request::Row { kind, target } => println!("front end: main menu row (kind {kind}, target {target:#x}): not in this version yet"),
         }
     }
@@ -432,7 +443,10 @@ fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut me
     let icons = &r.data.icons;
     let icon = |id: u16, f: u16| icons.get(&(id, f)).map(|&(i, s)| (gui::Tex::Slot(i), s));
     // A loaded save's level loading: black.
-    let quads = if r.level.is_some() { let mut q = Vec::new(); gui::fill(&mut q, [0, 0, 0, 0x80]); q } else { r.front.draw(&r.data.assets, card.as_deref().map(|c| &c.mc), &icon) };
+    let quads = if r.level.is_some() { let mut q = Vec::new(); gui::fill(&mut q, [0, 0, 0, 0x80]); q } else { {
+        let view = card.as_deref().map(|c| menus::View { card: &c.mc, save: &c.save, port: &r.port, option_rows: &r.data.option_rows });
+        r.front.draw(&r.data.assets, view.as_ref(), &icon)
+    } };
     for q in quads {
         let (tex, nearest) = match q.tex {
             gui::Tex::None => (Tex::None, false),

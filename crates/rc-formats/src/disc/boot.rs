@@ -10,6 +10,8 @@ pub const GLYPHS: u32 = 0x263b10;
 pub const GLYPHS_2: u32 = 0x263eb0;
 /// The main menu's definition (`FUN_002d63b0` → `FUN_00342dc0(gui, 0x261520)`).
 pub const MAIN_MENU: u32 = 0x261520;
+/// The front end's Options page rows (`0x2d6508`).
+pub const OPTIONS_MENU: u32 = 0x261570;
 
 pub struct BootElf<'a> {
     elf: &'a [u8],

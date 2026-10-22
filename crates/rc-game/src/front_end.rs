@@ -21,7 +21,6 @@
 //! given the card ([`FrontEnd::tick`]'s context).
 
 use crate::gui::{self, Picture, Quad, Tex};
-use crate::memcard::MemCard;
 use crate::menus::{self, Menus};
 use rc_formats::disc::boot::{Glyph, MenuRow};
 use rc_formats::disc::gui_sprite::Sprite;
@@ -54,6 +53,8 @@ pub struct Assets {
     pub glyphs_2: [Glyph; 256],
     pub strings: Strings,
     pub main_menu: Vec<MenuRow>,
+    /// The Options page's rows (`0x261570`).
+    pub options_menu: Vec<MenuRow>,
     pub sprites: HashMap<u32, Sprite>,
 }
 
@@ -68,6 +69,8 @@ pub enum Request {
     NewGame,
     /// A save was loaded (the card's save data): the game goes to `level`.
     Load { level: i32 },
+    /// A port setting changed (Port Options, or the 16:9 toggle).
+    Port(menus::port::Setting, u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,6 +222,7 @@ impl FrontEnd {
                             }
                             menus::Out::NewGame => req.push(Request::NewGame),
                             menus::Out::Loaded { level } => req.push(Request::Load { level }),
+                            menus::Out::Port(s, v) => req.push(Request::Port(s, v)),
                         }
                     }
                 }
@@ -238,6 +242,7 @@ impl FrontEnd {
                         let opened = match (r.kind, cx) {
                             (4, Some(cx)) => Some(Menus::new_game(cx.card, self.slot)),
                             (5, Some(cx)) => Some(Menus::load_game(cx.card, self.slot)),
+                            (3, Some(_)) => Some(Menus::options()),
                             _ => None,
                         };
                         match opened {
@@ -266,7 +271,7 @@ impl FrontEnd {
     }
 
     /// The frame's 2D draws; `card` and `icon(id, frame)` (a GUI image's texture and texel size) for the pages.
-    pub fn draw(&self, a: &Assets, card: Option<&MemCard>, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) -> Vec<Quad> {
+    pub fn draw(&self, a: &Assets, view: Option<&menus::View>, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) -> Vec<Quad> {
         let mut out = Vec::new();
         match self.phase {
             Phase::Splash { i, k } => {
@@ -297,10 +302,10 @@ impl FrontEnd {
             Phase::Menu { sub } => {
                 gui::picture(&mut out, Picture::Backdrop);
                 gui::fill(&mut out, [0, 0, 0, 0x38]);
-                match (&self.menus, card) {
-                    (Some(m), Some(card)) => {
+                match (&self.menus, view) {
+                    (Some(m), Some(v)) => {
                         if m.over_main_menu() { self.draw_menu(a, &mut out); }
-                        out.extend(m.draw(a, card, icon));
+                        out.extend(m.draw(a, v, icon));
                     }
                     _ => if sub == 4 { self.draw_menu(a, &mut out); },
                 }
@@ -346,7 +351,7 @@ mod tests {
 
     fn assets() -> Assets {
         let row = |text| MenuRow { scale: 1.0, text, kind: 4, target: 0 };
-        Assets { glyphs: [Glyph::default(); 256], glyphs_2: [Glyph::default(); 256], strings: Strings::default(), main_menu: vec![row(1), row(2), row(3)], sprites: HashMap::new() }
+        Assets { glyphs: [Glyph::default(); 256], glyphs_2: [Glyph::default(); 256], strings: Strings::default(), main_menu: vec![row(1), row(2), row(3)], options_menu: Vec::new(), sprites: HashMap::new() }
     }
 
     /// Runs until the front end asks for a movie; returns the frames it took.

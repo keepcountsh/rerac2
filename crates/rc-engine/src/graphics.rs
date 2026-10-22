@@ -205,6 +205,15 @@ impl GraphicsSettings {
         [Preset::Original, Preset::Enhanced].into_iter().find(|&p| self.with_preset(p) == *self).unwrap_or(Preset::Custom)
     }
 
+    /// Writes the options into the port settings file.
+    pub fn save(&self) {
+        fn put<T: GfxOption>(v: T) { crate::render_settings::save_key(T::KEY, v.key()); }
+        put(self.aa);
+        put(self.hud);
+        put(self.textures);
+        put(self.detail);
+    }
+
     /// The settings file's values, then the `RC_GFX_*` switches over them.
     pub fn startup() -> Self {
         let mut s = GraphicsSettings::default();
