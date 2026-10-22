@@ -244,8 +244,11 @@ pub fn carry_hero(ctx: &mut Ctx, id: usize, old: V3, old_yaw: f32, new: V3, yaw:
     let dy = crate::hero::physics::sub_rot(yaw, old_yaw);
     let (s, c) = dy.sin_cos();
     let r = [h.pos[0] - old[0], h.pos[1] - old[1]];
+    let was = h.pos;
     h.pos = [new[0] + r[0] * c - r[1] * s, new[1] + r[0] * s + r[1] * c, h.pos[2] + new[2] - old[2]];
     h.rot[2] = crate::hero::physics::add_rot(h.rot[2], dy);
+    h.carry = crate::hero::physics::add(h.carry, crate::hero::physics::sub(h.pos, was));
+    h.carry_yaw = crate::hero::physics::add_rot(h.carry_yaw, dy);
 }
 
 /// `0x2eeab0` / `0x2eeae0`: a countdown — 1 down (not below 0); true when it was 0 already or just reached it.

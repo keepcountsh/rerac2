@@ -128,6 +128,8 @@ pub struct CamInput<'a> {
     /// The level (`0x1a79f8`) and L2 / R2 held (`0x138320 & 3`, the strafe's camera).
     pub level: i32,
     pub strafe_held: bool,
+    /// The moby under Ratchet's feet (`0x18a15c`): its index, class and height (the carry follows its rise).
+    pub ground: Option<(usize, i16, f32)>,
 }
 
 /// One camera-tweak request (`0x1bb970 + 0x40·i`, `0x2d7468`): −1 / 0 leave a field alone.
@@ -296,6 +298,11 @@ pub struct FollowCamera {
     yaw_off_v: f32,
     yaw_accel: f32,
     yaw_brake: f32,
+    /// D+0x158 / +0x15c: the moby under Ratchet the carry follows and its height last tick; `0x1b9004`: the camera's
+    /// updates (the carry's yaw waits 31 of them on class 0x22d).
+    plat_moby: Option<usize>,
+    plat_z: f32,
+    ticks: u32,
     /// D+0x240: the level camera driving this one through its setters (the slot; `0x425e88` / `0x425e50`).
     owner: Option<usize>,
     /// D+0x34 / +0x38 / +0x3c / +0x40: the pitch bias, its velocity and spring.
@@ -527,6 +534,7 @@ impl FollowCamera {
     /// One camera update (`0x2d9f38` with the follow camera current): the flags, the motion pre-step, the type-0
     /// update `0x4278c8`.
     pub fn update(&mut self, inp: &CamInput, tweaks: &mut CamTweaks) {
+        self.ticks += 1;
         self.pre_flags(inp);
         self.pre_motion(inp);
         self.platform_carry(inp);
@@ -581,10 +589,29 @@ impl FollowCamera {
         self.yaw_hist[4] = h.rot[2];
     }
 
-    /// `0x421dc8`: the platform displacement under the hero moves the camera's points with him (none: the hero has no
-    /// platforms yet); the rigid follow of the slide states 0xb / 0xc.
+    /// `0x421dc8`: the tick's platform carry (`0x189f70`) moves the camera's points with Ratchet — the vertical target
+    /// along the up only, the height by the moby under him when it rose more (D+0x158 / +0x15c; not on a magnetic
+    /// walkway) — and turns the yaw by the carry's turn (D+0x1e0; class 0x22d after 31 updates); the rigid follow of
+    /// the slide states 0xb / 0xc. Not ported: the camera's own shift `0x1b8fc0` (nothing sets it on Aranos).
     fn platform_carry(&mut self, inp: &CamInput) {
         let h = inp.hero;
+        let mut d = h.carry;
+        let magnet = h.surf.boots != 0;
+        match inp.ground {
+            Some((id, _, z)) if !magnet => {
+                if self.plat_moby == Some(id) {
+                    let rise = z - self.plat_z;
+                    if 0.0 < rise && d[2] < rise { d[2] = rise; }
+                } else {
+                    self.plat_moby = Some(id);
+                }
+                self.plat_z = z;
+            }
+            _ => self.plat_moby = None,
+        }
+        for p in [&mut self.pos, &mut self.smooth, &mut self.target, &mut self.look_s, &mut self.raise_b, &mut self.desired] { *p = add(*p, d); }
+        self.vtarget = add(self.vtarget, scale(self.up2, dot(d, self.up2)));
+        if !magnet && !(inp.ground.is_some_and(|g| g.1 == 0x22d) && self.ticks < 0x1f) { self.plat_yaw = h.carry_yaw; }
         if h.state == 0xb || h.state == 0xc {
             self.leash = 0;
             let s = scale(self.move_dir, self.h_speed);

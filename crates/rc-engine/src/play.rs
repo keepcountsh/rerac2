@@ -403,6 +403,8 @@ fn tick(
         let sound = audio.as_deref_mut().map(|o| crate::mobys::HostSound { system: o.system(), listener: listener(&p.camera), tick: p.ticks, loops: &mut mobys.loop_slots });
         let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound };
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+        // The movers' carry of this tick starts from nothing (`0x189f70`).
+        (p.hero.carry, p.hero.carry_yaw) = ([0.0; 3], 0.0);
         let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
@@ -564,6 +566,7 @@ fn tick(
         (inp.scene, inp.hero_moby) = (scene.as_ref(), mobys.hero_moby);
         inp.level = p.game.level;
         inp.strafe_held = p.pad.held & (rc_game::pad::button::L2 | rc_game::pad::button::R2) != 0;
+        inp.ground = p.hero.ground_moby.and_then(|i| mobys.world.mobys.get(i).map(|m| (i, m.o_class, m.pos[2])));
         // The Camera page's options (rc_game::menus::opt, in the card's save data).
         if let Some(c) = card.as_deref() {
             use rc_game::menus::opt;
@@ -1427,7 +1430,7 @@ fn listener(c: &FollowCamera) -> rc_game::audio::voices::Listener {
 
 /// The camera's inputs: the options' yaw and pitch normal (`0x1a7bb0` / `0x1a7bac`, the defaults).
 fn cam_input<'a>(hero: &'a Hero, coll: Option<&'a rc_formats::collision::Collision>, rstick: [f32; 2]) -> CamInput<'a> {
-    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, speed: 0, scene: None, hero_moby: None, level: 0, strafe_held: false }
+    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, speed: 0, scene: None, hero_moby: None, level: 0, strafe_held: false, ground: None }
 }
 
 fn camera_view(c: &FollowCamera) -> CameraView {
