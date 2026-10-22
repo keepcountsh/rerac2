@@ -152,7 +152,7 @@ fn apply_switch(world: &mut World) {
         if let Some(mut out) = world.get_resource_mut::<crate::audio_out::AudioOut>() { out.swap_level(data); }
     }
     let bg = level.background;
-    world.insert_resource(crate::game_camera::GameFog::new(level.fog, rc_game::fog_zones::PARTICLE_FAR12));
+    world.insert_resource(crate::game_camera::GameFog::new(level.fog, crate::game_camera::PARTICLE_FAR12));
     world.insert_resource(ClearColor(Color::srgb_u8(bg[0], bg[1], bg[2])));
     world.insert_resource(crate::Level(level));
     world.resource_mut::<LevelGeneration>().0 += 1;

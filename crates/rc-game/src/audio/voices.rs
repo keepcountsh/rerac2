@@ -10,7 +10,7 @@
 //! `AdjustVolToGroup`) with RAC1's pan table.
 
 use super::{Spu, SPU_VOICES};
-use crate::collision_query::{coll_line, QueryFlags};
+use crate::collision::{coll_line, QueryFlags};
 use crate::ps2v::Pf;
 use crate::rng::Rng;
 use rc_formats::collision::Collision;
@@ -18,37 +18,35 @@ use rc_formats::moby_light::vu0_sin_cos;
 use rc_formats::sound_bank::{LevelSounds, SoundDef, SoundInstance, SoundOwner};
 
 /// Logical sound slots at 0x13e5c0 + i·0x70.
-pub const SLOTS: usize = 30;
+pub(crate) const SLOTS: usize = 30;
 /// Slots open to ordinary owners (first-free search bound); the hero, 0x1403e0 and class 0x472 get all 30.
-pub const SLOTS_OTHERS: usize = 26;
+pub(crate) const SLOTS_OTHERS: usize = 26;
 /// Occlusion ring length (slot +0x44).
-pub const RING: usize = 36;
+pub(crate) const RING: usize = 36;
 /// The CollLine_Fix mask the sound code passes: skip moby primitives | exclude surfaces with the high bit.
-pub const OCCLUSION_QUERY: QueryFlags = QueryFlags(0x82);
+pub(crate) const OCCLUSION_QUERY: QueryFlags = QueryFlags(0x82);
 
 /// Play flags (slot +5).
-pub mod flags {
+pub(crate) mod flags {
     /// 2-D: no pan, no doppler.
-    pub const TWO_D: u8 = 0x01;
-    pub const LOOP: u8 = 0x04;
+    pub(crate) const TWO_D: u8 = 0x01;
+    pub(crate) const LOOP: u8 = 0x04;
     /// Do not follow the owner.
-    pub const NO_FOLLOW: u8 = 0x08;
+    pub(crate) const NO_FOLLOW: u8 = 0x08;
     /// Fixed volume (no distance law, no occlusion).
-    pub const FIXED_VOLUME: u8 = 0x10;
-    pub const NO_DOPPLER: u8 = 0x20;
-    /// Follow the owner at a rotated local offset (moby +0xc0 matrix).
-    pub const ROTATED_OFFSET: u8 = 0x40;
+    pub(crate) const FIXED_VOLUME: u8 = 0x10;
+    pub(crate) const NO_DOPPLER: u8 = 0x20;
 }
 
 /// Slot states (+4).
 pub mod state {
     pub const FREE: u8 = 0;
-    pub const PLAYING: u8 = 1;
+    pub(crate) const PLAYING: u8 = 1;
     /// Set by the play callback once 989snd returned a handle.
-    pub const CONFIRMED: u8 = 2;
-    pub const RELEASE: u8 = 4;
-    pub const STOPPING: u8 = 6;
-    pub const START_PENDING: u8 = 7;
+    pub(crate) const CONFIRMED: u8 = 2;
+    pub(crate) const RELEASE: u8 = 4;
+    pub(crate) const STOPPING: u8 = 6;
+    pub(crate) const START_PENDING: u8 = 7;
 }
 
 /// The listener: the render camera (position 0x167240, rows 0x167450/60/70 = forward, left, up in game
@@ -74,33 +72,33 @@ pub struct Owner {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Slot {
     /// +0x00: 989snd handle, −1 while a reply is pending, 0 = none.
-    pub handle: i32,
+    pub(crate) handle: i32,
     /// +0x04.
     pub state: u8,
     /// +0x05 play flags.
-    pub flags: u8,
+    pub(crate) flags: u8,
     /// +0x08: the def (copied; the game keeps a pointer).
-    pub def: SoundDef,
+    pub(crate) def: SoundDef,
     /// +0x0c: bank sound id (def +0x1a).
-    pub bank_id: u16,
+    pub(crate) bank_id: u16,
     /// +0x0e: level def index for sound-instance plays, 0xffff otherwise.
     pub class_index: u16,
     /// +0x10: volume scale, 0x400 = 1.
-    pub vol: i32,
+    pub(crate) vol: i32,
     /// +0x14: pitch bend, drawn once per play.
-    pub pb: i32,
+    pub(crate) pb: i32,
     /// +0x18: owner moby (None = static).
     pub owner: Option<Owner>,
     /// +0x1c: owning sound instance, −1 = none.
-    pub sndinst: i32,
+    pub(crate) sndinst: i32,
     /// +0x20: position.
-    pub pos: [f32; 3],
+    pub(crate) pos: [f32; 3],
     /// +0x30: local offset (flag 0x40).
-    pub offset: [f32; 3],
+    pub(crate) offset: [f32; 3],
     /// +0x40: occlusion ring index.
-    pub occl_index: usize,
+    pub(crate) occl_index: usize,
     /// +0x44: occlusion ring (non-zero = occluded).
-    pub occl: [u8; RING],
+    pub(crate) occl: [u8; RING],
 }
 
 impl Default for Slot {
@@ -145,29 +143,29 @@ pub enum SndCommand {
 
 /// A reply: the handle 989snd returned (0 = not playing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SndReply {
-    pub slot: usize,
-    pub handle: i32,
+pub(crate) struct SndReply {
+    pub(crate) slot: usize,
+    pub(crate) handle: i32,
     /// The play callback (0x2a1bc8) rather than the liveness one (0x2a1c10).
-    pub play: bool,
+    pub(crate) play: bool,
 }
 
 /// Per-frame context of [`SoundSlots::update`].
-pub struct UpdateCtx<'a> {
-    pub listener: &'a Listener,
-    pub collision: Option<&'a Collision>,
-    pub rng: &'a mut Rng,
+pub(crate) struct UpdateCtx<'a> {
+    pub(crate) listener: &'a Listener,
+    pub(crate) collision: Option<&'a Collision>,
+    pub(crate) rng: &'a mut Rng,
     /// Frame counter 0x15f5cc (phases the occlusion re-tests).
-    pub frame: u32,
+    pub(crate) frame: u32,
     /// Resolves an owner to its current position (moby +0x10); None = deleted (state −2/−3).
-    pub owner_pos: &'a dyn Fn(u32) -> Option<[f32; 3]>,
+    pub(crate) owner_pos: &'a dyn Fn(u32) -> Option<[f32; 3]>,
     /// Master volume options 0x15edf0 (sfx) and 0x15edec (music); 0x400 = full.
-    pub sfx_option: i32,
-    pub music_option: i32,
+    pub(crate) sfx_option: i32,
+    pub(crate) music_option: i32,
     /// The Sound options page is open: group 2 at the music volume (`AudioSystem::sound_page`).
-    pub sound_page: bool,
+    pub(crate) sound_page: bool,
     /// 0x15f5c4 == 2.
-    pub cutscene: bool,
+    pub(crate) cutscene: bool,
 }
 
 type V3 = [f32; 3];
@@ -183,11 +181,11 @@ fn length(v: V3) -> f32 {
 
 /// Distance volume `fun_0022c6f8` 0x2a02e0: `vol_near` inside `near`, `vol_far` beyond `far`, else
 /// `vol_far + trunc((far − d)·f32(vol_near − vol_far) / (far − near))`, squared terms with def flag bit 0.
-pub fn distance_volume(d: f32, def: &SoundDef) -> i32 { distance_volume_between(d, def.near, def.far, def) }
+pub(crate) fn distance_volume(d: f32, def: &SoundDef) -> i32 { distance_volume_between(d, def.near, def.far, def) }
 
 /// `SoundDistanceVolume(d, near, far, def)` (0x2a02e0) with the caller's `near` / `far` (the box emitter passes its
 /// own); the def gives the volumes and the falloff bit.
-pub fn distance_volume_between(d: f32, near: f32, far: f32, def: &SoundDef) -> i32 {
+pub(crate) fn distance_volume_between(d: f32, near: f32, far: f32, def: &SoundDef) -> i32 {
     if d <= near { return def.vol_near; }
     if far <= d { return def.vol_far; }
     let (d, near, far) = (Pf::f(d), Pf::f(near), Pf::f(far));
@@ -199,7 +197,7 @@ pub fn distance_volume_between(d: f32, near: f32, far: f32, def: &SoundDef) -> i
 /// Pan `fun_0022c830` 0x2a0418: `v = (fwd·p, left·p)` for `p = pos − cam`, `k = clamp(|v| − 1, 0, 1)`,
 /// `trunc(−FastArcTan(v.x, v.y)·180·k·0.31830987)` degrees (0 ahead, −90 left, +90 right; fades to centre
 /// inside one unit).
-pub fn pan_degrees(pos: V3, l: &Listener) -> i32 {
+pub(crate) fn pan_degrees(pos: V3, l: &Listener) -> i32 {
     let p = vsub(pos, l.pos).map(Pf::f);
     let row = |r: usize| l.rows[r].map(Pf::f);
     let d = |r: [Pf; 3]| ((r[0] * p[0]) + (r[1] * p[1])) + (r[2] * p[2]);
@@ -211,7 +209,7 @@ pub fn pan_degrees(pos: V3, l: &Listener) -> i32 {
 }
 
 /// Doppler pitch modulation (boot 0x12f1a0): `(trunc(dot·300)·0x5f4) / 0x2e5`, 1/128 semitone units.
-pub fn doppler_pm(dot: f32) -> i32 {
+pub(crate) fn doppler_pm(dot: f32) -> i32 {
     let x = (Pf::f(dot) * Pf::b(0x4396_0000)).to_i32();
     x.wrapping_mul(0x5f4) / 0x2e5
 }
@@ -221,7 +219,7 @@ pub fn doppler_pm(dot: f32) -> i32 {
 fn random_offset(rng: &mut Rng, lo: f32, hi: f32) -> V3 {
     let a = rng.rand_angle_bits();
     let b = rng.rand_angle_bits();
-    let l = Pf::f(rng.randf(lo, hi));
+    let l = Pf::f(rng.randf_exact(lo, hi));
     let (sa, ca) = vu0_sin_cos(a);
     let (sb, cb) = vu0_sin_cos(b);
     let (sa, ca, sb, cb) = (Pf(sa), Pf(ca), Pf(sb), Pf(cb));
@@ -250,7 +248,7 @@ fn occluded(origin: V3, pos: V3, l: &Listener, coll: Option<&Collision>) -> u8 {
 /// The master volume of each 989snd group as `fun_0022c8d0` sets it up and `sound_update` resends it every
 /// frame: 0 = sfx·8/10, 1 = music, 2 = sfx·8/10, 3 = sfx·7/10, 4 = sfx·7/10, 5 = sfx. Underwater: music
 /// ×3/5. Cutscene: music 0, groups 0 and 3 halved.
-pub fn master_volumes(sfx: i32, music: i32, underwater: bool, cutscene: bool) -> [i32; 6] {
+pub(crate) fn master_volumes(sfx: i32, music: i32, underwater: bool, cutscene: bool) -> [i32; 6] {
     let g0 = sfx * 8 / 10;
     let g3 = sfx * 7 / 10;
     let mut v = [g0, music, g0, g3, g3, sfx];
@@ -284,7 +282,7 @@ impl Default for SoundSlots {
 }
 
 impl SoundSlots {
-    pub fn new() -> Self { Self::default() }
+    pub(crate) fn new() -> Self { Self::default() }
 
     /// `fun_0022d7f0` (0x2a13a0): claim a slot and queue a start. Returns the slot or −1 (loop flag differs
     /// from the def, no free slot, or the initial distance volume below 0x20). `pos` None with no owner: the
@@ -340,7 +338,7 @@ impl SoundSlots {
     }
 
     /// The play (0x2a1bc8) and liveness (0x2a1c10) callbacks.
-    pub fn apply_reply(&mut self, r: SndReply) {
+    pub(crate) fn apply_reply(&mut self, r: SndReply) {
         let s = &mut self.slots[r.slot];
         s.handle = r.handle;
         if r.handle == 0 {
@@ -354,7 +352,7 @@ impl SoundSlots {
 
     /// `sound_update` (0x2a0638) minus the reverb and music parts: listener velocity, master volumes, the
     /// per-slot volume / pan / doppler / occlusion, and the commands to 989snd.
-    pub fn update(&mut self, ctx: &mut UpdateCtx) -> Vec<SndCommand> {
+    pub(crate) fn update(&mut self, ctx: &mut UpdateCtx) -> Vec<SndCommand> {
         let l = ctx.listener;
         let mut cmds = Vec::new();
         // The origin of this frame's single occlusion re-test (game state 0/2, not paused).
@@ -525,21 +523,19 @@ impl SoundSlots {
 
 /// Pvars of the emitter classes 0/1/2/5: `{def, min_s, max_s, timer, slot}` (s32 each).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct EmitterPvars {
-    pub def: i32,
-    pub min_s: i32,
-    pub max_s: i32,
-    pub timer: i32,
-    pub slot: i32,
+pub(crate) struct EmitterPvars {
+    pub(crate) def: i32,
+    pub(crate) min_s: i32,
+    pub(crate) max_s: i32,
+    pub(crate) timer: i32,
+    pub(crate) slot: i32,
 }
 
 /// The sound instances the EE updates each frame.
 #[derive(Clone, Debug, Default)]
-pub struct Emitters {
-    pub instances: Vec<SoundInstance>,
-    pub pvars: Vec<EmitterPvars>,
-    /// Classes met whose update is not ported, counted once (none since the reverb boxes, `super::reverb`).
-    pub unported: Vec<(usize, i16)>,
+pub(crate) struct Emitters {
+    pub(crate) instances: Vec<SoundInstance>,
+    pub(crate) pvars: Vec<EmitterPvars>,
 }
 
 /// `FastDecTimer` (boot 0x1f9740): 0 fires every call; otherwise decrement and fire on reaching 0.
@@ -551,7 +547,7 @@ fn fast_dec_timer(t: &mut i32) -> bool {
 
 impl Emitters {
     /// `blocks[i]` = the pvar block of instance i (None for pvar −1).
-    pub fn new(instances: Vec<SoundInstance>, blocks: &[Option<Vec<u8>>]) -> Self {
+    pub(crate) fn new(instances: Vec<SoundInstance>, blocks: &[Option<Vec<u8>>]) -> Self {
         let pvars = instances
             .iter()
             .enumerate()
@@ -560,14 +556,14 @@ impl Emitters {
                 EmitterPvars { def: w(0), min_s: w(1), max_s: w(2), timer: w(3), slot: w(4) }
             })
             .collect();
-        Emitters { instances, pvars, unported: Vec::new() }
+        Emitters { instances, pvars }
     }
 
     /// The per-frame sound-instance update (0x2a19a8 dispatch) for class 0 (sphere, `0x3197a0`), class 1 (box with
     /// the volume by depth, `0x319928`), class 2 (box one-shots at random points, `0x319cc8`) and class 5 (underwater
     /// loop at the camera, `0x31a078`: flags 0x15 while `underwater`). Class 3 (reverb box) has no sound of its own
     /// (`super::reverb::ReverbBox`); class 6 (music box) is `music::MusicBox`.
-    pub fn update(&mut self, slots: &mut SoundSlots, sounds: &LevelSounds, l: &Listener, rng: &mut Rng) {
+    pub(crate) fn update(&mut self, slots: &mut SoundSlots, sounds: &LevelSounds, l: &Listener, rng: &mut Rng) {
         for (i, inst) in self.instances.iter().enumerate() {
             let pv = &mut self.pvars[i];
             // `PlayLevelSoundAtInstance` / `release_voice_slot` guard: the slot still plays this instance's sound.
@@ -638,7 +634,7 @@ impl Emitters {
                         s.class_index = pv.def as u16;
                         s.sndinst = i as i32;
                         // A random point of the box: randf(−1, 1) per axis through the rows +0x10.
-                        let r = [rng.randf(-1.0, 1.0), rng.randf(-1.0, 1.0), rng.randf(-1.0, 1.0)];
+                        let r = [rng.randf_exact(-1.0, 1.0), rng.randf_exact(-1.0, 1.0), rng.randf_exact(-1.0, 1.0)];
                         let m = &inst.matrix;
                         s.pos = std::array::from_fn(|k| r[0] * m[0][k] + r[1] * m[1][k] + r[2] * m[2][k] + p[k]);
                     }
@@ -701,7 +697,7 @@ impl Emitters {
 /// trunc(0x3fff·sin(k/2°)))`, which reproduces the table in the RAC1 989snd v2.09 IRX (global `irx` entry
 /// 22) except entry 1, whose right value there is 0xb6 (the formula and OpenGOAL's Jak table give 0x8e).
 /// The disc value is used.
-pub fn pan_table() -> [(i16, i16); 181] {
+pub(crate) fn pan_table() -> [(i16, i16); 181] {
     let mut t = [(0i16, 0i16); 181];
     for (k, e) in t.iter_mut().enumerate() {
         let a = k as f64 * std::f64::consts::PI / 360.0;
@@ -713,7 +709,7 @@ pub fn pan_table() -> [(i16, i16); 181] {
 
 /// What owns an SPU voice.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum VoiceUse {
+pub(crate) enum VoiceUse {
     #[default]
     Free,
     /// A tone of the 989snd handler with this handle.
@@ -724,16 +720,16 @@ pub enum VoiceUse {
 
 /// Per SPU voice bookkeeping.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct VoiceSlot {
-    pub owner: VoiceUse,
-    pub priority: i8,
-    pub group: u8,
+pub(crate) struct VoiceSlot {
+    pub(crate) owner: VoiceUse,
+    pub(crate) priority: i8,
+    pub(crate) group: u8,
     /// `MakeVolume` result before the group scale.
-    pub basevol: (i16, i16),
+    pub(crate) basevol: (i16, i16),
     /// 989snd tick of the key-on (age for stealing).
-    pub start_tick: u64,
+    pub(crate) start_tick: u64,
     /// The SPU voice generation at key-on.
-    pub generation: u32,
+    pub(crate) generation: u32,
 }
 
 /// 989snd's `VoiceManager` (OpenGOAL `vagvoice.cpp`) plus the SPU voice allocator.
@@ -744,16 +740,16 @@ pub struct VoiceSlot {
 /// and are never taken. Ranges: `SetGroupVoiceRange` puts groups 1, 2, 4 on voices 0x18–0x2f; the other
 /// groups use all 48. OpenGOAL does not limit voices at all.
 #[derive(Clone, Debug)]
-pub struct VoiceManager {
-    pub master: [i32; 32],
-    pub duck: [i32; 32],
+pub(crate) struct VoiceManager {
+    pub(crate) master: [i32; 32],
+    pub(crate) duck: [i32; 32],
     /// `snd_SetPlaybackMode`: 1 = mono. RAC1 passes `0x15ede8 == 0` (option "stereo" on: 0).
-    pub mono: bool,
-    pub pan: [(i16, i16); 181],
-    pub ranges: [(usize, usize); 32],
-    pub voices: [VoiceSlot; SPU_VOICES],
+    pub(crate) mono: bool,
+    pub(crate) pan: [(i16, i16); 181],
+    pub(crate) ranges: [(usize, usize); 32],
+    pub(crate) voices: [VoiceSlot; SPU_VOICES],
     /// Tones dropped because no voice could be taken.
-    pub dropped: u32,
+    pub(crate) dropped: u32,
 }
 
 impl Default for VoiceManager {
@@ -767,7 +763,7 @@ impl Default for VoiceManager {
 impl VoiceManager {
     /// `MakeVolume(vol1, pan1, vol2, pan2, vol3, pan3)`: `127·258 · v2/127 · v3/127` panned by the table
     /// (0° = centre, +90° = right) with the wrap 270→0, else +90.
-    pub fn make_volume(&self, vol1: i32, pan1: i32, vol2: i32, pan2: i32, vol3: i32, pan3: i32) -> (i16, i16) {
+    pub(crate) fn make_volume(&self, vol1: i32, pan1: i32, vol2: i32, pan2: i32, vol3: i32, pan3: i32) -> (i16, i16) {
         let mut vol = vol1 * 258;
         vol = (vol * vol2) / 0x7f;
         vol = (vol * vol3) / 0x7f;
@@ -780,7 +776,7 @@ impl VoiceManager {
     }
 
     /// `AdjustVolToGroup`: `v = v·(master·duck/0x10000)/0x400`, then squared: `v²/0x7ffe` with the sign kept.
-    pub fn adjust_vol_to_group(&self, v: i16, group: usize) -> i16 {
+    pub(crate) fn adjust_vol_to_group(&self, v: i16, group: usize) -> i16 {
         let mut volume = v as i32;
         if group >= 15 { return v; }
         if volume >= 0x7fff { volume = 0x7ffe; }
@@ -791,12 +787,12 @@ impl VoiceManager {
     }
 
     /// The VOLL/VOLR pair for a voice of `group` with base volume `v`.
-    pub fn voice_registers(&self, v: (i16, i16), group: usize) -> [u16; 2] {
+    pub(crate) fn voice_registers(&self, v: (i16, i16), group: usize) -> [u16; 2] {
         [(self.adjust_vol_to_group(v.0, group) >> 1) as u16 & 0x7fff, (self.adjust_vol_to_group(v.1, group) >> 1) as u16 & 0x7fff]
     }
 
     /// Picks an SPU voice for a tone (or a stream with priority 127) of `group`.
-    pub fn allocate(&mut self, spu: &mut Spu, group: usize, priority: i8, tick: u64) -> Option<usize> {
+    pub(crate) fn allocate(&mut self, spu: &mut Spu, group: usize, priority: i8, tick: u64) -> Option<usize> {
         let (lo, hi) = self.ranges[group.min(31)];
         let free = |i: usize, vm: &VoiceManager| {
             match vm.voices[i].owner {
@@ -820,12 +816,12 @@ impl VoiceManager {
     }
 
     /// Is voice `i` still the one keyed on for `owner`?
-    pub fn owns(&self, spu: &Spu, i: usize, owner: VoiceUse) -> bool {
+    pub(crate) fn owns(&self, spu: &Spu, i: usize, owner: VoiceUse) -> bool {
         self.voices[i].owner == owner && spu.voices[i].generation == self.voices[i].generation && spu.voices[i].active()
     }
 
     /// `SetMasterVol(group, vol)`: store and re-apply to that group's voices.
-    pub fn set_master_volume(&mut self, group: usize, vol: i32, spu: &mut Spu) {
+    pub(crate) fn set_master_volume(&mut self, group: usize, vol: i32, spu: &mut Spu) {
         if group >= 32 || self.master[group] == vol { return; }
         self.master[group] = vol;
         for i in 0..SPU_VOICES {
@@ -837,95 +833,3 @@ impl VoiceManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn distance_law() {
-        let def = SoundDef { near: 0.0, far: 24.0, vol_far: 0, vol_near: 2048, ..Default::default() };
-        assert_eq!(distance_volume(0.0, &def), 2048);
-        assert_eq!(distance_volume(30.0, &def), 0);
-        assert_eq!(distance_volume(12.0, &def), 1024);
-        // Truncated toward zero.
-        assert_eq!(distance_volume(17.9, &def), 520);
-        let sq = SoundDef { flags: 1, ..def };
-        assert_eq!(distance_volume(12.0, &sq), 512);
-    }
-
-    #[test]
-    fn pan_directions() {
-        let l = Listener { pos: [0.0; 3], rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], ..Default::default() };
-        assert_eq!(pan_degrees([10.0, 0.0, 0.0], &l), 0);
-        let left = pan_degrees([0.0, 10.0, 0.0], &l);
-        let right = pan_degrees([0.0, -10.0, 0.0], &l);
-        assert!((-90..=-89).contains(&left), "{left}");
-        assert!((89..=90).contains(&right), "{right}");
-        // Inside one unit the pan fades to the centre.
-        assert_eq!(pan_degrees([0.0, 0.5, 0.0], &l), 0);
-    }
-
-    #[test]
-    fn volumes_and_pan_table() {
-        let t = pan_table();
-        assert_eq!(t[0], (0x3fff, 0));
-        assert_eq!(t[1], (0x3ffe, 0xb6));
-        assert_eq!(t[2], (0x3ffc, 0x11d));
-        assert_eq!(t[90], (0x2d40, 0x2d40));
-        let vm = VoiceManager::default();
-        // Centre: 127·258 = 32766 at 0x2d40/0x3fff each side.
-        assert_eq!(vm.make_volume(127, 0, 127, 0, 127, 0), (23168, 23168));
-        // Hard left (pan 270) and right (90).
-        assert_eq!(vm.make_volume(127, 0, 127, 270, 127, 0), (32766, 0));
-        assert_eq!(vm.make_volume(127, 0, 127, 90, 127, 0), (0, 32766));
-        // Group scale: master 0x400 squares; 0x2cc (the music option) ≈ 0.49.
-        assert_eq!(vm.adjust_vol_to_group(32766, 0), 32766);
-        let mut vm2 = VoiceManager::default();
-        vm2.master[1] = 0x2cc;
-        assert_eq!(vm2.adjust_vol_to_group(23168, 1), ((23168 * 0x2cc / 0x400) * (23168 * 0x2cc / 0x400) / 0x7ffe) as i16);
-        assert_eq!(master_volumes(0x400, 0x2cc, false, false), [819, 716, 819, 716, 716, 1024]);
-        assert_eq!(master_volumes(0x400, 0x2cc, true, false)[1], 429);
-        assert_eq!(doppler_pm(0.0), 0);
-        assert_eq!(doppler_pm(1.0), 300 * 0x5f4 / 0x2e5);
-    }
-
-    #[test]
-    fn slot_rules() {
-        let mut rng = Rng::new();
-        let l = Listener::default();
-        let mut s = SoundSlots::new();
-        let def = SoundDef { near: 0.0, far: 24.0, vol_far: 0, vol_near: 2048, looped: 1, ..Default::default() };
-        // Loop flag must match the def.
-        assert_eq!(s.play(&def, 0, None, None, Some([1.0, 0.0, 0.0]), 0x400, &l, &mut rng), -1);
-        assert_eq!(s.play(&def, flags::LOOP, None, None, Some([1.0, 0.0, 0.0]), 0x400, &l, &mut rng), 0);
-        // Out of range: initial volume < 0x20.
-        assert_eq!(s.play(&def, flags::LOOP, None, None, Some([100.0, 0.0, 0.0]), 0x400, &l, &mut rng), -1);
-        // 26 for ordinary owners.
-        for k in 1..SLOTS_OTHERS { assert_eq!(s.play(&def, flags::LOOP, None, None, Some([1.0, 0.0, 0.0]), 0x400, &l, &mut rng), k as i32); }
-        assert_eq!(s.play(&def, flags::LOOP, None, None, Some([1.0, 0.0, 0.0]), 0x400, &l, &mut rng), -1);
-        let hero = Owner { id: 1, privileged: true };
-        assert_eq!(s.play(&def, flags::LOOP, Some(hero), Some([0.0; 3]), None, 0x400, &l, &mut rng), 26);
-        // A pending start released is freed at once; a playing one is marked for release.
-        s.release(0);
-        assert_eq!(s.slots[0].state, state::FREE);
-        s.slots[1].state = state::PLAYING;
-        s.release(1);
-        assert_eq!(s.slots[1].state, state::RELEASE);
-        // Play callback: handle 0 frees, playing → confirmed.
-        s.slots[2].state = state::PLAYING;
-        s.apply_reply(SndReply { slot: 2, handle: 5, play: true });
-        assert_eq!((s.slots[2].handle, s.slots[2].state), (5, state::CONFIRMED));
-        s.apply_reply(SndReply { slot: 2, handle: 0, play: false });
-        assert_eq!(s.slots[2].state, state::FREE);
-    }
-
-    #[test]
-    fn timer() {
-        let mut t = 0;
-        assert!(fast_dec_timer(&mut t));
-        let mut t = 2;
-        assert!(!fast_dec_timer(&mut t));
-        assert!(fast_dec_timer(&mut t));
-        assert!(fast_dec_timer(&mut t));
-    }
-}

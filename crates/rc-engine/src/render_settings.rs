@@ -18,7 +18,7 @@
 //! start and the file is not rewritten then (only a change on the Port Options page writes it, and that page offers
 //! supported counts only).
 //!
-//! **Persistence** (port-only; the "Port Options" page, `rc_game::menus::pause::port`): the options are kept in the
+//! **Persistence** (port-only; the "Port Options" page, `rc_game::base::menus::pause::port`): the options are kept in the
 //! port settings file ([`load_key`] / [`save_key`]; the Anti-aliasing option's own key: crate::graphics). The file is plain `key = value` text (std only): `~/Library/Application Support/rerac/
 //! settings.toml` on macOS, `$XDG_CONFIG_HOME` (or `~/.config`) `/rerac/settings.toml` elsewhere,
 //! `%APPDATA%\rerac\settings.toml` on Windows. When that file is missing and the pre-rename `randcrw/settings.toml`

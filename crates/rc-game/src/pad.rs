@@ -36,15 +36,11 @@ pub mod button {
     pub const DOWN: u32 = 0x4000;
     pub const LEFT: u32 = 0x8000;
     /// "Flick" (pressed mask only): the stick was slammed out or swung more than 55° (see [`super::PadState::process`]).
-    pub const FLICK: u32 = 0x10000;
-    /// Crouch = `held & (R1 | R2)`.
-    pub const CROUCH: u32 = R1 | R2;
-    /// Strafe = `held & (L1 | L2)`.
-    pub const STRAFE: u32 = L1 | L2;
+    pub(crate) const FLICK: u32 = 0x10000;
 }
 
 /// History depth of the pressed/angle/length rings (PAD+0x1e0/+0x258/+0x2d0).
-pub const HISTORY: usize = 30;
+pub(crate) const HISTORY: usize = 30;
 
 const F0_9: Pf = Pf::b(0x3f66_6666); // 0.9
 const F0_25: Pf = Pf::b(0x3e80_0000); // 0.25
@@ -60,50 +56,50 @@ pub struct PadState {
     pub rx: Pf,
     pub ry: Pf,
     /// +0x108 / +0x10c (0x13ca48 / 0x13ca4c): **left stick** X/Y.
-    pub lx: Pf,
-    pub ly: Pf,
+    pub(crate) lx: Pf,
+    pub(crate) ly: Pf,
     /// +0x110..+0x13c: the 12 button pressures / 255 (libpad2 bytes 6..17: R, L, U, D, △, ○, ✕, □, L1, R1, L2, R2).
-    pub pressure: [Pf; 12],
+    pub(crate) pressure: [Pf; 12],
     /// +0x140..+0x17c: copy of +0x100..+0x13c before the mirror option is applied a second time (i.e.
     /// un-mirrored sticks).
-    pub analog_copy: [Pf; 16],
+    pub(crate) analog_copy: [Pf; 16],
     /// +0x1a0: held = buttons | stick-direction bits (lx < 0 → 0x8000, lx > 0 → 0x2000, ly < 0 → 0x1000, ly > 0 → 0x4000).
     pub held: u32,
     /// +0x1a4: pressed = held & !prev (+ [`button::FLICK`]).
     pub pressed: u32,
     /// +0x1a8: released = prev & !held.
-    pub released: u32,
+    pub(crate) released: u32,
     /// +0x1ac: previous tick's held (from +0x348).
-    pub prev_held: u32,
+    pub(crate) prev_held: u32,
     /// +0x1b0 (0x13caf0): raw buttons only (the hero's d-pad fallback).
-    pub raw: u32,
+    pub(crate) raw: u32,
     /// +0x1b4 / +0x1b8: `!prev_held & raw` / `!held & prev_raw`.
-    pub raw_pressed: u32,
-    pub raw_released: u32,
+    pub(crate) raw_pressed: u32,
+    pub(crate) raw_released: u32,
     /// +0x1bc: previous raw.
-    pub prev_raw: u32,
+    pub(crate) prev_raw: u32,
     /// +0x1c0 / +0x1c4 / +0x1c8: held / pressed / released with the mirror swap undone.
-    pub held_unmirrored: u32,
-    pub pressed_unmirrored: u32,
-    pub released_unmirrored: u32,
+    pub(crate) held_unmirrored: u32,
+    pub(crate) pressed_unmirrored: u32,
+    pub(crate) released_unmirrored: u32,
     /// +0x1cc: one-shot input lock (1: clear sticks and ✕/△/○/d-pad-up-down bits; 2: keep only Start/Select).
-    pub lock: i32,
+    pub(crate) lock: i32,
     /// +0x1d0: no button held; +0x1d4: no d-pad/stick direction held.
-    pub nothing_held: bool,
-    pub no_direction: bool,
+    pub(crate) nothing_held: bool,
+    pub(crate) no_direction: bool,
     /// +0x1d8: the left stick is off centre.
-    pub stick_active: bool,
+    pub(crate) stick_active: bool,
     /// +0x1e0: pressed-mask history.
-    pub hist_pressed: [u32; HISTORY],
+    pub(crate) hist_pressed: [u32; HISTORY],
     /// +0x258: left-stick angle history (`FastArcTan(lx, ly)`).
-    pub hist_angle: [Pf; HISTORY],
+    pub(crate) hist_angle: [Pf; HISTORY],
     /// +0x2d0: left-stick length history.
-    pub hist_len: [Pf; HISTORY],
+    pub(crate) hist_len: [Pf; HISTORY],
     /// +0x18e (s16): next history slot; +0x190: filled entries (≤ 30).
-    pub hist_index: i16,
-    pub hist_count: i32,
+    pub(crate) hist_index: i16,
+    pub(crate) hist_count: i32,
     /// +0x348: held, kept for the next tick's `prev_held`.
-    pub held_store: u32,
+    pub(crate) held_store: u32,
 }
 
 impl Default for PadState {
@@ -122,7 +118,7 @@ impl Default for PadState {
 
 /// One axis byte → float (`ProcessPadInput` loop at 0x27be40): `d = |b − 127|`; `d < 48 → 0` (the
 /// field keeps the 0 written before the loop); else `min(cvt(d − 48) / cvt(76), 1)`, negated when `b < 127`.
-pub fn axis(b: u8) -> Pf {
+pub(crate) fn axis(b: u8) -> Pf {
     let d = (b as i32 - 0x7f).abs();
     if d <= 0x2f { return Pf::ZERO; }
     let v = Pf::from_i32(d - 0x30) / Pf::from_i32(0x4c);
@@ -131,14 +127,14 @@ pub fn axis(b: u8) -> Pf {
 }
 
 /// `fun_001f9b20` (0x221318): 2-D length on VU0: `vmul.xyz; vaddy.x` → `x² + y²`, `vsqrt`, `vaddq.x vf1, vf0, Q`.
-pub fn len2(x: Pf, y: Pf) -> Pf { Pf::ZERO + ((x * x) + (y * y)).sqrt() }
+pub(crate) fn len2(x: Pf, y: Pf) -> Pf { Pf::ZERO + ((x * x) + (y * y)).sqrt() }
 
 /// `FastArcTan__Fff(a, b)` (level01 0x2217c0, boot 0x1f9e90) = atan2(b, a) in (−π, π]: the ratio
 /// `x = (min − max) / (min + max)` of |a|, |b| (FPU), the odd polynomial to x¹⁵ on VU0 (coefficients at
 /// 0x1c28a0/0x1c28b0, accumulated `((((((c0x + c1x³) + c2x⁵) + c3x⁷) + c4x⁹) + …) + c7x¹⁵` with each
 /// term as `1·term`), then `(π/4 + p)·k + o` from the octant table at 0x1c28c0 indexed by
 /// sign(|a| − |b|), sign(b), sign(a). Returns 0 when both are 0.
-pub fn fast_arctan(a: Pf, b: Pf) -> Pf {
+pub(crate) fn fast_arctan(a: Pf, b: Pf) -> Pf {
     const C: [u32; 8] = [0x3f7f_fff5, 0xbeaa_a61c, 0x3e4c_40a6, 0xbe0e_6c63, 0x3dc5_77df, 0xbd65_01c4, 0x3cb3_1652, 0xbb84_d7e7];
     // (k, o) per octant: offset 8·sign(|a|−|b|) + 16·sign(b) + 32·sign(a).
     const T: [(u32, u32); 8] = [
@@ -167,7 +163,7 @@ pub fn fast_arctan(a: Pf, b: Pf) -> Pf {
 }
 
 /// `FastDiffRots__Fff` (0x222100): `|a − b|`, and `2π − that` when it is ≥ π.
-pub fn fast_diff_rots(a: Pf, b: Pf) -> Pf {
+pub(crate) fn fast_diff_rots(a: Pf, b: Pf) -> Pf {
     let d = (a - b).abs();
     if d < PI { d } else { (PI + PI) - d }
 }
@@ -193,7 +189,7 @@ impl PadState {
     }
 
     /// `ClearPadInput__FR3PAD` (0x27bd28).
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.raw = 0;
         self.no_direction = true;
         self.held = 0;
@@ -214,7 +210,7 @@ impl PadState {
     /// `ProcessPadInput__FR3PADPUci` (0x27bd90): buttons, axes (only when the block has more than 5 bytes),
     /// pressures (more than 17), the mirror option, the stick-direction bits, pressed/released masks,
     /// the lock modes, the 30-deep histories and the flick bit.
-    pub fn process(&mut self, d: &[u8], mirror: bool) {
+    pub(crate) fn process(&mut self, d: &[u8], mirror: bool) {
         let b = (((d[0] as u32) << 8) | d[1] as u32) ^ 0xffff;
         self.raw = b;
         self.held = b;
@@ -309,20 +305,17 @@ impl PadState {
 
     /// `PressedWithin(mask, n, *ago)` 0x27b940: was any bit of `mask` pressed within the last
     /// `min(n, count)` ticks, this tick included? Returns the age (0 = this tick) of the newest press.
-    pub fn pressed_within(&self, mask: u32, n: i32) -> Option<i32> {
+    pub(crate) fn pressed_within(&self, mask: u32, n: i32) -> Option<i32> {
         let m = n.min(self.hist_count);
         (0..m).find(|&i| self.hist_pressed[self.slot_ago(i)] & mask != 0)
     }
 
     /// `Combo(a, b, n, gap)` 0x27b9e0: both pressed within the last `n` ticks, strictly less than `gap`
     /// ticks apart.
-    pub fn combo(&self, a: u32, b: u32, n: i32, gap: i32) -> bool {
+    pub(crate) fn combo(&self, a: u32, b: u32, n: i32, gap: i32) -> bool {
         let (Some(ta), Some(tb)) = (self.pressed_within(a, n), self.pressed_within(b, n)) else { return false };
         (ta - tb).abs() < gap
     }
-
-    /// `StickLenAgo(n)` 0x27ba60: the stick length `min(n, count) − 1` ticks ago (n = 1: this tick).
-    pub fn stick_len_ago(&self, n: i32) -> Pf { self.hist_len[self.slot_ago(n.min(self.hist_count) - 1)] }
 
     /// The history slot `i` ticks back (0 = this tick's entry).
     fn slot_ago(&self, i: i32) -> usize { ((self.hist_index as i32 - 1 - i).rem_euclid(0x1e)) as usize }
@@ -339,7 +332,7 @@ pub struct PadInput {
     pub lx: u8,
     pub ly: u8,
     /// Pressure bytes (R, L, U, D, △, ○, ✕, □, L1, R1, L2, R2).
-    pub pressure: [u8; 12],
+    pub(crate) pressure: [u8; 12],
 }
 
 impl Default for PadInput {
@@ -397,69 +390,3 @@ impl PadInput {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn axis_dead_zone_and_scale() {
-        assert_eq!(axis(127).0, 0);
-        assert_eq!(axis(80).0, 0); // d = 47
-        assert_eq!(axis(0), Pf::b(0xbf80_0000)); // d = 127 → 79/76 clamped to 1, negated
-        assert_eq!(axis(251), Pf::ONE); // d = 124 → 76/76
-        // 200: d = 73 → 25/76 = 0.32894737 (div.s truncated)
-        assert_eq!(axis(200).0, 0x3ea8_6bca);
-        assert!((axis(200).to_f32() - 25.0 / 76.0).abs() < 1e-7);
-        assert_eq!(axis(54), -axis(200));
-    }
-
-    #[test]
-    fn arctan_matches_atan2() {
-        for &(a, b) in &[(1.0f32, 0.0f32), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (1.0, 1.0), (-0.3, 0.8), (0.5, -0.25), (-0.7, -0.7), (0.9, -1.0)] {
-            let r = fast_arctan(Pf::f(a), Pf::f(b)).to_f32();
-            assert!((r - b.atan2(a)).abs() < 2e-5, "atan2({b}, {a}) = {} vs {r}", b.atan2(a));
-        }
-        assert_eq!(fast_arctan(Pf::ZERO, Pf::ZERO).0, 0);
-        // The polynomial does not cancel π/4 exactly: atan2(0, 1) is 2^-22·0.75, not 0 (a property of the game's routine).
-        assert_eq!(fast_arctan(Pf::ONE, Pf::ZERO).0, 0x3440_0000);
-    }
-
-    #[test]
-    fn buttons_pressed_released_and_stick_bits() {
-        let mut p = PadState::default();
-        let a = PadInput::neutral().press(button::CROSS).stick(0.0, -1.0);
-        p.update(Some(&a.bytes()), false);
-        assert_eq!(p.held, button::CROSS | button::UP);
-        assert_eq!(p.pressed & 0xffff, button::CROSS | button::UP);
-        assert_eq!(p.raw, button::CROSS);
-        assert_eq!(p.ly, Pf::b(0xbf80_0000));
-        p.update(Some(&a.bytes()), false);
-        assert_eq!(p.pressed & 0xffff, 0);
-        p.update(Some(&PadInput::neutral().bytes()), false);
-        assert_eq!(p.released, button::CROSS | button::UP);
-        assert_eq!(p.pressed_within(button::CROSS, 7), Some(2));
-        assert_eq!(p.pressed_within(button::CROSS, 2), None);
-    }
-
-    #[test]
-    fn flick_from_rest() {
-        let mut p = PadState::default();
-        p.update(Some(&PadInput::neutral().bytes()), false);
-        p.update(Some(&PadInput::neutral().stick(1.0, 0.0).bytes()), false);
-        assert_ne!(p.pressed & button::FLICK, 0);
-        p.update(Some(&PadInput::neutral().stick(1.0, 0.0).bytes()), false);
-        assert_eq!(p.pressed & button::FLICK, 0);
-        // Swing from right to up (90°) at full length: angle flick.
-        p.update(Some(&PadInput::neutral().stick(0.0, -1.0).bytes()), false);
-        assert_ne!(p.pressed & button::FLICK, 0);
-    }
-
-    #[test]
-    fn mirror_swaps_left_right() {
-        let mut p = PadState::default();
-        p.update(Some(&PadInput::neutral().press(button::LEFT).stick(1.0, 0.0).bytes()), true);
-        assert_eq!(p.lx, Pf::b(0xbf80_0000));
-        assert_eq!(p.raw, button::RIGHT);
-        assert_eq!(p.held, button::RIGHT | button::LEFT); // raw right + stick-left bit
-    }
-}

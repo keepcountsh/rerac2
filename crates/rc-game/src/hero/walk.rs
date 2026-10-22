@@ -1,226 +1,347 @@
-//! Walk / run 2 and wading 0x73 (group 1): the SetState entry (0x23cf98 case 2 / 0x3f / 0x73), physics
-//! (0x2370b8, case 0x23a2e4), transitions (0x242930 case 2 / 0x2f / 0x73 / 0x7e) and the walk / run anim
-//! selector 0x241a08. Spec: docs/plan/player_controller.md §3–§4, §14 (wading); docs/plan/hero_states.md.
-#![allow(clippy::neg_cmp_op_on_partial_ord, clippy::assign_op_pattern)] // FPU compare semantics and op order are spelled out on purpose.
+//! Walk / run 2 (group 1) and its floor variants, the ice slide 0x2e and the wading walk 0x70: the SetState entry
+//! (L00 `0x2c4560` case 2 / 0x2e / 0x70), physics (`0x2ba8e0` case 2 / 0x70, case 0x2e) and transitions (`0x2cb650`
+//! case 2 / 0x2e / 0x70), with the walk ↔ run animation selector `0x2ca358`.
+//!
+//! The animation: substate 0 walks (sequence 3, playback speed · 157 in 0.6..4), substate 1 runs (sequence 4,
+//! speed · 14 in 0.6..2.2). The substate moves up above the edge `0x1a7dac + 16·s` (2.35 / 10 u/s) and down below
+//! `$gp − 0x7248 + 16·s` (0 / 1.9 u/s, `$gp` = 0x1aeff0); the new sequence starts at the old one's phase plus
+//! `$gp − 0x7228[new + 2·old]` (1 walk → run, 5 run → walk).
+//!
+//! **Strafing** (L2 / R2, `0x18b274`): the facing springs to the camera's yaw and the walk moves along the stick
+//! (`0x2b36a8`); 0x2b3370 keeps the walk going while the facing is off the camera's.
+//!
+//! **Floors.** Mud (`0x18b2ba`) turns the walk into 0x76; ice (`0x18b2b2`) into the slide 0x2e (sequence 0x37: the
+//! velocity eases toward the stick by 1/1470 + the opposition, the slope pulls 0.17·slope, `0x2b96a0`); wading
+//! (`0x18c0d9`, water 0.25..0.85 deep) into 0x70 (sequence 0x59, 0.8 of the run speed, at least 2.5).
+//!
+//! Not ported: the held item's run speeds and the item 10's kept direction, the water effects, the body lean
+//! (`0x2b7c88`, `0x2b8dc0`, the slide's lean angles), the sliding floors' drag (`0x18a890`), the weapon stances on
+//! stopping (`0x2cb1c8`), the stick-gravity frames (`0x18c0e3`).
 
-use super::common::*;
 use super::physics::*;
-use super::states::Ctx;
+use super::states::Entry;
 use super::Hero;
-use crate::pad::{button, fast_diff_rots};
-use crate::ps2v::Pf;
+use crate::hero::anim::AnimCtl;
+use crate::pad::button;
 
-/// Walk ↔ run frame phase offsets `[0x15f6c8]` indexed by `new + 2·old`.
-const PHASE_OFF: [i32; 4] = [0, 1, 5, 0];
+/// Walk → run / run → walk speed edges (u/s): `$gp − 0x7248 + 16·s` (low), `0x1a7dac + 16·s` (high).
+const WALK_LOW: [f32; 2] = [0.0, 1.9];
+const WALK_HIGH: [f32; 2] = [2.35, 10.0];
+/// The phase offset when the substate changes, `[new + 2·old]` (`$gp − 0x7228`).
+const PHASE: [i32; 4] = [0, 1, 5, 0];
+/// The walk entry's start frame per substate (`$gp − 0x7218`).
+const ENTRY_FRAME: [i32; 2] = [8, 0x10];
 
 impl Hero {
-    /// SetState entry of 2 / 0x73 (0x3f shares the case in the game; it is [`super::boots`]'s).
-    pub(super) fn walk_entry(&mut self, c: &mut Ctx, id: i32, play: bool) -> Option<bool> {
+    pub(super) fn walk_entry(&mut self, anim: &mut dyn AnimCtl, env: &Env, id: i32, play: bool) -> Entry {
         self.group = 1;
-        self.f15d4 = 0;
-        // No `0x242858` here (SetState case 2 does not call it; the stop 3 and the walk's slow stop do): with a
-        // weapon that keeps the arm raised out, Ratchet walks off from its stance, the arm layers coming up through
-        // `0x22eca0` (super::weapons::arm_on_state_change).
-        if self.prev_group != 4 && self.prev_prev_group != 4 { self.speed = len2(self.eff); }
-        if DT * Pf::b(0x40e0_0000) < self.speed { self.speed = DT * Pf::b(0x40e0_0000); }
-        self.stick_target(c.env, Pf::ONE);
-        self.idle.blink_period = 0x68;
-        self.sharp_turn = 0;
-        if HALF_PI < fast_diff_rots(self.rot[2], self.target_yaw)
-            && (self.prev_group == 7 || self.prev_state == 3 || self.prev_prev_state == 3)
-        {
-            self.speed = Pf::ZERO;
+        if self.prev_group != 4 && self.prev2_group != 4 { self.speed = len2(self.eff); }
+        self.run_dir = self.rows[0];
+        self.run_keep = 0;
+        self.run_yaw = self.rot[2];
+        self.speed = self.speed.min(7.0 * DT);
+        self.quick_turn = 0;
+        self.stick_target(env, 1.0, 0);
+        if PI / 2.0 < rot_dist(self.rot[2], self.target_yaw) && (self.prev_group == 4 || self.prev_state == 3 || self.prev2_state == 3) {
+            self.speed = 0.0;
         }
-        if self.f063a != 0 && self.f65c == 0 { return Some(self.set_state(c, 0x79, true) && false); }
-        // A slippery floor (0x140632) or 0x2f itself: the slide's branch (level00; super::surface).
-        if let Some(r) = super::surface::slippery_walk_entry(self, c, id) { return r; }
-        if self.f13f9 != 0 || id == 0x73 {
-            // Wading 0x73 (the walk in 0.25..0.85 of water; its anim is set even without `play`).
-            self.state = 0x73;
-            self.set_anim(c.anim, c.rng, blend(8), 0x60, 0);
-            return None;
+        if self.surf.mud && (self.f16c == 0 || self.height < 0.3) { return Entry::Return(self.set_state(anim, env, 0x76, true)); }
+        if self.surf.ice || id == 0x2e {
+            self.speed = self.speed.min(0.128_333_33);
+            self.vel[2] = 0.0;
+            self.state = 0x2e;
+            self.ice_slope = 0.0;
+            return Entry::Anim(8.0, 0x37, 0);
         }
-        if self.f658 == 1 || id == 0x3f {
-            // The Magneboots walk 0x3f (super::boots; its anim is set even without `play`).
-            self.state = 0x3f;
-            self.set_anim(c.anim, c.rng, blend(8), 0x5b, 0);
-            return None;
+        if self.surf.wading || id == 0x70 {
+            self.state = 0x70;
+            return Entry::Anim(8.0, 0x59, 0);
         }
         self.substate = 0;
-        self.turn_to_target = 0;
-        self.land_run_blend = 0;
-        let mut b = ticks(8);
-        if self.health == 1 { b = ticks(12); }
-        if self.prev_prev_state == 0x23 { b = ticks(15); }
-        if self.prev_prev_state == 6 || self.prev_prev_state == 0x2d { b = ticks(18); }
-        if self.prev_prev_group == 4 && ticks(5) < self.jump.landed { b = ticks(13); }
-        if play { self.set_anim(c.anim, c.rng, Pf::from_i32(b), 3, 8); }
-        None
+        self.run_hold = 0;
+        self.walk_gate = 0;
+        if !play { return Entry::Done; }
+        let mut blend = if self.hp == 1 { 0xc } else { 8 };
+        if self.prev2_state == 0x22 || self.prev_state == 0x22 || self.prev2_state == 0x83 || self.prev_state == 0x83 { blend = 0xf; }
+        if self.prev_state == 0x13 { blend = 0xd; }
+        if self.prev2_state == 6 || self.prev2_state == 0x2c { blend = 0x12; }
+        if self.prev2_group == 4 && 5 < self.jump.landed { blend = 0xd; }
+        Entry::Anim(blend as f32, (self.substate + 3) as u8, ENTRY_FRAME[self.substate as usize & 1])
     }
 
-    /// Walk / run 2 (0x23a2e4).
-    pub(super) fn phys_walk(&mut self, env: &Env) {
-        if self.eff_len_xy < DT * Pf::b(0x3e99_999a) && Pf::b(0x3f59_999a) < self.stick_mag { self.turn_to_target = 1; }
-        if self.yaw_residual.abs() < Pf::b(0x3d56_7750) || self.f13f8 != 0 || self.substate == 1 { self.turn_to_target = 0; }
-        if self.sharp_turn != 0 && (self.yaw_residual.abs() < Pf::b(0x3d8e_fa35) || self.f13f8 != 0) { self.sharp_turn = 0; }
-        self.stick_target_table(env);
-        if Pf::ZERO < self.push_strength {
-            let k = Pf::b(0x3f33_3333);
-            self.drag(k, Pf::ZERO);
-            let t = self.target_speed + push_speed_along(self.push, self.rot[2]);
-            self.target_speed = t;
-            let floor = DT * k;
-            if t < floor { self.target_speed = floor; }
-            self.push = V0;
-        }
-        let mut f = Pf::ONE;
-        if self.substate == 1 && self.sharp_turn == 0 {
-            self.turn_to(SCALE64 * Pf::b(0x3c03_126f), SCALE64 * Pf::b(0x3e19_999a), DT * Pf::b(0x411f_2c8d));
-        } else {
-            if self.f13f8 != 0 {
-                f = Pf::ONE - self.yaw_residual * Pf::b(0x3f0c_cccd);
-                if f < Pf::ZERO { f = Pf::ZERO; }
-            } else if self.stick_mag < Pf::b(0x3f4c_cccd) && Pf::b(0x3f06_0a92) < self.yaw_residual {
-                // The residual is compared signed: only left turns cut the acceleration.
-                f = Pf::ZERO;
-            }
-            if SPEED_TABLE[0][3] < self.stick_mag {
-                self.run_turn();
+    /// `0x2ba8e0` case 2 / 0x70 (and 0x2e).
+    pub(super) fn phys_walk(&mut self, env: &Env, _anim: &mut dyn AnimCtl) {
+        if self.state == 0x2e {
+            self.ice_move(env);
+            if self.air_ticks != 0 {
+                self.gravity_from(self.disp[2], 0.006_944_444_5);
             } else {
-                let s = self.stick_mag + Pf::b(0x3eb3_3333);
-                self.turn_to((SCALE64 * Pf::b(0x3ba3_d70a)) * s, SCALE64 * Pf::b(0x3dcc_cccd), (DT * Pf::b(0x4096_cbe4)) * s);
+                self.vel[2] = 0.0;
+                self.vel[2] -= 1.0 / 24.0;
             }
+            return;
         }
-        self.lean(); // HeroLean 0x235638 after the turn: super::idle.
-        self.clank_sway(); // 0x235e60: Clank's sway on the back (record 18), super::pose.
-        let acc = (DT2 * Pf::b(0x40f0_0000)) * f;
-        let mut dec = DT2 * Pf::b(0x4108_0000);
-        if self.sharp_turn != 0 {
-            let mut k = Pf::b(0x4027_8d36) - self.yaw_residual;
-            if Pf::ONE < k { k = Pf::ONE; }
-            if k < Pf::b(0x3e4c_cccd) { k = Pf::b(0x3e4c_cccd); }
-            self.target_speed = self.target_speed * k;
-            dec = DT2 * Pf::b(0x4188_0000);
+        if self.strafe == 0 {
+            if self.eff_len_xy < 0.028_333_336 {
+                self.run_hold = 1;
+                if 2.094_395_4 < self.yaw_residual.abs() && self.stick_mag == 1.0 { self.quick_turn = 1; }
+            }
+            // A stick swung past 110° within 7 ticks at full tilt: the quick turn.
+            let (a1, a7) = (stick_angle_ago(env.pad, 1), stick_angle_ago(env.pad, 7));
+            if 1.919_862_4 < rot_dist(a1, a7) && 1.221_730_6 < self.yaw_residual.abs() && self.stick_mag == 1.0 {
+                self.run_hold = 1;
+                self.quick_turn = 1;
+            }
+            if self.yaw_residual.abs() < 0.087_266_47 { self.run_hold = 0; }
         }
+        if self.quick_turn != 0 && self.yaw_residual.abs() < 0.069_813_18 { self.quick_turn = 0; }
+        if self.stick_mag < 0.2 {
+            if self.run_keep != 0 { self.quick_turn = 1; }
+            self.target_speed = 0.0;
+            self.stick_dir = self.run_dir;
+            self.target_yaw = self.run_yaw;
+        } else {
+            self.run_target(env);
+            self.run_dir = self.rows[0];
+            self.run_yaw = self.rot[2];
+        }
+        let mut acc_k = 1.0;
+        if self.strafe == 0 {
+            self.strafe_yaw = self.rot[2];
+            self.strafe_dir = self.rows[0];
+            if self.substate == 1 && self.quick_turn == 0 {
+                self.turn_to(0.02, 0.17, 0.165_806_28, 0);
+            } else {
+                if self.stick_mag < 0.9 && PI / 4.0 < self.yaw_residual.abs() { acc_k = 0.0; }
+                self.run_turn();
+            }
+        } else {
+            self.strafe_turn(env);
+        }
+        self.lean();
+        if self.quick_turn != 0 {
+            let v = (0.099_166_67 - self.yaw_residual.abs() * 0.029_178_405).max(0.0);
+            self.target_speed = self.target_speed.min(v);
+        }
+        let acc = acc_k * 0.005;
+        let mut dec = 0.005_555_556;
+        if self.quick_turn != 0 {
+            let f = (2.617_994 - self.yaw_residual).clamp(0.2, 1.0);
+            dec = 0.004_722_222;
+            self.target_speed *= f;
+        }
+        let r = self.yaw_residual.abs();
+        if self.stick_mag < 0.75 && 0.610_865_3 < r { self.target_speed *= (1.0 - r * 0.4).max(0.0); }
         self.speed_step(acc, dec);
-        if self.turn_to_target != 0 && self.f658 == 0 {
-            self.set_planar_vel(self.target_yaw);
+        if self.run_hold == 0 && self.strafe == 0 {
+            self.set_planar_vel(f32::MAX)
+        } else if self.strafe == 0 {
+            self.set_planar_vel(self.target_yaw)
         } else {
-            self.set_planar_vel(Pf::b(0x47c3_4f80));
+            self.set_planar_vel(self.strafe_yaw)
         }
-        self.wall_check(env, 1);
-        if self.edge_brake != 0 { self.edge_brake(env, Pf::b(0x40a0_0000), Pf::b(0x3e4c_cccd)); }
+        self.wall_check(env, true);
         if self.air_ticks != 0 {
-            self.gravity_from(self.eff_v[2], DT2 * Pf::b(0x41c8_0000));
-            self.climb_check(env);
+            self.gravity_from(self.eff_v[2], 0.006_944_44);
+            self.edge_slide();
         } else {
-            let z = self.vel[2];
-            self.gravity_from(z, DT2 * Pf::b(0x4258_0000));
+            self.gravity(0.015);
         }
     }
 
-    pub(super) fn tr_walk(&mut self, c: &mut Ctx) {
-        let pad = c.env.pad;
-        if self.land_run_blend != 0 {
-            let v = c.anim.view();
-            if 0.9 < v.t || v.seq_a != 0xff { self.land_run_blend = 0; }
-        }
-        if self.f063a != 0 && self.f65c == 0 { self.set_state(c, 0x79, true); return; }
-        let air = self.air_ticks as i32;
-        if ticks(5) <= air && (self.prev_group != 0x12 || self.f13f9 == 0) && Pf::b(0x3fac_cccd) < self.height
-            && !self.step_down_ahead(c)
-        {
-            self.set_state(c, 6, true);
-            return;
-        }
-        // 0x13f524 (set by the pack glide 8) shortens the jump buffer to this tick.
-        let n = if self.f524 == 0 { ticks(9) } else { 1 };
-        if pad.pressed_within(button::CROSS, n).is_some() && (!(ticks(4) < air) || self.f532 != 0) {
-            self.stick_target(c.env, Pf::ONE);
-            if self.try_jump(c, n, true) { return; }
-            if self.substate <= 0 { self.set_state(c, 7, true); return; }
-            self.jump_or_running_jump(c);
-            return;
-        }
-        if air != 0 { return; }
-        let strafe_ok = !(self.f0632 != 0 && (DT + DT <= self.eff_len_xy || Pf::b(0x3db2_b8c2) <= self.slope));
-        if strafe_ok && pad.held & button::STRAFE != 0 { self.set_state(c, 1, true); return; }
-        if pad.held & button::CROUCH != 0 { self.set_state(c, 4, true); return; }
-        // The slippery-floor walk 0x2f (surface 7, 0x140632; level00's walk case): super::surface.
-        super::surface::walk_surface(self, c);
-        if self.state == 2 {
-            if self.f13f9 != 0 { self.set_state(c, 0x73, true); }
-        } else if self.state == 0x73 && self.f13f9 == 0 {
-            self.set_state(c, 2, true);
-        }
-        // Magnetic floor (0x13f658, set by the surface reaction on the Magneboots' floor moby): 0x3f.
-        if self.state == 2 && self.f658 != 0 { self.set_state(c, 0x3f, true); }
-        // A grind rail under the feet (0x13f8bc): 0x28 (super::boots).
-        if super::boots::rail_contact(self) { self.set_state(c, 0x28, true); return; }
-        if (ticks(15) < self.timer || self.prev_group as u32 >= 2) && pad.pressed & button::FLICK != 0 && self.f13fa == 0 {
-            self.sharp_turn = 1;
-        }
-        if self.state == 0x73 {
-            // Wading: stop when nothing is held and the speed is below 3.2 u/s; playback 35 × |eff| in 0.6..1.05.
-            if pad.no_direction && len2(self.vel).to_f32() < DT.to_f32() * 3.2 && self.set_state(c, 0, false) {
-                let seq = self.idle_seq();
-                self.set_anim(c.anim, c.rng, blend(17), seq, 0);
+    /// `0x2b96a0`: the ice slide (module docs).
+    pub fn ice_move(&mut self, env: &Env) {
+        self.stick_target(env, 1.0, 0);
+        self.turn_to(0.02, 0.2, 0.061_086_5, 0);
+        match self.state {
+            0x13 => {
+                if self.stick_mag < 0.2 { self.target_yaw = self.rot[2]; }
+                self.target_speed = 0.4;
             }
-            self.anim_speed = Pf::f((self.eff_len.to_f32() * 35.0).clamp(0.6, 1.05));
-            return;
+            0x15 => self.target_speed = 0.0,
+            _ => {}
         }
-        if self.state != 2 { super::surface::walk_tail(self, c); return; }
-        if !(self.stick_mag < Pf::b(0x3e2e_147b)) {
-            self.walk_run_anim(c);
-            return;
+        let (s, c) = self.target_yaw.sin_cos();
+        let k = self.target_speed * 0.098_333_34;
+        let want = [c * k, s * k, 0.0];
+        let mut f = -(self.vel[0] * want[0] + self.vel[1] * want[1]);
+        if 0.0 < f {
+            let (lw, lv) = (len2(want), len2(self.vel));
+            f = if 0.0 < lw && 0.0 < lv { f / lw / lv } else { 0.0 };
         }
-        if DT * Pf::b(0x402c_cccd) < self.eff_len && self.f13fa == 0 {
-            let short = self.eff_len < DT * Pf::b(0x408c_cccd) || pad.stick_len_ago(4) < Pf::b(0x3f4c_cccd);
-            if !short { self.set_state(c, 3, true); return; }
-            if !self.set_state(c, 3, false) { return; }
-            if self.health == 1 { self.set_anim(c.anim, c.rng, blend(18), 0x54, 0); } else { self.set_anim(c.anim, c.rng, blend(9), 0x14, 7); }
-        } else {
-            if !(ticks(25) < self.timer) { return; }
-            if super::weapons::gun_stance(self, c) || !self.set_state(c, 0, false) { return; }
-            if self.health == 1 { self.set_anim(c.anim, c.rng, blend(18), 0x54, 0); } else { self.set_anim(c.anim, c.rng, Pf::b(0xbf80_0000), 0, 0); }
+        let f = f.clamp(0.0, 1.0);
+        let mut a = self.target_speed * 0.000_680_555_6 + f * 0.000_555_555_6;
+        if env.pad.no_direction { a = 0.000_305_555_56; }
+        if self.state == 0x13 && self.timer < 0xf && self.eff_len < 0.05 { a = 0.003_055_555_7; }
+        if 0.098_333_34 < self.eff_len { a = 0.003_611_111; }
+        let mut d = sub(want, self.eff_h);
+        d[2] = 0.0;
+        if a < len(d) { d = set_len(d, a); }
+        self.vel = add(self.eff_h, d);
+        if 0.087_266_47 < self.slope {
+            let yaw = atan2(self.ground_normal[0], self.ground_normal[1]);
+            let (s, c) = yaw.sin_cos();
+            let pull = [c * self.slope * 0.169_765_26, s * self.slope * 0.169_765_26, 0.0];
+            let mut d = sub(pull, self.vel);
+            d[2] = 0.0;
+            let m = self.slope * 0.003_006_259_7;
+            if m < len(d) { d = set_len(d, m); }
+            self.vel = add(self.vel, d);
+        }
+        let lw = len(want);
+        self.ice_along = (self.vel[0] * want[0] + self.vel[1] * want[1]) / if 0.0 < lw { lw * 0.098_333_34 } else { 1.0 };
+        self.wall_check(env, false);
+        self.ice_slope = self.slope;
+        if (self.pos[2] - self.ground_z).abs() < 0.15 { self.pos[2] = self.ground_z; }
+    }
+
+    /// `0x2cb650` case 2 / 0x2e / 0x70.
+    pub(super) fn trans_walk(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> Option<i32> {
+        if self.walk_gate != 0 {
+            let v = anim.view();
+            if 0.9 < v.t || v.seq_a != 0xff { self.walk_gate = 0; }
+        }
+        if self.surf.mud && self.f16c == 0 { return Some(0x76); }
+        let wading_in = self.prev_group == 0x12 && self.surf.wading;
+        if !(self.air_ticks < 5 || wading_in || self.height <= 1.35 || self.step_down(env)) { return Some(6); }
+        let n = if self.glide_lag != 0 { 1 } else { 9 };
+        if Self::cross_within(env, n) && !(4 < self.air_ticks) {
+            self.stick_target(env, 1.0, 0);
+            if self.try_jump(anim, env, n, true) { return None; }
+            return Some(if 0.85 < self.stick_mag && self.strafe == 0 { 9 } else { 7 });
+        }
+        if self.air_ticks != 0 { return None; }
+        let slow_ice = !self.surf.ice || (self.eff_len_xy < 0.033_333_335 && self.slope < 0.087_266_47);
+        if slow_ice && env.pad.held & button::L1 != 0 { return Some(1); }
+        if env.pad.held & button::R1 != 0 { return Some(4); }
+        // The floor's variant.
+        match self.state {
+            2 if self.surf.ice => { self.set_state(anim, env, 0x2e, true); }
+            0x2e if !self.surf.ice => { self.set_state(anim, env, 2, true); }
+            _ => {}
+        }
+        match self.state {
+            2 if self.surf.wading => { self.set_state(anim, env, 0x70, true); }
+            0x70 if !self.surf.wading => { self.set_state(anim, env, 2, true); }
+            _ => {}
+        }
+        if self.grind.found { return Some(0x27); }
+        let turned = self.strafe_turned(env, 0.034_906_585);
+        match self.state {
+            2 => {
+                let keep = (0.17 <= self.stick_mag && self.land_lag == 0) || turned || (self.run_keep != 0 && 0.017_453_294 <= self.yaw_residual.abs());
+                if keep {
+                    self.walk_anim(anim);
+                    return None;
+                }
+                // `0x2cb1c8`: a weapon in use that keeps the stance stops him in it.
+                if self.gun_stance(anim, env) { return None; }
+                if self.set_state(anim, env, 0, false) {
+                    if 0.1 < len(self.momentum) { self.momentum = set_len(self.momentum, 0.1); }
+                    self.speed = self.speed.min(0.025);
+                    let seq = self.idle_seq();
+                    self.set_anim(anim, if seq == 0x51 { 15.0 } else { -1.0 }, seq, 0);
+                }
+                None
+            }
+            0x2e => {
+                let v = anim.view();
+                if env.pad.no_direction && len(self.vel) < 0.000_833_333_4 && self.slope < 0.087_266_47 && self.set_state(anim, env, 0, false) {
+                    let seq = self.idle_seq();
+                    self.set_anim(anim, 17.0, seq, 0);
+                    return None;
+                }
+                if v.seq_b == 0x37 {
+                    self.anim_speed = ((1.0 - self.ice_along) * 2.0).min(1.7).max(0.75);
+                } else if v.seq_b == 0x66 {
+                    self.anim_speed = (self.eff_len * 10.0).min(1.1).max(0.3);
+                }
+                None
+            }
+            0x70 => {
+                if env.pad.no_direction && len(self.vel) < 0.053_333_34 && self.set_state(anim, env, 0, false) {
+                    let seq = self.idle_seq();
+                    self.set_anim(anim, 17.0, seq, 0);
+                    return None;
+                }
+                self.anim_speed = (self.eff_len * 35.0).max(0.6).min(1.05);
+                None
+            }
+            _ => None,
         }
     }
 
-    /// Walk / run anim selector 0x241a08 (state 2, stick ≥ 0.17).
-    pub(super) fn walk_run_anim(&mut self, c: &mut Ctx) {
-        let old = self.substate;
-        if ticks(4) < self.substate_timer && self.land_run_blend == 0 {
-            let row = |s: i32| SPEED_TABLE[s.clamp(0, 1) as usize];
-            let down = self.speed < row(old)[0] * DT;
-            if down || row(old)[1] * DT < self.speed {
-                let mut s = old;
-                if down {
-                    loop {
-                        s -= 1;
-                        if s < 0 || !(self.speed < row(s)[0] * DT) { break; }
-                    }
-                } else {
-                    loop {
-                        s += 1;
-                        if s > 1 || !(row(s)[1] * DT < self.speed) { break; }
-                    }
-                }
-                if s < 0 { s = 0; }
-                if !(s < 2) { s = 1; }
-                self.substate = s;
+    /// `0x2cb038`: a step down ahead (a line 0.75·r ahead from 0.47 up to 1 down hits less than 0.37 above and more
+    /// than 1 below the feet): the walk does not fall.
+    fn step_down(&self, env: &Env) -> bool {
+        if self.eff_len_xy < self.cap_radius * 0.05 { return false; }
+        if 0.523_598_85 < rot_dist(atan2(self.disp[0], self.disp[1]), self.rot[2]) { return false; }
+        let (s, c) = self.rot[2].sin_cos();
+        let p = [self.pos[0] + c * self.cap_radius * 0.75, self.pos[1] + s * self.cap_radius * 0.75, self.pos[2]];
+        let a = [p[0], p[1], p[2] + 0.47];
+        let b = [p[0], p[1], p[2] - 1.0];
+        match env.line(a, b, 2) {
+            Some(o) => {
+                let d = o.point[2] - self.pos[2];
+                d < 0.37 && -1.0 < d
+            }
+            None => false,
+        }
+    }
+
+    /// `0x2a6420` (the end of `0x2a6dd0`): the walk, run and back-pedal footsteps of this tick, as feet (0 left, 1
+    /// right) for `0x2a61c8(0x18b2bd, foot, 1, 0x1e)`: none in the walk's first 15 ticks, at its tick 22 the left
+    /// foot; then, while no blend runs, the key times this tick's advance passed (`0x2b3aa0`): the run (4) 12.5
+    /// left and 1.0 right, the back-pedal (0x14) 8.0 left and 21.0 right, the walk (3) 49.5 left and 17.0 right.
+    pub fn footsteps(&self, v: &crate::hero::anim::AnimView) -> Vec<u8> {
+        let mut feet = Vec::new();
+        if self.state == 2 && self.timer < 0xf { return feet; }
+        if self.state == 2 && self.timer == 0x16 { feet.push(0); }
+        let keys: &[(f32, u8)] = match v.seq_b {
+            4 => &[(12.5, 0), (1.0, 1)],
+            0x14 => &[(8.0, 0), (21.0, 1)],
+            3 => &[(49.5, 0), (17.0, 1)],
+            _ => &[],
+        };
+        if v.blending() { return feet; }
+        for &(f, foot) in keys {
+            if f < v.frame && v.frame - f <= v.frame_step { feet.push(foot); }
+        }
+        feet
+    }
+
+    /// `0x2ca358`: the walk / run sequence and its playback speed (Clank's body; the back-pedal while strafing
+    /// backwards; else the walk 3 / run 4 by the speed, swapped in phase).
+    pub(super) fn walk_anim(&mut self, anim: &mut dyn AnimCtl) {
+        let v = anim.view();
+        if self.mode == 1 {
+            // Clank's body: its own walk, at |eff| × 90.
+            self.anim_speed = (self.eff_len * 90.0).max(0.5);
+            return;
+        }
+        if self.strafe != 0 && self.strafe_back {
+            // Strafing backwards: the back-pedal 0x14 at the speed × 25 (0.7..2.2).
+            if v.seq_b != 0x14 { self.set_anim(anim, 11.0, 0x14, 0); }
+            self.anim_speed = (self.speed * 25.0).clamp(0.7, 2.2);
+            return;
+        }
+        if v.seq_b == 0x14 {
+            self.set_anim(anim, 7.0, (self.substate + 3) as u8, 0);
+        } else if 4 < self.substate_timer && self.walk_gate == 0 {
+            let old = self.substate.clamp(0, 1);
+            let mut s = old;
+            let sp = self.speed / DT;
+            if sp < WALK_LOW[s as usize] || WALK_HIGH[s as usize] < sp {
+                while 0 < s && sp < WALK_LOW[s as usize] { s -= 1; }
+                while s < 1 && WALK_HIGH[s as usize] < sp { s += 1; }
                 if s != old {
-                    let fc_n = c.anim.frame_count((s + 3) as u8) as i32;
-                    let fc_o = c.anim.frame_count((old + 3) as u8) as i32;
-                    let fb = c.anim.view().frame_b as i32;
-                    let f = if fc_o > 0 && fc_n > 0 { ((fb * fc_n) / fc_o + PHASE_OFF[(s + 2 * old) as usize]) % fc_n } else { 0 };
-                    self.set_anim(c.anim, c.rng, blend(8), (s + 3) as u8, f);
+                    let (n_old, n_new) = (anim.frame_count(old as u8 + 3) as i32, anim.frame_count(s as u8 + 3) as i32);
+                    let frame = if n_old == 0 || n_new == 0 { 0 } else { (v.frame_b as i32 * n_new / n_old + PHASE[(s + 2 * old) as usize]) % n_new };
+                    self.substate = s;
+                    self.set_anim(anim, 8.0, (s + 3) as u8, frame);
                 }
             }
         }
-        let (k, hi) = if self.substate == 0 { (Pf::b(0x431d_0000), Pf::b(0x4080_0000)) } else { (Pf::b(0x4160_0000), Pf::b(0x400c_cccd)) };
-        let mut v = self.speed * k;
-        if v < Pf::b(0x3f19_999a) { v = Pf::b(0x3f19_999a); }
-        if hi < v { v = hi; }
-        self.anim_speed = v;
+        self.anim_speed = if self.substate == 0 { (self.speed * 157.0).clamp(0.6, 4.0) } else { (self.speed * 14.0).clamp(0.6, 2.2) };
     }
 }

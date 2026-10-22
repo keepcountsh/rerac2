@@ -1,4 +1,4 @@
-//! Going Commando's game tick in the engine (rc_game2: [`rc_game2::hero`], [`rc_game2::camera`]): Ratchet runs,
+//! Going Commando's game tick in the engine (rc_game: [`rc_game::hero`], [`rc_game::camera`]): Ratchet runs,
 //! jumps and falls on the level's collision, his moby and pose follow him, the camera follows him
 //! (docs/plan/rac2_bringup.md §6.3 F). The pieces that are the same in both games come from the R&C1 side: the pad
 //! record (`rc_game::pad`), Ratchet's animation player (`rc_game::hero::anim::RatchetAnim`), the moby renderer's
@@ -21,13 +21,13 @@ use crate::moby_anim::MobyAnim;
 use crate::moby_render::MobyOcclusion;
 use crate::play_camera::{self, PlayView};
 use bevy::prelude::*;
-use rc_game::follow_camera::CameraView;
+use rc_game::camera::CameraView;
 use rc_game::hero::anim::RatchetAnim;
 use rc_game::pad::PadState;
 use rc_game::ps2v::Pf;
-use rc_game2::camera::{CamInput, FollowCamera};
-use rc_game2::hero::physics::Env;
-use rc_game2::hero::{hero_update, Hero};
+use rc_game::camera::{CamInput, FollowCamera};
+use rc_game::hero::physics::Env;
+use rc_game::hero::{hero_update, Hero};
 
 pub struct Rac2PlayPlugin;
 
@@ -56,7 +56,7 @@ impl Plugin for Rac2PlayPlugin {
 /// The game state a level change keeps (`GameState::enter_level` keeps its game-wide part), for the next level's
 /// [`start`].
 #[derive(Resource)]
-struct Carry(rc_game2::game::GameState);
+struct Carry(rc_game::game::GameState);
 
 /// [`crate::level_switch::LevelUnload`]: the running game ends with its level; its game state is carried over.
 fn unload(mut commands: Commands, play: Option<Res<Play>>) {
@@ -82,19 +82,19 @@ pub(crate) struct Play {
     /// The level's mobys (crate::rac2_mobys).
     mobys: Option<crate::rac2_mobys::Rac2Mobys>,
     /// The game-wide state (bolts, health limit).
-    game: rc_game2::game::GameState,
-    /// The HUD's counters (rc_game2::hud).
-    hud: rc_game2::hud::Hud,
-    /// The help panel (rc_game2::help) and the level's English help texts.
-    help: rc_game2::help::Panel,
+    game: rc_game::game::GameState,
+    /// The HUD's counters (rc_game::hud).
+    hud: rc_game::hud::Hud,
+    /// The help panel (rc_game::help) and the level's English help texts.
+    help: rc_game::help::Panel,
     texts: Vec<rc_formats::strings::Message>,
     pub(crate) ticks: u64,
     trace: bool,
     /// The level's objects spawned once (later spawns are respawns).
     loaded: bool,
     /// The level's scene file (`G/SCENEn.WAD`) and its table, read at the first scene.
-    /// This tick's draw-callback quads (rc_game2::fx), drawn by [`draw_shots`].
-    fx_quads: Vec<rc_game2::fx::FxQuad>,
+    /// This tick's draw-callback quads (rc_game::fx), drawn by [`draw_shots`].
+    fx_quads: Vec<rc_game::fx::FxQuad>,
     scene_wad: Option<(Vec<u8>, rc_formats::rac2::scene::SceneWad)>,
     /// The class sequence slots a scene's actors took (class, slot) and what the slots held before.
     scene_slots: Vec<(usize, usize, Option<rc_formats::moby_anim::MobySequence>)>,
@@ -134,8 +134,8 @@ fn tick(
     mut audio: Option<ResMut<crate::audio_out::AudioOut>>,
     mut parts: Option<ResMut<crate::particle_render::ParticleSim>>,
 ) {
-    // The game drives the particles (crate::particles of rc_game2 on the shared pool; R&C1's own tick stays off).
-    if let Some(s) = parts.as_deref_mut() { s.external = true; }
+    // The game drives the particles (crate::particles of rc_game on the shared pool; R&C1's own tick stays off).
+
     // The front end's layer is up: the game waits (as R&C1's tick does under its front end).
     if front.is_some_and(|f| !f.done()) { return; }
     // The scenes add sequence slots to the level's class animations (as the game's actors do), unseen by the
@@ -181,15 +181,15 @@ fn tick(
         m.canopy = (crate::level_load::level_index() == 0)
             .then(|| crate::rac2_level::overlay(&crate::level_load::extracted_root(), 0).ok())
             .flatten()
-            .and_then(|ov| rc_game2::canopy::CanopyMesh::read(|a, n| crate::rac2_level::overlay_read(&ov, a, n)))
-            .map(rc_game2::canopy::Canopy::new);
+            .and_then(|ov| rc_game::canopy::CanopyMesh::read(|a, n| crate::rac2_level::overlay_read(&ov, a, n)))
+            .map(rc_game::canopy::Canopy::new);
         println!("rac2: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
         // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).
         use rc_formats::rac2::gameplay as g2;
         let pvars = g2::pvar_blocks(&lv.gameplay).unwrap_or_default();
         let records = g2::cameras(&lv.gameplay).map_err(|e| eprintln!("rac2: cameras: {e}")).unwrap_or_default();
-        p.game.cameras = rc_game2::cameras::Cameras::load(
+        p.game.cameras = rc_game::cameras::Cameras::load(
             records.iter().map(|r| (r.class as i16, r.pos, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
         );
     }
@@ -221,7 +221,7 @@ fn tick(
     p.pad.update(Some(&input.bytes()), false);
     p.game.frame += 1;
     match p.game.scenes.mode {
-        rc_game2::scene::SCENE => {
+        rc_game::scene::SCENE => {
             scene_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut(), parts.as_deref_mut().map(|s| &mut s.sys));
             // The scene's audio frame (the world runs in a scene: `0x3716f8`), heard from the scene camera.
             if let Some(out) = audio.as_deref_mut() {
@@ -238,7 +238,7 @@ fn tick(
             p.ticks += 1;
             return;
         }
-        rc_game2::scene::MOVIE => {
+        rc_game::scene::MOVIE => {
             movie_tick(p, audio.as_deref_mut());
             p.ticks += 1;
             return;
@@ -273,7 +273,7 @@ fn tick(
         let sound = audio.as_deref_mut().map(|o| crate::rac2_mobys::HostSound { system: o.system(), listener: listener(&p.camera), tick: p.ticks, loops: &mut mobys.loop_slots });
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     // `RC_MOBY_TRACE=0b0b,099c`: those classes' mobys every 15 ticks (`RC_MOBY_TRACE_EVERY`; a dev trace).
@@ -282,7 +282,7 @@ fn tick(
         if let Ok(list) = std::env::var("RC_MOBY_TRACE") {
             let classes: Vec<i16> = list.split(',').filter_map(|x| i16::from_str_radix(x.trim().trim_start_matches("0x"), 16).ok()).collect();
             for m in mobys.world.mobys.iter().filter(|m| m.state < 0x80 && classes.contains(&m.o_class)) {
-                let d = rc_game2::hero::physics::dist2(m.pos, p.hero.pos);
+                let d = rc_game::hero::physics::dist2(m.pos, p.hero.pos);
                 // `RC_MOBY_PV=240,258`: those pvar words too (hex offsets).
                 let a = m.instance.and_then(|ii| occl.as_ref()?.anim_index(ii)).and_then(|k| anim.as_ref()?.instances.get(k)).map(|i| i.state);
                 let a = a.map_or(String::new(), |s| format!(" seq {}/{} f {}/{} t {:.2} speed {:.2} rate {:.3} flags {}", s.seq_a, s.seq_b, s.frame_a, s.frame_b, s.t, s.speed, s.rate, s.flags));
@@ -295,16 +295,16 @@ fn tick(
     // Ratchet's hit record (his moby's `+0xa8`) with its source.
     let hit = mobys.hero_moby.and_then(|i| mobys.world.hit_message(i)).map(|rec| {
         let src = rec.tmpl.source.and_then(|s| mobys.world.mobys.get(s));
-        rc_game2::hero::damage::HitIn { rec, source_pos: src.map(|m| m.pos), source_class: src.map_or(-1, |m| m.o_class) }
+        rc_game::hero::damage::HitIn { rec, source_pos: src.map(|m| m.pos), source_class: src.map_or(-1, |m| m.o_class) }
     });
     {
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         if p.game.death_z.is_none() && lv.death_z.is_finite() { p.game.death_z = Some(lv.death_z); }
         let death_z = p.game.death_z;
         let classes: Vec<i16> = mobys.world.mobys.iter().map(|m| m.o_class).collect();
-        let nodes = rc_game2::moby::classes::swing_nodes(&mobys.world, 0x2f6);
-        let hooks = rc_game2::moby::classes::swing_nodes(&mobys.world, 0x323);
-        let pulls = rc_game2::moby::classes::swing_nodes(&mobys.world, 0x99d);
+        let nodes = rc_game::moby::classes::swing_nodes(&mobys.world, 0x2f6);
+        let hooks = rc_game::moby::classes::swing_nodes(&mobys.world, 0x323);
+        let pulls = rc_game::moby::classes::swing_nodes(&mobys.world, 0x99d);
         let env = Env {
             coll, pad: &p.pad, cam_yaw: p.camera.yaw(), cam_pos: p.camera.pos, cam_rows: p.camera.rows, mirror: false, scene: scene.as_ref(), hero_moby: mobys.hero_moby, targets: &targets, hit, death_z,
             clank: p.game.clank, pack: p.game.pack(), boots: p.game.boots, charge_boots: p.game.charge_boots, grind_boots: p.game.grind_boots, rails: &mobys.rails, level: p.game.level, classes: &classes, nodes: &nodes, hooks: &hooks, pulls: &pulls,
@@ -319,12 +319,12 @@ fn tick(
             let sys = out.system();
             let mut rng = sys.rng;
             if let Some(idx) = rc_game::audio::class_sounds::ratchet_trigger(class, &before, &after) {
-                let ev = rc_game::moby_update::services::SoundEvent { index: idx as i32, flags: 0, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
+                let ev = rc_game::audio::SoundEvent { index: idx as i32, flags: 0, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
                 sys.play_class_sound(&ev, Some(h), &listener(&p.camera), &mut rng);
             }
             // His states' own sounds (`0x2b9c90`).
             for (index, flags) in std::mem::take(&mut p.hero.sounds) {
-                let ev = rc_game::moby_update::services::SoundEvent { index, flags: flags as u32, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
+                let ev = rc_game::audio::SoundEvent { index, flags: flags as u32, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
                 sys.play_class_sound(&ev, Some(h), &listener(&p.camera), &mut rng);
             }
             // His looping sounds: a channel whose slot still plays his sound keeps it; stopped channels release it.
@@ -338,7 +338,7 @@ fn tick(
             }
             for (k, index) in std::mem::take(&mut p.hero.loops) {
                 if k >= p.hero_loops.len() || ours(sys, p.hero_loops[k]) { continue; }
-                let ev = rc_game::moby_update::services::SoundEvent { index, flags: 4, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
+                let ev = rc_game::audio::SoundEvent { index, flags: 4, moby: h, o_class: 0, sound_class: 0, pos: p.hero.pos, tick: p.ticks };
                 p.hero_loops[k] = sys.play_class_sound(&ev, Some(h), &listener(&p.camera), &mut rng);
             }
             // `0x2a6420`: the footsteps, `0x360920`: level def `class·4 + foot·2 + variant` past the level's
@@ -364,9 +364,9 @@ fn tick(
     // `0x2a6dd0`'s write-back: Ratchet's moby takes his position, angles and rows.
     if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
         (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
-        h.mode |= rc_game2::moby::mode::KEEP_ROWS;
+        h.mode |= rc_game::moby::mode::KEEP_ROWS;
         // `0x2b2b48` → `0x31a8e4`: his light from the level's light regions where he is.
-        if let Some((light, ambient)) = rc_game2::light::region_light(&mobys.level.light_regions, h.pos) { (h.light, h.ambient) = (light, ambient); }
+        if let Some((light, ambient)) = rc_game::light::region_light(&mobys.level.light_regions, h.pos) { (h.light, h.ambient) = (light, ambient); }
     }
     // The item pass (`0x2b21f0`): the hand item placed at Ratchet's new pose and updated.
     {
@@ -380,8 +380,8 @@ fn tick(
         // The write-back's `0x313dc0`: his moby's sphere and grid cells follow him (the hits find him there).
         if let Some(i) = mobys.hero_moby { mobys.world.rebuild(i, &host); }
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
-        rc_game2::hero::items::item_pass(&mut mobys.world, &mut ctx);
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
+        rc_game::hero::items::item_pass(&mut mobys.world, &mut ctx);
     }
     // The use stance's sequence for Ratchet (`0x2af5e0` / `0x2af848` call `0x2d2508` from the item pass).
     if let Some((blend, seq)) = p.hero.items.hero_anim.take() {
@@ -389,17 +389,17 @@ fn tick(
         p.hero.set_anim(&mut ctl, blend, seq, 0);
     }
     // `0x2afc38`: his pose layers (the holding layers, the face), after the item pass.
-    rc_game2::hero::layers::upkeep(&mut p.hero, &p.anim.ctl(class));
+    rc_game::hero::layers::upkeep(&mut p.hero, &p.anim.ctl(class));
     // `UpdateParts` (`0x331150`), after the hero.
-    if let Some(s) = parts.as_deref_mut() { rc_game2::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos); }
-    // The draw callbacks the updates registered, called by the frame's draw (rc_game2::fx).
+    if let Some(s) = parts.as_deref_mut() { rc_game::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos); }
+    // The draw callbacks the updates registered, called by the frame's draw (rc_game::fx).
     {
         // The callbacks read joints (0x0b0b's glows) through the loop's host, as the draw reads the mobys' poses.
         let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         let (tx, ty) = crate::game_camera::projection_tans(None);
         let [fwd, left, up] = p.camera.rows;
         let view = rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty);
-        p.fx_quads = rc_game2::fx::callbacks(&mut mobys.world, &host, &mut p.game, &mobys.level, &view, p.camera.pos);
+        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, &mobys.level, &view, p.camera.pos);
     }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
@@ -449,7 +449,7 @@ fn tick(
     let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
     // `0x2fa770`: the held item when it has ammo (not with the items off, `0x18c0d4`).
     let it = &p.hero.items;
-    let weapon = rc_game2::hero::items::row(it.item).filter(|r| r.ammo && it.ready == 2 && p.hero.mode == 0).map(|r| (r.icon, p.game.ammo.get(it.item.max(0) as usize).copied().unwrap_or(0), r.max_ammo));
+    let weapon = rc_game::hero::items::row(it.item).filter(|r| r.ammo && it.ready == 2 && p.hero.mode == 0).map(|r| (r.icon, p.game.ammo.get(it.item.max(0) as usize).copied().unwrap_or(0), r.max_ammo));
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh, weapon);
     // The help panel (`0x2f5680`).
     p.help.tick(&mut p.game, p.pad.pressed & rc_game::pad::button::TRIANGLE != 0, &p.texts);
@@ -494,9 +494,9 @@ fn tick(
             s.skip_advance = true;
             if let Some(i) = a.instances.get_mut(k) { i.state = s; }
             if let Some(slot) = a.snapshots.get_mut(k) { *slot = p.anim.snapshot.clone(); }
-            // His posture's joint modifiers (rc_game2::hero::posture).
+            // His posture's joint modifiers (rc_game::hero::posture).
             if let (Some(mods), Some(m)) = (a.mods.get_mut(k), p.mobys.as_ref()) { *mods = p.hero.posture.modifiers(&m.hero_targets); }
-            // His pose layers (rc_game2::hero::layers).
+            // His pose layers (rc_game::hero::layers).
             if let (Some(l), Some(m)) = (a.layers.get_mut(k), p.mobys.as_ref()) { *l = m.hero_layers(&p.hero.layers); }
         }
     }
@@ -504,11 +504,11 @@ fn tick(
     let far = p.game.view_far * 1024.0;
     crate::moby_lod::set_draw_cap(p.game.moby_draw_cap());
     let (view, fwd) = match cam.view {
-        Some((pos, rows)) => (PlayView { view: scene_view(&rc_game::scene_player::SceneCamera { eye: pos, rows, tan_half_fov: p.game.cameras.tan, cut: false }), tan_half_fov: p.game.cameras.tan, far }, rows[0]),
+        Some((pos, rows)) => (PlayView { view: scene_view(&rc_game::scene_camera::SceneCamera { eye: pos, rows, tan_half_fov: p.game.cameras.tan, cut: false }), tan_half_fov: p.game.cameras.tan, far }, rows[0]),
         None => (PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far }, p.camera.rows[0]),
     };
     commands.insert_resource(view);
-    // The frame's sky draw `0x2fd348`: the shells turn by the view's forward (rc_game2::sky).
+    // The frame's sky draw `0x2fd348`: the shells turn by the view's forward (rc_game::sky).
     p.game.sky.frame(fwd);
     commands.insert_resource(crate::sky_render::GameSkyRotations(p.game.sky.angles.iter().map(|&a| crate::sky_render::euler_rotation(a)).collect()));
     p.ticks += 1;
@@ -526,19 +526,19 @@ fn tick(
         p.hero = Hero::spawn(at, rot[2]);
         p.hero.hp = p.game.max_health;
         p.hero.damage.armour = armour;
-        p.anim = RatchetAnim { curves: &rc_game2::hero::CURVES, ..RatchetAnim::new(&lv.mobys.anim[p.class]) };
+        p.anim = RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&lv.mobys.anim[p.class]) };
         p.camera = FollowCamera::new(&cam_input(&p.hero, lv.collision.as_ref(), [0.0; 2]));
         p.game.show_health = Some(0x168);
     }
 }
 
-/// `0x32c858`'s changes (rc_game2::scene): a scene's end and start, a movie's start.
+/// `0x32c858`'s changes (rc_game::scene): a scene's end and start, a movie's start.
 fn mode_changes(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
     for c in p.game.scenes.switch(p.hero.hp) {
         match c {
-            rc_game2::scene::Change::EndedScene => end_scene(p, lv),
-            rc_game2::scene::Change::StartScene(id) => start_scene(p, lv, id),
-            rc_game2::scene::Change::StartMovie(id) => {
+            rc_game::scene::Change::EndedScene => end_scene(p, lv),
+            rc_game::scene::Change::StartScene(id) => start_scene(p, lv, id),
+            rc_game::scene::Change::StartMovie(id) => {
                 println!("rac2: movie {id:#x}");
                 p.movie_started = true;
                 p.movie = Some(crate::rac2::Playing::level(id as u32, rc_formats::rac2::scene::record_of(id) as usize));
@@ -621,7 +621,7 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
         }
     };
     let Some(mobys) = p.mobys.as_mut() else { return };
-    use rc_game2::moby::mode;
+    use rc_game::moby::mode;
     let mut actors = Vec::new();
     for a in &scene.chunks[0].actors {
         let o_class = match a.class { 0x215 | 0x10d1 => 0x0d54, c => c as i16 };
@@ -693,7 +693,7 @@ fn end_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
         if let Some(q) = lv.mobys.anim.get_mut(ci).and_then(|a| a.sequences.get_mut(slot)) { *q = before; }
     }
     let at = p.hero.pos;
-    let ground = lv.collision.as_ref().and_then(|c| rc_game::collision_query::coll_line(c, [at[0], at[1], at[2] + 0.5], [at[0], at[1], 0.01], rc_game::collision_query::QueryFlags(2))).map(|o| o.point[2]);
+    let ground = lv.collision.as_ref().and_then(|c| rc_game::collision::coll_line(c, [at[0], at[1], at[2] + 0.5], [at[0], at[1], 0.01], rc_game::collision::QueryFlags(2))).map(|o| o.point[2]);
     p.game.scenes.end_scene(&mut p.hero, ground);
     // `0x3711e8`: the speech stopped, the music back 30 ticks later.
     rc_game::audio::scene::post(rc_game::audio::scene::SceneAudioCmd::StopSpeech);
@@ -714,7 +714,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
         let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     let hp = p.hero.hp;
@@ -761,11 +761,11 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(&lv.mobys.anim[p.class]));
             let mut host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
             let scene = crate::rac2_mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-            let mut ctx = rc_game2::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
-            rc_game2::hero::items::head_pass(&mut mobys.world, &mut ctx);
+            let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
+            rc_game::hero::items::head_pass(&mut mobys.world, &mut ctx);
             // The ship's parts on the scene's ship, the one drawn, at itself (as the original's frames show them).
             let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
-            if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game2::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
+            if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
         }
         let hl = mobys.hero_layers(&p.hero.layers);
         let pose = crate::rac2_mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
@@ -805,12 +805,12 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
-    if let Some(sys) = parts.as_deref_mut() { rc_game2::particles::update_parts(sys, &mobys.world, frame.camera.eye); }
+    if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye); }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: p.game.view_far * 1024.0 });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }
 
-fn scene_view(c: &rc_game::scene_player::SceneCamera) -> CameraView {
+fn scene_view(c: &rc_game::scene_camera::SceneCamera) -> CameraView {
     let v = |a: [f32; 3]| [Pf::f(a[0]), Pf::f(a[1]), Pf::f(a[2]), Pf::ZERO];
     let f = c.rows[0];
     let euler = [Pf::ZERO, Pf::f(-f[2].clamp(-1.0, 1.0).asin()), Pf::f(f[1].atan2(f[0])), Pf::ZERO];
@@ -824,7 +824,7 @@ struct GameHud {
     data: crate::rac2::Data,
     /// `(icon, frame)` → layer texture and texel size.
     icons: std::collections::HashMap<(u16, u16), (usize, [f32; 2])>,
-    /// FX texture → layer texture and texel size (the markers', rc_game2::hud::marker).
+    /// FX texture → layer texture and texel size (the markers', rc_game::hud::marker).
     fx: std::collections::HashMap<u16, (usize, [f32; 2])>,
 }
 
@@ -854,7 +854,7 @@ fn draw_hud(
         match crate::rac2_level::hud(&root, crate::level_load::level_index()) {
             Ok(h) => {
                 // The bolt icon and the items' (the weapon panel, `ItemRow::icon`).
-                for id in std::iter::once(0x7567u16).chain(rc_game2::hero::items::ROWS.iter().map(|r| r.icon).filter(|&i| i != 0)) {
+                for id in std::iter::once(0x7567u16).chain(rc_game::hero::items::ROWS.iter().map(|r| r.icon).filter(|&i| i != 0)) {
                     let f = h.icon_frame(id, 0);
                     if let Ok(t) = h.decode_frame_raw(f) {
                         icons.insert((id, 0), (textures.len(), [t.width as f32, t.height as f32]));
@@ -880,38 +880,38 @@ fn draw_hud(
     let p: &mut Play = p;
     let mut quads = Vec::new();
     if let Some(pic) = p.movie_picture.take() { hud.layer.write(&mut images, crate::rac2::MOVIE, &pic); }
-    if p.game.scenes.mode == rc_game2::scene::MOVIE {
-        rc_game2::gui::picture(&mut quads, rc_game2::gui::Picture::Movie);
-    } else if p.game.scenes.mode != rc_game2::scene::SCENE {
+    if p.game.scenes.mode == rc_game::scene::MOVIE {
+        rc_game::gui::picture(&mut quads, rc_game::gui::Picture::Movie);
+    } else if p.game.scenes.mode != rc_game::scene::SCENE {
         // In a scene the HUD and the help are not drawn (`0x2e6d88`).
         // `0x2db598`: the tick's markers, then cleared (not while Ratchet is in state 0x6f).
         let markers = std::mem::take(&mut p.game.markers);
         if p.hero.state != 0x6f {
-            let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
+            let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
             let alive = |id: usize| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id)).is_some_and(|m| m.state != 0xfe && m.state != 0xfd);
-            quads.extend(rc_game2::hud::marker_quads(&markers, p.camera.pos, p.camera.rows, crate::play_camera::GAME_TAN_HALF_FOV, &tex, &alive));
+            quads.extend(rc_game::hud::marker_quads(&markers, p.camera.pos, p.camera.rows, crate::play_camera::GAME_TAN_HALF_FOV, &tex, &alive));
         }
         let draws = p.hud.draw(p.game.bolts);
-        let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game2::gui::Tex::Slot(i), s));
-        quads = rc_game2::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
+        let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+        quads = rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
         quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs, &hud.data.assets().sprites));
     }
     // The letterbox (`0x2e82c0`: black bars of `0x1b186c` pixels at the top and the bottom).
     let bars = p.game.scenes.bars as f32;
     if 0.0 < bars {
-        let (w, h) = (rc_game2::gui::SCREEN_W, rc_game2::gui::SCREEN_H);
+        let (w, h) = (rc_game::gui::SCREEN_W, rc_game::gui::SCREEN_H);
         for (y0, y1) in [(0.0, bars), (h - bars, h)] {
-            quads.push(rc_game2::gui::Quad { pos: [[0.0, y0], [w, y0], [0.0, y1], [w, y1]], uv: [[0.0; 2]; 4], tex: rc_game2::gui::Tex::None, rgba: [0, 0, 0, 0x80] });
+            quads.push(rc_game::gui::Quad { pos: [[0.0, y0], [w, y0], [0.0, y1], [w, y1]], uv: [[0.0; 2]; 4], tex: rc_game::gui::Tex::None, rgba: [0, 0, 0, 0x80] });
         }
     }
     // The fade into and out of a scene (`0x1b1860`, 1 black).
     let fade = p.game.scenes.fade.clamp(0.0, 1.0);
-    if 0.0 < fade { rc_game2::gui::fill(&mut quads, [0, 0, 0, (fade * 128.0) as u8]); }
+    if 0.0 < fade { rc_game::gui::fill(&mut quads, [0, 0, 0, (fade * 128.0) as u8]); }
     let mut d = crate::hud_render::Hud2d::default();
     for q in quads {
         let (tex, nearest) = match q.tex {
-            rc_game2::gui::Tex::Slot(i) => (crate::hud_render::Tex::Frame(i), false),
-            rc_game2::gui::Tex::Picture(rc_game2::gui::Picture::Movie) => (crate::hud_render::Tex::Frame(crate::rac2::MOVIE), true),
+            rc_game::gui::Tex::Slot(i) => (crate::hud_render::Tex::Frame(i), false),
+            rc_game::gui::Tex::Picture(rc_game::gui::Picture::Movie) => (crate::hud_render::Tex::Frame(crate::rac2::MOVIE), true),
             _ => (crate::hud_render::Tex::None, false),
         };
         d.screen_prim(tex, q.pos, q.uv, u32::from_le_bytes(q.rgba), false);
@@ -993,7 +993,7 @@ fn move_instances(
     }
 }
 
-/// Aranos's arrival: the ship's screen (`rc_game2::scene::Scenes::ship_screen`) through crate::world_screen. The
+/// Aranos's arrival: the ship's screen (`rc_game::scene::Scenes::ship_screen`) through crate::world_screen. The
 /// actor's entities go to the screen's layer while it shows (off the frame's) and back after.
 #[allow(clippy::too_many_arguments)]
 fn ship_screen(
@@ -1044,10 +1044,10 @@ fn ship_screen(
 /// `0x367b68` on the ship being drawn — `ship` (the scene's actor), else the first drawn one of class 0x0d54 — seen
 /// from `camera`: this tick's canopy for [`draw_canopy`].
 fn canopy_tick(mobys: &mut crate::rac2_mobys::Rac2Mobys, lv: &crate::level_load::LoadedLevel, occl: Option<&MobyOcclusion>, anim: Option<&mut MobyAnim>, ship: Option<usize>, camera: [f32; 3], mode: i32) {
-    use rc_game2::moby::MobyHost;
+    use rc_game::moby::MobyHost;
     mobys.canopy_frame = None;
     let Some(canopy) = mobys.canopy.as_mut() else { return };
-    let drawn = |m: &rc_game2::moby::Moby| m.o_class == 0xd54 && m.state < 0x80 && m.mode & 0x81 == 0;
+    let drawn = |m: &rc_game::moby::Moby| m.o_class == 0xd54 && m.state < 0x80 && m.mode & 0x81 == 0;
     let Some(s) = ship.filter(|&s| mobys.world.mobys.get(s).is_some_and(drawn)).or_else(|| mobys.world.mobys.iter().position(drawn)) else { return };
     let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl, anim, created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera, sound: None };
     let m = &mobys.world.mobys[s];
@@ -1084,7 +1084,7 @@ fn draw_canopy(
             let k = q.map(|i| i as usize);
             prims.quad(k.map(|i| f.verts[i]), k.map(|i| f.uvs[i]), [rgba; 4]);
         }
-        groups.push(crate::fx_draw::FxGroup { fx: rc_game2::canopy::TEXTURE, additive: false, subtract: false, prims });
+        groups.push(crate::fx_draw::FxGroup { fx: rc_game::canopy::TEXTURE, additive: false, subtract: false, prims });
     }
     let fog = fog.map(|f| f.uniform).unwrap_or_else(|| crate::game_camera::TfragFog::new(&level.0.fog));
     let tex = level.0.particles.textures.as_ref().map(|t| t.fx_textures.as_slice());
@@ -1092,7 +1092,7 @@ fn draw_canopy(
     draw.slots.show(&mut commands, &mut vis, &mut a, groups, crate::fx_draw::LIST1_BIAS, "ship canopy");
 }
 
-/// The mobys' draw callbacks through crate::fx_draw: the quads the tick's callbacks made (rc_game2::fx: the shots'
+/// The mobys' draw callbacks through crate::fx_draw: the quads the tick's callbacks made (rc_game::fx: the shots'
 /// trails, 0x0b0a's glows), one group per texture and blend.
 #[derive(Resource, Default)]
 struct ShotDraw {
@@ -1153,12 +1153,12 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     let inst = &m.instances[instance];
     let scale = m.placed.get(instance).copied().flatten().map_or(1.0, |pl| pl.scale);
     let mut hero = Hero::spawn(inst.position, inst.rotation[2]);
-    hero.hp = rc_game2::game::GameState::default().max_health;
+    hero.hp = rc_game::game::GameState::default().max_health;
     let camera = FollowCamera::new(&cam_input(&hero, lv.collision.as_ref(), [0.0; 2]));
     println!("rac2: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
-        anim: RatchetAnim { curves: &rc_game2::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
-        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game2::hud::Hud::new(rc_game2::game::GameState::default().max_health), ticks: 0, loaded: false,
+        anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
+        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
         fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9],
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("rac2: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),

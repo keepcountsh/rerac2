@@ -1,5 +1,5 @@
 //! Draw-callback effects: the GS primitives the game sends straight from a moby's draw callback (`0x2e7920`, the
-//! frame's second list, after the particles; the callbacks are rc_game2::fx). One material for all of them
+//! frame's second list, after the particles; the callbacks are rc_game::fx). One material for all of them
 //! ([`FxPrimMaterial`], `fx_prim.wgsl`: `0x2eb998` quads and strips with an FX texture, MODULATE, fog, ALPHA 0x44 /
 //! 0x48 on the frame's display bytes through crate::display_blend) and one vertex builder ([`PrimBuf`]); crate::rac2_play
 //! draws the tick's quads through [`FxSlots`].

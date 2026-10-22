@@ -3,7 +3,7 @@
 
 Writes tools/ghidra/names/census_systems_rac2.tsv from:
   * work/census-rac2/shared.tsv (a census run without tags: every shared function and global the unported units use);
-  * the citations of each address in R&C2's port and docs (crates/rc-game2, crates/rc-engine/src/rac2*,
+  * the citations of each address in R&C2's port and docs (crates/rc-game, crates/rc-engine/src/rac2*,
     crates/rc-formats/src/rac2, docs/plan/rac2*): each citing line is read; a line that says the thing is not ported
     (not ported / not yet / later / not drawn / not modelled / waits / stub) counts against, any other line of code
     for. One line of code for: has (the port names it as its model); only lines against: missing; only doc mentions:
@@ -15,22 +15,22 @@ places them. Run from the repo root:  python3 tools/census/rac2_tags.py [path/to
 import os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-CITES = ["crates/rc-game2/", "crates/rc-engine/src/rac2", "crates/rc-formats/src/rac2", "docs/plan/rac2"]
+CITES = ["crates/rc-game/", "crates/rc-engine/src/rac2", "crates/rc-formats/src/rac2", "docs/plan/rac2"]
 NEG = re.compile(r"not ported|not yet|\blater\b|not drawn|not modell?ed|waits? for|\bstub|isn't ported|not read yet|left out|not wired|unported", re.I)
 
 # The system a citing file stands for (first match).
 SYSTEMS = [
-    ("rc-game2/src/hero/items", "items"), ("rc-game2/src/hero/layers", "anim"), ("rc-game2/src/hero/", "hero"),
-    ("rc-game2/src/hero.rs", "hero"), ("rc-game2/src/moby/ai", "enemy"), ("rc-game2/src/moby/hits", "hits"),
-    ("rc-game2/src/moby/attach", "group"), ("rc-game2/src/moby/shards", "breakfx"), ("rc-game2/src/moby/bolts", "bolts"),
-    ("rc-game2/src/moby/aim", "weapons"), ("rc-game2/src/moby/classes/lancer", "weapons"), ("rc-game2/src/moby/classes/shot", "weapons"),
-    ("rc-game2/src/moby/classes/wrench", "weapons"), ("rc-game2/src/moby/classes/enemies", "enemy"),
-    ("rc-game2/src/moby/classes/carriers", "group"), ("rc-game2/src/moby/classes/", "moby"), ("rc-game2/src/moby", "moby"),
-    ("rc-game2/src/particles", "particles"), ("rc-game2/src/fx", "fxdraw"), ("rc-game2/src/canopy", "fxdraw"),
-    ("rc-game2/src/camera", "camera"), ("rc-game2/src/cameras", "camera"), ("rc-game2/src/hud", "ui"), ("rc-game2/src/gui", "ui"),
-    ("rc-game2/src/help", "ui"), ("rc-game2/src/front_end", "ui"), ("rc-game2/src/scene", "scene"), ("rc-game2/src/level", "level"),
-    ("rc-game2/src/paths", "path"), ("rc-game2/src/rng", "rng"), ("rc-game2/src/game", "game"), ("rc-game2/src/light", "light"),
-    ("rc-game2/src/sky", "sky"), ("rc-engine/src/rac2_mobys", "moby"), ("rc-engine/src/rac2_play", "game"),
+    ("rc-game/src/hero/items", "items"), ("rc-game/src/hero/layers", "anim"), ("rc-game/src/hero/", "hero"),
+    ("rc-game/src/hero.rs", "hero"), ("rc-game/src/moby/ai", "enemy"), ("rc-game/src/moby/hits", "hits"),
+    ("rc-game/src/moby/attach", "group"), ("rc-game/src/moby/shards", "breakfx"), ("rc-game/src/moby/bolts", "bolts"),
+    ("rc-game/src/moby/aim", "weapons"), ("rc-game/src/moby/classes/lancer", "weapons"), ("rc-game/src/moby/classes/shot", "weapons"),
+    ("rc-game/src/moby/classes/wrench", "weapons"), ("rc-game/src/moby/classes/enemies", "enemy"),
+    ("rc-game/src/moby/classes/carriers", "group"), ("rc-game/src/moby/classes/", "moby"), ("rc-game/src/moby", "moby"),
+    ("rc-game/src/particles", "particles"), ("rc-game/src/fx", "fxdraw"), ("rc-game/src/canopy", "fxdraw"),
+    ("rc-game/src/camera", "camera"), ("rc-game/src/cameras", "camera"), ("rc-game/src/hud", "ui"), ("rc-game/src/gui", "ui"),
+    ("rc-game/src/help", "ui"), ("rc-game/src/front_end", "ui"), ("rc-game/src/scene", "scene"), ("rc-game/src/level", "level"),
+    ("rc-game/src/paths", "path"), ("rc-game/src/rng", "rng"), ("rc-game/src/game", "game"), ("rc-game/src/light", "light"),
+    ("rc-game/src/sky", "sky"), ("rc-engine/src/rac2_mobys", "moby"), ("rc-engine/src/rac2_play", "game"),
     ("rc-engine/src/rac2_level", "level"), ("rc-formats/src/rac2", "formats"), ("docs/plan/rac2", "docs"),
 ]
 

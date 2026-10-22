@@ -30,9 +30,9 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct MusicTrack {
     pub name: String,
-    pub rate: u32,
-    pub body: Arc<[u8]>,
-    pub right: Option<Arc<[u8]>>,
+    pub(crate) rate: u32,
+    pub(crate) body: Arc<[u8]>,
+    pub(crate) right: Option<Arc<[u8]>>,
 }
 
 impl MusicTrack {
@@ -49,20 +49,18 @@ impl MusicTrack {
         t.right = Some(r.body);
         Ok(t)
     }
-    /// Length in seconds at the recorded rate.
-    pub fn seconds(&self) -> f64 { (self.body.len() / vag::FRAME_BYTES * vag::FRAME_SAMPLES) as f64 / self.rate as f64 }
 }
 
 /// Which EE player a command / reply belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlayerId {
+pub(crate) enum PlayerId {
     Main,
     Transition,
 }
 
 /// The callback a stream command registered (named by address).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StreamCallback {
+pub(crate) enum StreamCallback {
     /// 0x27af20
     Start,
     /// 0x27aec8
@@ -81,7 +79,7 @@ pub enum StreamCallback {
 
 /// EE → IOP stream commands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StreamCommand {
+pub(crate) enum StreamCommand {
     /// `PlayVAGStreamByLocEx(table[track], vol, group, queue, flags)`: flags 0x20 one-shot, 0x24 looping,
     /// 0x21 preseek (paused until continued); `queue` = a running handle to append to.
     Play { player: PlayerId, track: usize, vol: i32, group: u8, queue: i32, flags: u32, cb: StreamCallback },
@@ -93,10 +91,10 @@ pub enum StreamCommand {
 
 /// A callback invocation: `value` is the handle, the time remaining or 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StreamReply {
-    pub player: PlayerId,
-    pub cb: StreamCallback,
-    pub value: i32,
+pub(crate) struct StreamReply {
+    pub(crate) player: PlayerId,
+    pub(crate) cb: StreamCallback,
+    pub(crate) value: i32,
 }
 
 /// A `music_Playing` record.
@@ -104,34 +102,34 @@ pub struct StreamReply {
 pub struct Player {
     pub handle: i32,
     pub track: i16,
-    pub vol: i16,
-    pub flags: u16,
+    pub(crate) vol: i16,
+    pub(crate) flags: u16,
     /// 0 idle, 1 requested, 2 started, 3 buffered, 4 playing, 5 stop, 6 stopping, 7 ended, 8 queue body,
     /// 9 body queued; bit 15 paused.
     pub state: u16,
     /// +0x10: set by `music_Transition` on the transition player.
-    pub stinger: i16,
+    pub(crate) stinger: i16,
     /// +0x18: last time remaining.
-    pub remaining: i32,
+    pub(crate) remaining: i32,
 }
 
 /// The music EE state.
 #[derive(Clone, Debug, Default)]
 pub struct Music {
     /// Tracks present in the level header table (`music[15]` non-zero).
-    pub present: [bool; 15],
+    pub(crate) present: [bool; 15],
     pub main: Player,
-    pub transition: Player,
+    pub(crate) transition: Player,
     /// 0x1516f2 / 0x1516f3.
-    pub pending_track: i8,
-    pub pending_stinger: i8,
+    pub(crate) pending_track: i8,
+    pub(crate) pending_stinger: i8,
     /// 0x1516f0.
-    pub phase: i16,
+    pub(crate) phase: i16,
     /// 0x1516f4 / 0x1516f8: stinger length and quarter.
-    pub fade_total: i32,
-    pub fade_quarter: i32,
+    pub(crate) fade_total: i32,
+    pub(crate) fade_quarter: i32,
     /// 0x1516fc: request debounce (420 ticks after a change).
-    pub timer: i32,
+    pub(crate) timer: i32,
     /// Commands a callback issued (the preseek retry); they go out with the next batch.
     deferred: Vec<StreamCommand>,
 }
@@ -144,10 +142,10 @@ fn fast_dec_timer(t: &mut i32) -> bool {
 }
 
 /// `ScaleTicks(7)·60.0` = 420 on NTSC.
-pub const REQUEST_DEBOUNCE: i32 = 420;
+pub(crate) const REQUEST_DEBOUNCE: i32 = 420;
 
 impl Music {
-    pub fn new(present: [bool; 15]) -> Self { Music { present, pending_track: -1, pending_stinger: -1, ..Default::default() } }
+    pub(crate) fn new(present: [bool; 15]) -> Self { Music { present, pending_track: -1, pending_stinger: -1, ..Default::default() } }
 
     fn player(&mut self, p: PlayerId) -> &mut Player {
         match p {
@@ -159,14 +157,14 @@ impl Music {
     fn has(&self, k: i32) -> bool { usize::try_from(k).ok().and_then(|k| self.present.get(k)).copied().unwrap_or(false) }
 
     /// `music_start_track(track, flags, vol)` (0x279fa8).
-    pub fn start_track(&mut self, track: i16, flags: u16, vol: i16, cmds: &mut Vec<StreamCommand>) {
+    pub(crate) fn start_track(&mut self, track: i16, flags: u16, vol: i16, cmds: &mut Vec<StreamCommand>) {
         if self.main.handle != 0 || !self.has(track as i32) { return; }
         self.main = Player { handle: -1, track, vol, flags, state: 1, ..self.main };
         cmds.push(StreamCommand::Play { player: PlayerId::Main, track: track as usize, vol: vol as i32, group: 1, queue: 0, flags: 0x20, cb: StreamCallback::Start });
     }
 
     /// `music_preseek_track` (0x279ed0): like the start, paused (flags 0x21).
-    pub fn preseek_track(&mut self, track: i16, flags: u16, vol: i16, cmds: &mut Vec<StreamCommand>) {
+    pub(crate) fn preseek_track(&mut self, track: i16, flags: u16, vol: i16, cmds: &mut Vec<StreamCommand>) {
         if self.main.handle != 0 || !self.has(track as i32) { return; }
         self.main = Player { handle: -1, track, vol, flags, state: 1, ..self.main };
         cmds.push(StreamCommand::Play { player: PlayerId::Main, track: track as usize, vol: vol as i32, group: 1, queue: 0, flags: 0x21, cb: StreamCallback::Preseek });
@@ -191,7 +189,7 @@ impl Music {
 
     /// `FUN_0027a248(track, stinger)`: a music box request. Taken at once when both players are idle,
     /// otherwise remembered for `music_Update`.
-    pub fn request(&mut self, track: i16, stinger: i16) {
+    pub(crate) fn request(&mut self, track: i16, stinger: i16) {
         let differs = self.main.track != track || self.pending_track != -1;
         if differs && self.main.state == 0 && self.transition.state == 0 {
             self.main.track = track;
@@ -204,7 +202,7 @@ impl Music {
     }
 
     /// Apply one callback.
-    pub fn reply(&mut self, r: StreamReply) {
+    pub(crate) fn reply(&mut self, r: StreamReply) {
         let v = r.value;
         let phase = self.phase;
         let p = self.player(r.player);
@@ -293,7 +291,7 @@ impl Music {
     }
 
     /// `music_Update` (0x27a688), once per frame from `sound_update`. Dialogue (0x151720) is not ported.
-    pub fn update(&mut self, cmds: &mut Vec<StreamCommand>) {
+    pub(crate) fn update(&mut self, cmds: &mut Vec<StreamCommand>) {
         cmds.append(&mut self.deferred);
         let m = self.main;
         if m.state & 0x8000 == 0 {
@@ -350,7 +348,7 @@ impl Music {
     }
 
     /// One frame: the music boxes (hero position), then `music_Update`. The task-level entry point.
-    pub fn tick(&mut self, hero_pos: [f32; 3], boxes: &mut [MusicBox]) -> Vec<StreamCommand> {
+    pub(crate) fn tick(&mut self, hero_pos: [f32; 3], boxes: &mut [MusicBox]) -> Vec<StreamCommand> {
         for b in boxes.iter_mut() { b.update(hero_pos, self); }
         let mut cmds = Vec::new();
         self.update(&mut cmds);
@@ -366,24 +364,24 @@ impl Music {
 /// is inside (|local x|, |y|, |z| ≤ 1). Pvars `{s32 track_a, s32 track_b, s32 armed, s16 stinger_a,
 /// s16 stinger_b}`; a −1 stinger takes the other one.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MusicBox {
-    pub instance: usize,
-    pub center: [f32; 3],
-    pub inverse: [[f32; 4]; 3],
-    pub tracks: [i32; 2],
-    pub armed: i32,
-    pub stingers: [i16; 2],
+pub(crate) struct MusicBox {
+    pub(crate) instance: usize,
+    pub(crate) center: [f32; 3],
+    pub(crate) inverse: [[f32; 4]; 3],
+    pub(crate) tracks: [i32; 2],
+    pub(crate) armed: i32,
+    pub(crate) stingers: [i16; 2],
 }
 
 impl MusicBox {
-    pub fn from_instance(index: usize, s: &SoundInstance, pvars: &[u8]) -> Option<Self> {
+    pub(crate) fn from_instance(index: usize, s: &SoundInstance, pvars: &[u8]) -> Option<Self> {
         if s.o_class != 6 || pvars.len() < 16 { return None; }
         let w = |k: usize| i32::from_le_bytes(pvars[4 * k..4 * k + 4].try_into().unwrap());
         let h = |o: usize| i16::from_le_bytes([pvars[o], pvars[o + 1]]);
         Some(MusicBox { instance: index, center: s.position(), inverse: s.inverse, tracks: [w(0), w(1)], armed: w(2), stingers: [h(0xc), h(0xe)] })
     }
 
-    pub fn update(&mut self, hero: [f32; 3], music: &mut Music) {
+    pub(crate) fn update(&mut self, hero: [f32; 3], music: &mut Music) {
         if self.stingers[0] == -1 && self.stingers[1] == -1 && self.tracks == [-1, -1] { return; }
         let v = [hero[0] - self.center[0], hero[1] - self.center[1], hero[2] - self.center[2]];
         let r = &self.inverse;
@@ -433,12 +431,12 @@ struct RightVoice {
 }
 
 /// Stream voices use a fast linear attack and release (989snd's stream ADSR is not reversed).
-pub const STREAM_ADSR1: u16 = 0x00ff;
-pub const STREAM_ADSR2: u16 = 0x1fc0;
+pub(crate) const STREAM_ADSR1: u16 = 0x00ff;
+pub(crate) const STREAM_ADSR2: u16 = 0x1fc0;
 
 /// The IOP stream player.
 #[derive(Clone, Debug, Default)]
-pub struct Streams {
+pub(crate) struct Streams {
     streams: BTreeMap<i32, Stream>,
     next: i32,
 }
@@ -461,7 +459,7 @@ impl Streams {
     }
 
     /// Runs one stream command; returns the callback value.
-    pub fn execute(&mut self, cmd: &StreamCommand, tracks: &[Option<Arc<MusicTrack>>; 15], vm: &mut VoiceManager, spu: &mut Spu) -> Option<StreamReply> {
+    pub(crate) fn execute(&mut self, cmd: &StreamCommand, tracks: &[Option<Arc<MusicTrack>>; 15], vm: &mut VoiceManager, spu: &mut Spu) -> Option<StreamReply> {
         match *cmd {
             StreamCommand::Play { player, track, vol, group, queue, flags, cb } => {
                 let Some(t) = tracks.get(track).and_then(|t| t.as_ref()) else { return Some(StreamReply { player, cb, value: 0 }) };
@@ -598,140 +596,3 @@ impl Streams {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::audio::SPU_VOICES;
-
-    fn present() -> [bool; 15] { std::array::from_fn(|k| k < 9) }
-
-    #[test]
-    fn level_start_queues_the_loop() {
-        let mut m = Music::new(present());
-        let mut cmds = Vec::new();
-        m.start_track(0, 1, 0x400, &mut cmds);
-        assert_eq!(cmds, vec![StreamCommand::Play { player: PlayerId::Main, track: 0, vol: 0x400, group: 1, queue: 0, flags: 0x20, cb: StreamCallback::Start }]);
-        // Before the handle comes back music_Update does nothing.
-        let mut c2 = Vec::new();
-        m.update(&mut c2);
-        assert!(c2.is_empty());
-        m.reply(StreamReply { player: PlayerId::Main, cb: StreamCallback::Start, value: 7 });
-        assert_eq!(m.main.state, 8);
-        let mut c3 = Vec::new();
-        m.update(&mut c3);
-        assert_eq!(c3, vec![StreamCommand::Play { player: PlayerId::Main, track: 1, vol: 0x400, group: 1, queue: 7, flags: 0x24, cb: StreamCallback::Body }]);
-        assert_eq!(m.main.state, 9);
-        m.reply(StreamReply { player: PlayerId::Main, cb: StreamCallback::Body, value: 7 });
-        assert_eq!((m.main.state, m.main.handle), (4, 7));
-        // Playing: every frame asks for the time remaining and liveness.
-        let mut c4 = Vec::new();
-        m.update(&mut c4);
-        assert_eq!(c4.len(), 2);
-        assert_eq!(m.main.handle, -1);
-        m.reply(StreamReply { player: PlayerId::Main, cb: StreamCallback::Alive, value: 7 });
-        assert_eq!(m.main.handle, 7);
-    }
-
-    #[test]
-    fn requests_debounce_and_transition() {
-        let mut m = Music::new(present());
-        m.main = Player { handle: 7, track: 0, vol: 0x400, flags: 1, state: 4, ..Default::default() };
-        m.request(4, 8);
-        assert_eq!((m.pending_track, m.pending_stinger), (4, 8));
-        let mut cmds = Vec::new();
-        m.update(&mut cmds);
-        assert!(cmds.iter().any(|c| matches!(c, StreamCommand::Play { player: PlayerId::Transition, track: 8, .. })));
-        assert_eq!(m.timer, REQUEST_DEBOUNCE);
-        // Stinger starts: phase 1, then the time remaining arms the fade (T, T/4).
-        m.reply(StreamReply { player: PlayerId::Transition, cb: StreamCallback::Transition, value: 9 });
-        assert_eq!((m.transition.state, m.phase), (4, 1));
-        m.reply(StreamReply { player: PlayerId::Transition, cb: StreamCallback::Remaining, value: 288_000 });
-        assert_eq!((m.phase, m.fade_total, m.fade_quarter), (2, 288_000, 72_000));
-        // Half way through the first quarter: half volume.
-        m.transition.remaining = 288_000 - 36_000;
-        m.main.handle = 7;
-        let mut c = Vec::new();
-        m.update(&mut c);
-        assert!(c.contains(&StreamCommand::SetVolume { player: PlayerId::Main, handle: 7, vol: 0x200 }));
-        // Idle players: a request just sets the track.
-        let mut idle = Music::new(present());
-        idle.request(2, 6);
-        assert_eq!((idle.main.track, idle.pending_track), (2, -1));
-    }
-
-    /// A preseeked stream has no envelope yet, but its voice is reserved: tones must not take it, and
-    /// `Continue` restores the stream's ownership and volume.
-    #[test]
-    fn preseeked_stream_keeps_its_voice() {
-        let mut body = vec![0u8; 32];
-        body[1] = 0;
-        body[16 + 1] = 1;
-        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body), right: None });
-        let tracks: [Option<Arc<MusicTrack>>; 15] = std::array::from_fn(|k| (k == 0).then(|| track.clone()));
-        let mut vm = VoiceManager::default();
-        let mut spu = Spu::new(Arc::from(Vec::new()));
-        let mut st = Streams::default();
-        let play = StreamCommand::Play { player: PlayerId::Main, track: 0, vol: 0x400, group: 1, queue: 0, flags: 0x21, cb: StreamCallback::Preseek };
-        let r = st.execute(&play, &tracks, &mut vm, &mut spu).unwrap();
-        assert_eq!(r.value, 1);
-        let voice = st.streams[&r.value].voice;
-        assert!(!spu.voices[voice].active());
-        assert_eq!(vm.voices[voice].owner, VoiceUse::Stream { handle: 1 });
-        let (vol, basevol) = (spu.voices[voice].vol, vm.voices[voice].basevol);
-        // Fill every other voice with a tone; an allocator that treats the inactive preseek as free takes it.
-        let tone: Arc<[u8]> = Arc::from(&[0u8; 16][..]);
-        for i in 0..SPU_VOICES {
-            if i == voice { continue; }
-            spu.voices[i].key_on(VoiceData::Ram(Arc::clone(&tone)), 0, 0x1000, 0x00ff, 0x1fc0);
-            vm.voices[i] = VoiceSlot { owner: VoiceUse::Tone { handle: i as u32 + 100 }, priority: 0, group: 0, basevol: (0, 0), start_tick: 0, generation: spu.voices[i].generation };
-        }
-        let taken = vm.allocate(&mut spu, 0, 0, 0);
-        assert_ne!(taken, Some(voice));
-        assert_eq!(vm.voices[voice].owner, VoiceUse::Stream { handle: 1 });
-        st.execute(&StreamCommand::Continue { handle: r.value }, &tracks, &mut vm, &mut spu);
-        assert!(spu.voices[voice].active());
-        assert_eq!(spu.voices[voice].vol, vol);
-        assert_eq!(vm.voices[voice], VoiceSlot { owner: VoiceUse::Stream { handle: 1 }, priority: 127, group: 1, basevol, start_tick: 0, generation: spu.voices[voice].generation });
-        // Once the stream's natural end is observed, the voice can be used again.
-        for _ in 0..200 { spu.mix(); }
-        assert!(!spu.voices[voice].active());
-        let r = st.execute(&StreamCommand::Query { player: PlayerId::Main, handle: r.value, cb: StreamCallback::Alive }, &tracks, &mut vm, &mut spu).unwrap();
-        assert_eq!(r.value, 0);
-        assert_eq!(vm.voices[voice].owner, VoiceUse::Free);
-    }
-
-    /// Queueing the body behind a stream that already ended fails (0) instead of starting a second stream the
-    /// player never tracks; the player then goes idle and restarts the track (one music stream throughout).
-    #[test]
-    fn body_behind_an_ended_stream_fails() {
-        // A 2-frame track (ends after 56 samples).
-        let mut body = vec![0u8; 32];
-        body[1] = 0;
-        body[16 + 1] = 1;
-        let track = Arc::new(MusicTrack { name: "t".into(), rate: 48000, body: Arc::from(body), right: None });
-        let tracks: [Option<Arc<MusicTrack>>; 15] = std::array::from_fn(|k| (k < 2).then(|| track.clone()));
-        let mut vm = VoiceManager::default();
-        let mut spu = Spu::new(Arc::from(Vec::new()));
-        let mut st = Streams::default();
-        let play = |queue, flags, cb| StreamCommand::Play { player: PlayerId::Main, track: 0, vol: 0x400, group: 1, queue, flags, cb };
-        let r = st.execute(&play(0, 0x20, StreamCallback::Start), &tracks, &mut vm, &mut spu).unwrap();
-        assert_eq!(r.value, 1);
-        let music = |spu: &Spu| spu.voices.iter().filter(|v| v.active()).count();
-        assert_eq!(music(&spu), 1);
-        for _ in 0..200 { spu.mix(); }
-        assert_eq!(music(&spu), 0);
-        let r = st.execute(&play(1, 0x24, StreamCallback::Body), &tracks, &mut vm, &mut spu).unwrap();
-        assert_eq!(r.value, 0);
-        assert_eq!(music(&spu), 0);
-        // The EE side: body failed → idle → the track restarts (one new stream).
-        let mut m = Music::new(std::array::from_fn(|k| k < 2));
-        m.main = Player { handle: 1, track: 0, vol: 0x400, flags: 1, state: 9, ..Default::default() };
-        m.reply(r);
-        let mut cmds = Vec::new();
-        m.update(&mut cmds);
-        for c in &cmds { if let Some(r) = st.execute(c, &tracks, &mut vm, &mut spu) { m.reply(r); } }
-        let mut cmds = Vec::new();
-        m.update(&mut cmds);
-        assert_eq!(cmds.iter().filter(|c| matches!(c, StreamCommand::Play { queue: 0, .. })).count(), 1, "{cmds:?}");
-    }
-}

@@ -1,1080 +1,555 @@
-//! The wrench melee: the □ trigger (`HeroPdaGadget` 0x240ed8, item 8), the ground combo 0x13 (three swings)
-//! and the jump attack 0x14 — their SetState entries (0x23cf98), per-state physics (0x2370b8) and
-//! transitions (0x242930) — the aim helper 0x2351d0, and the part of the wrench moby's update (0x2be1c0) that
-//! tests the swing against mobys and sends the hit (`coll_sphere_mobys` 0x214468 / `CollLine_Fix` with a hit
-//! template → 0x26e968). Spec: `docs/plan/player_controller.md` "Melee and item swap". Addresses level01.
+//! The wrench (group 6): the □ trigger of the hand item (L00 `0x2c96d0`, item 10), the ground combo 0x13 (three
+//! swings), the jump attack 0x14, the throw 0x15 / 0x83 (the comet strike: the wrench flies, `0x2ba610`) and the
+//! gadget swing 0x22, their SetState entries (`0x2c4560` group 6), physics (`0x2ba8e0`) and transitions (`0x2cb650`),
+//! the aim `0x2b76a8` with the target search `0x2ae900` / `0x2ae400`. The wrench moby's own update (the hit test,
+//! the flight) is `crate::moby::classes::wrench` (`0x38d318`). R&C1's melee (crate::base::hero::melee) is the map.
 //!
-//! The comet strike 0x15 (crouch + □) has its entry here and its physics, the throw and the wrench's flight
-//! states 10 / 11 in [`super::comet`]; the glove throw 0x23 has the group-6 entry here and the rest in
-//! [`super::weapons`]; the gadget lunge 0x20 has the group-6 entry here and the rest in [`super::walloper`] (with the
-//! melee aim search `0x22e238`, [`aim_search`]); the rebound 0x21 off a target whose record has flag 2 ([`Hero::rebound_entry`],
-//! the physics and transitions of 0x7a: `super::packs`). The wrench states aim with the target search
-//! ([`Hero::aim_assist`]: the turn toward the best crate or enemy in range). Not ported: 0x51, the wall-hit spark line and the jump-attack
-//! ground sparks (cosmetic + sounds) and the trail counters of the wrench (pvar +0x70/+0x74/+0x7c). The stats
-//! records the entries bump (0x1416c0, 0x141848, 0x141850 + 0x1417a8) are counted in [`Melee::entered`] and
-//! applied to the game state by the caller ([`apply_melee_stats`], [`MeleeRecords`]).
-#![allow(clippy::neg_cmp_op_on_partial_ord, clippy::assign_op_pattern)] // FPU compare semantics and op order are spelled out on purpose.
+//! **The swing table** (`0x25d910`, 0x2c a row, row `0x18aa1c`): `[kind (0 ground, 1 jump, 2 comet), step,
+//! chain-before, input-ref, chain-from, jump-after, idle-after, hit-from, hit-to, +0x24, +0x28]`, frames of Ratchet's
+//! sequence. Rows 0..2 the combo's swings (sequences 0x17..0x19), 3 the throw (0x1a), 4 the jump attack (0x2b), 5 / 6
+//! R&C1's Magneboots rows, 7 / 8 the underwater swings 0x4d (sequences 0xf / 0x10).
+//!
+//! Not ported: the stats counters the entries bump (`0x18c3d8`, `0x18c750`, `0x18c75c`, `0x18c600`), the sounds
+//! (`0x2b9c90`, `0x2d6cc8`), the strafe and the gravity frames (`0x18c0e3` ≠ 0), the sliding floors (`0x18b2b2`:
+//! `0x2b96a0`), the jump attack's ground sparks and wall hit (`0x2e14b0` with flag 0x10), the comet aim `0x41fe58`'s
+//! own search (`0x3257a0`: the plain aim is used), 0x1f (the glove swing, needs a glove) and 0x4d (the swim family).
 
-use super::anim::{AnimCtl, AnimView};
-use super::items::{HitSink, ItemEnv, HERO_LISTS};
 use super::physics::*;
-use super::states::Ctx;
+use super::states::Entry;
 use super::Hero;
-use crate::moby_runtime::{MobyId, MobyTable};
-use crate::moby_update::services::HitTemplate;
-use crate::pad::{button, fast_arctan, fast_diff_rots};
-use crate::ps2v::Pf;
-use rc_formats::moby_anim;
+use crate::hero::anim::AnimCtl;
+use crate::pad::button;
 
-/// The wrench's look-stance reticle (`0x2be1c0`): its colour (R low) and FX texture.
-pub const LOOK_MARKER_RGBA: u32 = 0xff91_7267;
-pub const LOOK_MARKER_FX: usize = 0x25;
-
-/// The melee table at 0x17c0a8 (stride 0x2c, indexed by 0x13fdb0): `[kind (0 ground combo, 1 jump attack, 2
-/// comet), step, chain-before, input-ref, chain-from, jump-after, idle-after, hit-from, hit-to, +0x24,
-/// +0x28]`, frames of Ratchet's sequence. Rows 0..2 = combo swings 0x17..0x19, 3 = comet 0x1a, 4 = jump attack 0x2b,
-/// 5 / 6 = the Magneboots swings 0x5c / 0x5d (0x70; row 6 read from level01 memory 0x17c0a8 + 6·0x2c).
-pub const COMBO: [[i32; 11]; 7] = [
-    [0, 0, 33, 19, 26, 24, 31, 17, 23, 17, 24],
-    [0, 1, 25, 7, 12, 13, 23, 8, 13, 6, 12],
+/// `0x25d910`: the swing table (11 words a row).
+pub const SWINGS: [[i32; 11]; 9] = [
+    [0, 0, 33, 19, 25, 24, 26, 17, 23, 17, 24],
+    [0, 1, 25, 7, 12, 13, 15, 8, 13, 6, 12],
     [0, 2, 0, 16, 23, 19, 21, 12, 16, 9, 23],
-    [2, 0, 99, 83, 88, 87, 91, 99, 99, 99, 99],
+    [2, 0, 99, 83, 88, 35, 91, 99, 99, 99, 99],
     [1, 0, 99, 32, 28, 28, 30, 1, 28, 22, 25],
     [0, 0, 33, 19, 26, 24, 31, 18, 22, 17, 24],
     [0, 1, 25, 7, 17, 18, 23, 8, 13, 6, 12],
+    [0, 0, 16, 3, 12, 8, 10, 3, 6, 99, 99],
+    [0, 1, 16, 3, 12, 8, 10, 3, 6, 99, 99],
 ];
-const C_KIND: usize = 0;
-const C_STEP: usize = 1;
-const C_CHAIN_BEFORE: usize = 2; // +0x08
-const C_REF: usize = 3; // +0x0c
-const C_CHAIN_FROM: usize = 4; // +0x10
-const C_JUMP_AFTER: usize = 5; // +0x14
-const C_IDLE_AFTER: usize = 6; // +0x18
-const C_HIT_FROM: usize = 7; // +0x1c
-const C_HIT_TO: usize = 8; // +0x20
+const KIND: usize = 1; // +0x04: the swing's step (0 / 1 / 2: which of the combo's swings)
+const CHAIN_BEFORE: usize = 2; // +0x08
+const REF: usize = 3; // +0x0c
+const CHAIN_FROM: usize = 4; // +0x10
+const JUMP_AFTER: usize = 5; // +0x14
+const IDLE_AFTER: usize = 6; // +0x18
+pub const HIT_FROM: usize = 7; // +0x1c
+pub const HIT_TO: usize = 8; // +0x20
 
-const HALF_PI: Pf = Pf::b(0x3fc9_0fdb);
-/// The "current yaw" sentinel of SetPlanarVel (99999.0).
-const YAW_SENTINEL: Pf = Pf::b(0x47c3_4f80);
-/// 15.009831 rad/s: the aim turn rate.
-const AIM_TURN: Pf = Pf::b(0x4170_2845);
-/// The cones of the wrench states' `0x2351d0(range, cone, cone2)` (45°, 60°, 30°): the combo 0x13 (5, 45°, 45°), the
-/// jump attack 0x14 (entry 8, 60°, none; physics 8, 60°, 60°), the comet strike 0x15 (entry 14, 30°, none; physics
-/// 14, 30°, 45°: `super::comet`).
-pub(super) const AIM_45: f32 = f32::from_bits(0x3f49_0fdb);
-pub(super) const AIM_60: f32 = f32::from_bits(0x3f86_0a92);
-pub(super) const AIM_30: f32 = f32::from_bits(0x3f06_0a92);
-/// Wrench class (moby +0xa6).
-pub const WRENCH_CLASS: i16 = 0x47;
-/// The wrench's hit sound, `FUN_002bda88()`: class sound 1 when the moby hit (0x1742d8: the line's moby, or the
-/// sphere's first listed moby, `coll_sphere_mobys` stores it there too) has mode bit 0x20 and the record its first
-/// pvar word points to (`FUN_002711f8`, the creatures' damage record) has +9 = 1, else 0 (crates, props). The same
-/// rule for the swing, the jump attack and the thrown wrench.
-pub fn wrench_hit_sound(table: &MobyTable, hit: Option<MobyId>) -> i32 {
-    let Some(m) = hit.and_then(|id| table.mobys.get(id)) else { return 0 };
-    let rec = crate::moby_update::triggers::pvar_record(m);
-    (rec.and_then(|o| m.pvars.get(o + 9)) == Some(&1)) as i32
+/// The current-yaw sentinel of `0x2b4310` (99999.0).
+const YAW_KEEP: f32 = f32::MAX;
+
+/// A moby the aim can pick (the target list `0x1fac60`: the run list's mobys with mode 0x1000).
+#[derive(Clone, Copy, Debug)]
+pub struct Target {
+    pub id: usize,
+    pub pos: V3,
+    /// `+0xe0`: the third row (the line test aims at `pos + row`).
+    pub up: V3,
+    /// `0x3204e8`: a crate (o_class 500..540); with class type 0x16 the range bonus applies too.
+    pub crate_like: bool,
+    /// Class header +0x46.
+    pub kind: i16,
+    /// `0x31fa20`: an enemy's (mode 0x20) look data, its health block's `+0x28..+0x2a`: how near Ratchet looks at
+    /// it, its priority, the height he looks at (in eighths).
+    pub look: Option<[u8; 3]>,
 }
 
-/// The melee fields of the hero block (0x13fd40..0x13fdcc).
+/// The melee block (`0x18a9e0..0x18aa30`).
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Melee {
-    /// 0x13fd40 / 0x13fd50: Ratchet's hand (joint list 0) and the wrench head this tick; 0x13fd60 /
-    /// 0x13fd70: last tick's.
-    pub hand: V4,
-    pub tip: V4,
-    pub hand_prev: V4,
-    pub tip_prev: V4,
-    /// 0x13fda4: aim-assist target (never found in the port); 0x13fda8: aim set; 0x13fdac: aim yaw.
+pub struct MeleeBlock {
+    /// `0x18aa1c` (s16): the swing table row.
+    pub row: i16,
+    /// `0x18aa04`: the target moby and its position; `0x18aa08`: aiming (at a target or along the stick).
     pub target: Option<usize>,
-    pub aimed: i32,
-    pub aim_yaw: Pf,
-    /// 0x13fdb0: row of [`COMBO`].
-    pub combo: i32,
-    /// 0x13fdb4: the swing hit something (one hit sound per swing).
-    pub hit: i32,
-    /// 0x13fdbc: combo speed factor (1.0 at entry); 0x13fdc0: jump attack descending.
-    pub speed_k: Pf,
-    pub falling: Pf,
-    /// 0x13fdcc: toggled by each comet strike.
-    pub comet_side: u32,
-    /// Entries of 0x13 / 0x14 / 0x15 since the caller last applied their stats records ([`apply_melee_stats`];
-    /// the hero has no game state of its own).
-    pub entered: [u16; 3],
-}
-
-/// The stats records the melee SetState entries bump (0x23cf98, group 6), by name. Storage keeps the game's
-/// addresses, so saves stay byte-compatible:
-/// * 0x13 (ground combo) → **0x1416c0**, which the save descriptors see as level 8's slot of chunk 3007
-///   (0x141680 + 8·8): the game aliases it, so it lives in `levels[8].entry`;
-/// * 0x14 (jump attack) → 0x141848 = misc record 0 (chunk 17);
-/// * 0x15 (comet strike) → 0x141850 = misc record 1 and 0x1417a8 = gadget-help record 17 (chunk 18).
-pub trait MeleeRecords {
-    fn wrench_combo_record(&mut self) -> &mut crate::game_state::HelpRec;
-    fn jump_attack_record(&mut self) -> &mut crate::game_state::HelpRec;
-    fn comet_records(&mut self) -> [&mut crate::game_state::HelpRec; 2];
-}
-
-impl MeleeRecords for crate::game_state::GameState {
-    fn wrench_combo_record(&mut self) -> &mut crate::game_state::HelpRec { &mut self.levels[8].entry }
-    fn jump_attack_record(&mut self) -> &mut crate::game_state::HelpRec { &mut self.global.move_help[0] }
-    fn comet_records(&mut self) -> [&mut crate::game_state::HelpRec; 2] {
-        let g = &mut self.global;
-        [&mut g.move_help[1], &mut g.gadget_help[17]]
-    }
-}
-
-/// One bump (the same code for every record): `count++` unless 0xffff, `time = max(time,
-/// ScaleTicks(play time 0x15eea4) / 600)`, `mask |= 1 << level | 0x80000000`.
-pub fn bump_record(r: &mut crate::game_state::HelpRec, level: i32, scaled_play_time: i32) {
-    if r.count != 0xffff { r.count = r.count.wrapping_add(1); }
-    let t = scaled_play_time / 600;
-    if (r.time as i32) < t { r.time = t as u16; }
-    r.mask |= (1u32 << (level as u32 & 31)) | 0x8000_0000;
-}
-
-/// Applies (and clears) the entries counted in `melee.entered` to `gs` (level 0x15ed84 = `gs.global.level`,
-/// play time scaled by the session's tick scale).
-pub fn apply_melee_stats(melee: &mut Melee, gs: &mut crate::game_state::GameState, session: &crate::game_state::SessionState) {
-    if melee.entered == [0; 3] { return; }
-    let (level, t) = (gs.global.level, session.scale_ticks(gs.global.play_time));
-    for _ in 0..melee.entered[0] { bump_record(gs.wrench_combo_record(), level, t); }
-    for _ in 0..melee.entered[1] { bump_record(gs.jump_attack_record(), level, t); }
-    for _ in 0..melee.entered[2] { for r in gs.comet_records() { bump_record(r, level, t); } }
-    melee.entered = [0; 3];
+    pub target_pos: V3,
+    pub aim: u8,
+    /// `0x18aa0c` / `0x18a9e0`: the aim's yaw and direction.
+    pub aim_yaw: f32,
+    pub aim_dir: V3,
+    /// `0x18aa14`: the lunge factor of the combo.
+    pub lunge: f32,
+    /// `0x18aa20`: the jump attack came down.
+    pub fell: f32,
+    /// `0x18aa2c`: alternates on each throw.
+    pub throw_toggle: u32,
+    /// `0x18aa24` / `0x18aa28`: the throw's yaw and pitch (the look stance's camera).
+    pub throw_yaw: f32,
+    pub throw_pitch: f32,
+    /// `0x18aa1e` (s16): the wrench hit a wall this swing.
+    pub wall_hit: i16,
+    /// `0x18aa64`: the throw's catch timer.
+    pub catch_t: i32,
+    /// `0x18a980` / `0x18a990`: the wrench's sweep segment last tick (Ratchet's joint 0, the head).
+    pub sweep_base: V3,
+    pub sweep_head: V3,
 }
 
 impl Hero {
-    fn combo_row(&self) -> &'static [i32; 11] { &COMBO[(self.melee.combo.clamp(0, 6)) as usize] }
+    fn swing(&self) -> &'static [i32; 11] { &SWINGS[(self.melee.row.clamp(0, 8)) as usize] }
 
-    /// `FUN_002351d0`'s aim without its target search (unless already aimed, the stick's direction past 0.5, else the
-    /// facing), for the glove throw (`super::weapons`); the wrench states use [`Hero::aim_assist`].
-    pub(super) fn melee_aim_pub(&mut self, env: &Env) { self.melee_aim(env) }
-
-    fn melee_aim(&mut self, env: &Env) {
-        let mut a = self.melee.aim_yaw;
-        if self.melee.aimed == 0 {
-            a = self.rot[2];
-            if Pf::b(0x3f00_0000) < self.stick_mag {
-                self.stick_target(env, Pf::ONE);
-                self.melee.aimed = 1;
-                self.melee.target = None;
-                a = self.target_yaw;
-            }
-        }
-        self.melee.aim_yaw = a;
-    }
-
-    /// `FUN_0022dda0(0)` is a wrench (`0x231ac0`): the hand moby is ready and of class 0x47.
-    fn hand_is_wrench(&self) -> bool { self.items.ready_item().is_some_and(|m| m.o_class == WRENCH_CLASS) }
-
-    // --------------------------------------------------------------------------------------------
-    // HeroPdaGadget 0x240ed8 (case 8: the wrench)
-
-    /// `0x240ed8` (the weapon-use check at the top of the transitions), item 8; the other hand items go to
-    /// [`super::gadgets::pda_item`] (the bomb glove's ○ throw, the Swingshot, … not ported: false). Returns true
-    /// when it changed the state (the transitions then stop).
-    pub fn weapon_check(&mut self, c: &mut Ctx) -> bool {
-        let t0 = self.timer;
-        let it = &self.items;
-        // The board levels' copies let the board weapon (0x24) through the 0x1413fc gate (level16 0x223350); no other
-        // level ever holds it.
-        if it.f13fc != 0 && it.slot.id != super::hoverboard::WEAPON_ITEM && (it.slot.id != 8 || self.f658 != 1) { return false; }
-        if self.mode != 0 || it.slot.item.is_none() { return false; }
-        if it.slot.state != 2 { return false; }
-        // The other hand items (Swingshot, Hologuise, PDA, …): super::gadgets.
-        if it.slot.id != 8 { return super::gadgets::pda_item(self, c, t0); }
-        let mask = it.slot.fire_mask;
-        let pad = c.env.pad;
-        let v = c.anim.view();
-        let frame = Pf::f(v.frame);
-        let blending = v.blending();
-        let st = self.state;
-        let new = 'pick: {
-            if (self.group as u32) < 2 || (self.group == 4 && self.jump.landed != 0) {
-                if self.f063a != 0 || pad.pressed_within(mask, ticks(7)).is_none() { break 'pick None; }
-                let Some(m) = self.items.slot.item.as_ref() else { break 'pick None };
-                if m.o_class != WRENCH_CLASS || m.mstate != 0 { break 'pick None; }
-                let strafe = st == 1 || st == 0x1e;
-                if pad.held & button::CROUCH == 0 && (!strafe || !(ticks(20) < self.timer)) {
-                    break 'pick Some(if self.f658 == 1 { 0x70 } else { 0x13 });
-                }
-                if strafe && ticks(20) < self.timer {
-                    // FUN_00236da0: the look stance's (first-person) wrench throw, no state change (super::comet).
-                    super::comet::throw_wrench(self, c.env, true);
-                    break 'pick None;
-                }
-                break 'pick Some(0x15);
-            }
-            let air = matches!(st, 7 | 9 | 8 | 6 | 0x2d | 0x11)
-                || (st == 0xe && Pf::b(0x4200_0000) < frame)
-                || (st == 0xb && if self.jump.kind7a0 != 3 { Pf::b(0x4190_0000) < frame } else { Pf::b(0x41a0_0000) < frame });
-            if air && ticks(10) < self.timer {
-                let n = if st == 0xb || st == 0xe { ticks(0x12) } else { ticks(10) };
-                if pad.pressed_within(mask, n).is_none() { break 'pick None; }
-                let h = if self.jump.descending == 0 { Pf::b(0x3dcc_cccd) } else { Pf::b(0x3f11_eb85) };
-                if h < self.height || (st == 8 && Pf::b(0x3f11_eb85) < self.height) {
-                    // The cable overlays (level00 0x227fa0, Kerwan 0x21aac8): □ at a cable (0x13f94c) is the
-                    // wrench's grab, not the jump attack (super::boots; the flag stays 0 elsewhere).
-                    if super::boots::cable_contact(self) { break 'pick None; }
-                    break 'pick Some(0x14);
-                }
-                if self.f063a != 0 { break 'pick None; }
-                break 'pick Some(0x13);
-            }
-            if self.group != 6 { break 'pick None; }
-            let row = *self.combo_row();
-            if st == 0x15 && ticks(0x1e) < self.timer {
-                if blending { break 'pick None; }
-                if Pf::from_i32(row[C_CHAIN_FROM]) <= frame && pad.held & button::CROUCH != 0
-                    && pad.pressed_within(mask, ticks(0xf)).is_some()
-                {
-                    break 'pick Some(0x15);
-                }
-            }
-            if blending || !(Pf::from_i32(row[C_CHAIN_FROM]) <= frame) { break 'pick None; }
-            let mut n = frame.to_i32().wrapping_sub(row[C_REF]).wrapping_mul(2);
-            if !(0 < n) { n = 1; }
-            if ticks(0xf) < n { n = ticks(0xf); }
-            if self.f063a != 0 || pad.pressed_within(mask, n).is_none() { break 'pick None; }
-            if pad.held & button::CROUCH != 0 { break 'pick Some(0x15); }
-            Some(if self.f658 == 1 { 0x70 } else { 0x13 })
-        };
-        if let Some(s) = new { self.set_state(c, s, true); }
-        // The epilogue (state unchanged): the Thruster hover 0x81 / the 0x14161a latch (super::packs).
-        if self.timer == t0 { super::packs::pda_epilogue(self, c); }
-        self.timer < t0
-    }
-
-    // --------------------------------------------------------------------------------------------
-    // SetState 0x23cf98, group 6
-
-    /// The group-6 entries (0x13, 0x14, 0x15, 0x20, 0x23, 0x51): group 6, 0x13fdbc = 1, 0x1415d4 = 0, aim and
-    /// target cleared, hit flag cleared; then per state.
-    pub(super) fn melee_entry(&mut self, c: &mut Ctx, id: i32, play: bool) {
+    /// `0x2c4560` group 6 (0x13, 0x14, 0x15, 0x22, 0x83): the shared part (the throw while a jump is held is the
+    /// throw itself), then per state.
+    pub(super) fn melee_entry(&mut self, anim: &mut dyn AnimCtl, env: &Env, id: i32, play: bool) -> Entry {
         self.group = 6;
-        self.melee.speed_k = Pf::ONE;
-        self.f15d4 = 0;
-        self.melee.aimed = 0;
+        if id != 0x83 { self.cam_mode = 0; }
+        self.melee.lunge = 1.0;
+        self.melee.aim = 0;
         self.melee.target = None;
-        self.melee.hit = 0;
-        if let Some(k) = match id { 0x13 => Some(0), 0x14 => Some(1), 0x15 => Some(2), _ => None } {
-            self.melee.entered[k] = self.melee.entered[k].saturating_add(1);
-        }
+        self.melee.wall_hit = 0;
         match id {
             0x13 => {
-                self.items.restore = 0;
-                let old = *self.combo_row();
-                let mut step = 0;
-                if self.prev_group == 6 && old[C_KIND] == 0 && Pf::f(c.anim.view().frame) < Pf::from_i32(old[C_CHAIN_BEFORE]) {
-                    step = (old[C_STEP] + 1) % 3;
+                // The next swing of the combo when the last ended late enough (`+0x24` before the frame), or the one
+                // before last within 0x1b ticks.
+                let row = self.melee.row.clamp(0, 8) as usize;
+                let step = SWINGS[row][KIND];
+                let frame = anim.view().frame;
+                let mut i = 0;
+                if self.prev_state == 0x13 && frame < SWINGS[row][CHAIN_BEFORE] as f32 {
+                    i = (step + 1) % 3;
+                } else if self.prev2_state == 0x13 && self.timer + self.prev_timer < 0x1b {
+                    i = (step + 1) % 3;
                 }
-                self.melee.combo = step;
-                self.aim_assist(c.env, 5.0, AIM_45, AIM_45);
-                if !play { return; }
-                let (b, f2) = match step { 0 => (5, 0), 1 => (7, 2), _ => (7, 4) };
-                let mut b = ticks(b);
-                if self.melee.aimed != 0 && step < 2 {
-                    b += (fast_diff_rots(self.melee.aim_yaw, self.rot[2]) * Pf::b(0x3fc0_0000)).to_i32();
+                self.melee.row = i as i16;
+                self.aim_search(env, 5.0, 0.785_398_2, 0.785_398_2);
+                if play {
+                    let (mut blend, frame0) = match i { 0 => (5, 0), 1 => (7, 2), _ => (7, 4) };
+                    if self.melee.aim != 0 && i < 2 {
+                        let a = rot_dist(self.melee.aim_yaw, self.rot[2]);
+                        blend += (a * 1.5) as i32;
+                    }
+                    self.set_anim(anim, blend as f32, (i + 0x17) as u8, frame0 / 2);
+                    self.items.hand_anim = Some((i as u8 + 3, (frame0 / 2) as u8, blend as u8));
                 }
-                self.set_anim(c.anim, c.rng, Pf::from_i32(b), (0x17 + step) as u8, f2 / 2);
-                if self.hand_is_wrench() { self.items.pending_blend = Some(((step + 3) as u8, f2 / 2, b)); }
             }
             0x14 => {
-                self.melee.combo = 4;
-                self.f15d4 = 0x50;
-                self.items.restore = 0;
-                self.aim_assist(c.env, 8.0, AIM_60, -1.0);
-                self.melee.falling = Pf::ZERO;
-                self.items.slot.swap_timer = 10;
-                if !play { return; }
-                let mut b = ticks(0xb);
-                if self.prev_state == 0xb && self.prev_timer < ticks(0x2a) { b = ticks(0x11); }
-                self.set_anim(c.anim, c.rng, Pf::from_i32(b), 0x2b, 4);
-                if self.hand_is_wrench() { self.items.pending_blend = Some((10, 4, b + 2)); }
-            }
-            0x23 => super::weapons::throw_entry(self, c, play),
-            0x20 => super::walloper::entry(self, c, play),
-            0x15 => {
-                self.melee.combo = 3;
-                self.items.restore = 0;
-                self.aim_assist(c.env, 14.0, AIM_30, -1.0);
-                self.melee.comet_side = (self.melee.comet_side == 0) as u32;
-                if !play { return; }
-                let mut b = ticks(10);
-                if c.anim.view().seq_b == 0x1a { b = ticks(3); }
-                if self.prev_state == 1 { b = ticks(0x11); }
-                self.set_anim(c.anim, c.rng, Pf::from_i32(b), 0x1a, 0);
-                c.anim.set_loop(6, 0x15);
-            }
-            _ => {}
-        }
-    }
-
-    // --------------------------------------------------------------------------------------------
-    // Per-state physics 0x2370b8
-
-    /// 0x13, the ground combo (0x239780).
-    pub(super) fn phys_combo(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
-        // On a slippery floor (0x140632) the combo only slides (level00 case 0x13 → 0x2167d0; super::surface).
-        if super::surface::slippery(self) { super::surface::slide_move(self, env); return; }
-        let v = anim.view();
-        let frame = Pf::f(v.frame);
-        let blending = v.blending();
-        let row = *self.combo_row();
-        if blending || frame < Pf::from_i32(row[C_HIT_TO]) { self.items.slot.swap_timer = 2; }
-        self.target_speed = Pf::ZERO;
-        // The target branch (0x13fda4 set within ticks(4) of the entry): the step's speed factor 0x13fdbc from the xy
-        // distance to the target (`VecDistance2`), less 0.5 (≥ 0) and the step's reach (0.75 / 0.6 / 1.3): d / 0.9 capped
-        // at 4 / 4 / 1.9, the old factor kept when that is ≤ 1, all only while |d| < 0.8 / 1.7 / 1.7 + 3. The swing
-        // lunges into reach of the crate or enemy the aim found (it was not reachable before the wrench states searched).
-        if let Some(t) = self.melee.target.filter(|_| self.timer < ticks(4)) {
-            if let Some(tp) = env.world.and_then(|w| w.melee_targets().iter().find(|x| x.id == t).map(|x| x.pos)) {
-                let h = super::physics::to_f32x3(self.pos);
-                let mut d = ((tp[0] - h[0]) * (tp[0] - h[0]) + (tp[1] - h[1]) * (tp[1] - h[1])).sqrt() - 0.5;
-                if d < 0.0 { d = 0.0; }
-                let (lim, cap, reach) = match row[C_STEP] { 0 => (0.8f32, 4.0f32, 0.75f32), 1 => (1.7, 4.0, 0.6), _ => (1.7, 1.9, 1.3) };
-                d -= reach;
-                if d.abs() < lim + 3.0 {
-                    let k = (d / 0.9).min(cap);
-                    if 1.0 < k { self.melee.speed_k = Pf::f(k); }
+                self.cam_mode = 0x50;
+                self.melee.row = 4;
+                self.melee.fell = 0.0;
+                self.aim_search(env, 8.0, 1.047_197_6, -1.0);
+                if play {
+                    let blend = if self.prev_state == 0xb && self.prev_timer < 0x2a { 0x11 } else { 0xb };
+                    self.set_anim(anim, blend as f32, 0x2b, 4);
+                    self.items.hand_anim = Some((10, 4, blend + 2));
                 }
             }
-        }
-        let k = self.melee.speed_k;
-        match row[C_STEP] {
-            0 if frame < Pf::b(0x4190_0000) => self.target_speed = (DT * Pf::b(0x408c_cccd)) * k,
-            1 if blending || frame < Pf::b(0x4110_0000) => {
-                let c = if Pf::b(0x4100_0000) < frame {
-                    Pf::b(0x4040_0000)
-                } else if Pf::b(0x40e0_0000) < frame {
-                    Pf::b(0x4090_0000)
-                } else {
-                    Pf::b(0x40b6_6666)
-                };
-                self.target_speed = (DT * c) * k;
+            0x15 | 0x83 => {
+                self.melee.row = 3;
+                if id == 0x15 {
+                    self.aim_search(env, 14.0, 0.523_598_8, -1.0);
+                    self.melee.throw_toggle = (self.melee.throw_toggle == 0) as u32;
+                }
+                if play {
+                    let mut blend = 10;
+                    if anim.view().seq_b == 0x1a { blend = 3; }
+                    if self.prev_state == 1 { blend = 0x11; }
+                    self.set_anim(anim, blend as f32, 0x1a, 0);
+                    if id == 0x15 { anim.set_loop(6, 0x15); }
+                }
             }
-            2 if blending || frame < Pf::b(0x4140_0000) => self.target_speed = (DT * Pf::b(0x406c_cccd)) * k,
+            0x22 => {
+                if play { self.set_anim(anim, 9.0, 0x2c, 7); }
+            }
+            0x1f => {
+                // The glove's punch (the item 0x35 in hand): the aim (11, 0.873), sequence 0x60.
+                if self.items.hand.is_some() && play { self.set_anim(anim, -1.0, 0x60, 4); }
+                self.aim_search(env, 11.0, 0.872_664_6, -1.0);
+            }
+            0x6d => {
+                // The swings on a magnetic walkway (rows 5 / 6, alternating when chained).
+                let row = if self.prev_state == 0x6d && SWINGS[self.melee.row.clamp(0, 8) as usize][KIND] == 0 { 6 } else { 5 };
+                self.melee.row = row;
+                let k = SWINGS[row as usize][KIND];
+                if play { self.set_anim(anim, 5.0, (k + 0x17) as u8, (k == 0) as i32); }
+            }
             _ => {}
         }
-        approach(Pf::ONE, Pf::b(0x3e4c_cccd), &mut self.anim_speed);
-        if self.melee.aimed != 0 || self.melee.target.is_some() {
-            let mut f = SCALE64;
-            if row[C_STEP] == 1 && Pf::ZERO < fast_subtract_rotations(self.melee.aim_yaw, self.rot[2]) {
-                let d = fast_diff_rots(self.melee.aim_yaw, self.rot[2]);
-                self.anim_speed = Pf::ONE / (d + Pf::ONE);
-                f = SCALE64;
-            }
-            self.target_yaw = self.melee.aim_yaw;
-            self.turn_to(f * Pf::b(0x3d4c_cccd), f * Pf::b(0x3e4c_cccd), DT * AIM_TURN);
-        } else if !(row[C_STEP] == 1 && !blending && Pf::b(0x40e0_0000) < frame) {
-            self.aim_assist(env, 5.0, AIM_45, AIM_45);
-        }
-        self.speed_step(DT2 * Pf::b(0x4214_0000), DT2 * Pf::b(0x41e0_0000));
-        let y = if self.melee.aimed != 0 { self.melee.aim_yaw } else { YAW_SENTINEL };
-        self.set_planar_vel(y);
-        if self.air_ticks != 0 {
-            self.vel[2] = self.eff_v[2] - DT2 * Pf::b(0x41c8_0000);
+        Entry::Done
+    }
+
+    /// `0x2ba8e0` case 0x1f: the glove's punch — aimed in its first 4 ticks, a 0.3 push from tick 10 to 18 (speed
+    /// 0.0528 up, 0.025 down), three 0.8 spheres (ahead and ±50°, 0.8 out, 0.55 up) dealing 3 (flags 0x30000, thrown
+    /// 2 ahead and 1.3 up) from tick 10 to 22.
+    fn phys_glove(&mut self, env: &Env) {
+        if self.melee.aim == 0 && self.melee.target.is_none() {
+            if self.timer < 4 { self.aim_search(env, 11.0, 0.872_664_6, -1.0); }
         } else {
-            self.vel[2] = self.vel[2] - DT2 * Pf::b(0x4258_0000);
-        }
-        self.edge_brake(env, Pf::b(0x406c_cccd), Pf::ZERO);
-    }
-
-    /// 0x14, the jump attack (0x2390b8). `hits` gets the landing shockwave (radius 0.4, flags 0x10000,
-    /// damage 2, from Ratchet's moby) once past frame 23.5 while falling.
-    pub(super) fn phys_jump_attack(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
-        let v = anim.view();
-        let frame = Pf::f(v.frame);
-        let blending = v.blending();
-        let row = *self.combo_row();
-        if blending || frame < Pf::from_i32(row[C_IDLE_AFTER]) { self.items.slot.swap_timer = 2; }
-        self.target_speed = Pf::ZERO;
-        self.speed_step(DT2 * Pf::b(0x4170_0000), DT2 * Pf::b(0x4170_0000));
-        self.vel = set_len2(self.vel, self.speed);
-        if self.melee.aimed != 0 || self.melee.target.is_some() {
             self.target_yaw = self.melee.aim_yaw;
-            self.turn_to(SCALE64 * Pf::b(0x3d4c_cccd), SCALE64 * Pf::b(0x3e4c_cccd), DT * AIM_TURN);
-        } else if frame < Pf::b(0x41c8_0000) {
-            self.aim_assist(env, 8.0, AIM_60, AIM_60);
+            self.turn_to(0.05, 0.2, 0.283_121_5, 0);
         }
-        let t9 = ticks(9);
-        let mut up = DT * Pf::b(0x40f6_6666);
-        if Pf::b(0x4010_0000) < self.height {
-            up = up * Pf::b(0x3f00_0000);
-        } else if Pf::b(0x3fe6_6666) < self.height {
-            up = up * Pf::b(0x3f33_3333);
-        }
-        let acc = DT2 * Pf::b(0x4316_0000);
-        let t14 = ticks(0xe);
-        if !blending && Pf::b(0x41bc_0000) < frame && self.disp[2] < Pf::ZERO && self.air_ticks != 0 {
-            // The shockwave (sent from here in the game; the port queues it for the hit sink of the
-            // hand-item update later in this tick): sphere 0.4 at the feet − 0.5, dir = facing·2.
-            let mut p = self.pos;
-            p[2] = p[2] - Pf::b(0x3f00_0000);
-            let c = fast_cos(self.rot[2]);
-            let s = fast_sin(self.rot[2]);
-            self.shockwave = Some((p, [c + c, s + s, Pf::ZERO, Pf::b(0x45af_df66)]));
-        }
-        if self.timer < t9 {
-            let mut vz = self.vel[2];
-            approach(up, acc, &mut vz);
-            self.vel[2] = vz;
-        } else if t14 < self.timer {
-            self.vel[2] = self.vel[2] - DT2 * Pf::b(0x4302_0000);
-            if self.vel[2] < Pf::ZERO { self.melee.falling = Pf::ONE; }
-            let min = DT * Pf::b(0xc214_0000);
-            if self.vel[2] < min { self.vel[2] = min; }
-        }
-    }
-
-    // --------------------------------------------------------------------------------------------
-    // Transitions 0x242930, 0x13 / 0x14 (0x243e44)
-
-    pub(super) fn tr_melee(&mut self, c: &mut Ctx) {
-        let v = c.anim.view();
-        if self.state == 0x14 {
-            let n = self.land_eta(c, Pf::b(0x4270_0000), DT2 * Pf::b(0x4302_0000), Pf::b(0xbf80_0000)).to_i32();
-            let frame = Pf::f(v.frame);
-            if self.melee.falling == Pf::ZERO {
-                self.anim_speed = Pf::b(0x3ea8_f5c3);
-            } else if self.air_ticks == 0 {
-                self.anim_speed = if frame < Pf::b(0x41d0_0000) { Pf::b(0x4000_0000) } else { Pf::ONE };
-            } else if n == 0 || !(Pf::ONE < Pf::b(0x41d0_0000) - frame) {
-                self.anim_speed = Pf::ONE;
-            } else {
-                self.anim_speed_for_ticks(Pf::b(0x41d0_0000), Pf::from_i32(n), Pf::b(0x3f00_0000), Pf::b(0xbf80_0000), &v);
-                if self.height < Pf::b(0x3f33_3333) && self.anim_speed < Pf::b(0x3f40_0000) { self.anim_speed = Pf::b(0x3f40_0000); }
+        self.target_speed = if 10 < self.timer && self.timer < 0x12 { 0.3 } else { 0.0 };
+        if 10 < self.timer { self.speed_step(0.052_777_78, 0.025); }
+        if self.melee.aim == 0 { self.set_planar_vel(f32::MAX) } else { self.set_planar_vel(self.melee.aim_yaw) }
+        if 10 < self.timer && self.timer < 0x16 && self.items.hand.is_some() {
+            let (s, c) = self.rot[2].sin_cos();
+            let dir = [c * 2.0, s * 2.0, 1.3];
+            for d in [0.0, -0.872_664_6, 0.872_664_6] {
+                let (s, c) = add_rot(self.rot[2], d).sin_cos();
+                let centre = add(self.pos, [c * 0.8, s * 0.8, 0.55]);
+                self.hits_out.push(super::HeroHit { centre, r: 0.8, damage: 3.0, flags: 0x30000, dir, joints: None });
             }
         }
-        let v = c.anim.view();
-        let frame = Pf::f(v.frame);
-        let blending = v.blending();
-        let row = *self.combo_row();
-        let pad = c.env.pad;
-        let mut idle_test = true;
-        if Pf::from_i32(row[C_JUMP_AFTER]) < frame && blending {
-            idle_test = false;
-        } else if Pf::from_i32(row[C_JUMP_AFTER]) < frame && (self.state != 0x15 || self.f658 == 0) {
-            let n = frame.to_i32().wrapping_sub(row[C_REF]).wrapping_mul(2);
-            if pad.pressed_within(button::CROSS, n).is_some() {
-                if pad.held & button::CROUCH == 0 {
-                    if self.jump_lockout == 0 {
-                        self.set_state(c, 7, true);
-                        return;
-                    }
-                } else if self.crouch_jump(c) {
-                    return;
-                }
-            }
+        if 10 < self.timer { self.edge_brake(env, 3.7, 0.0); }
+        self.wall_check(env, true);
+        if self.air_ticks != 0 { self.gravity_from(self.eff[2], 0.006_111_111) } else { self.vel[2] -= 0.015 }
+    }
+
+    /// `0x2b76a8(range, yaw cone, pitch cone)`: the aim. Nothing with a gadget item 0x20 or while aiming; with the
+    /// stick pushed past 0.5 the aim follows the stick (aiming, no target); then the target search — a target found
+    /// aims at it, else the aim keeps the facing (or the stick's) yaw and direction.
+    pub fn aim_search(&mut self, env: &Env, range: f32, yaw_cone: f32, pitch_cone: f32) {
+        if self.items.item == 0x20 || self.melee.aim != 0 { return; }
+        let (mut dir, mut yaw) = (self.rows[0], self.rot[2]);
+        if 0.5 < self.stick_mag {
+            self.stick_target(env, 1.0, 0);
+            dir = self.stick_dir;
+            yaw = self.target_yaw;
+            self.melee.target = None;
+            self.melee.aim = 1;
         }
-        if idle_test && !blending && Pf::from_i32(row[C_IDLE_AFTER]) < frame {
-            self.set_state(c, 0, false);
-            return;
-        }
-        // 0x15: the catch's loop exit / idle with another hand item (super::comet).
-        if self.state == 0x15 { super::comet::transitions_tail(self, c); }
-    }
-}
-
-// ------------------------------------------------------------------------------------------------
-// The wrench moby's update 0x2be1c0, in hand (+0x20 == 0)
-
-/// `FUN_002be110(v)`: the reach shrinks when the wrench points behind the facing: `d = min(|yaw − dir(v)|,
-/// 105°)`, `v = setlen(v, |v|·(((105° − d)/105°)·0.3 + 0.7))`.
-fn reach_by_facing(v: V4, yaw: Pf) -> V4 {
-    let k = Pf::b(0x3fea_927f);
-    let a = fast_arctan(v[0], v[1]);
-    let mut d = fast_diff_rots(yaw, a);
-    if k < d { d = k; }
-    let l = len3(v);
-    let f = (((k - d) / k) * Pf::b(0x3e99_999a)) + Pf::b(0x3f33_3333);
-    set_len3(v, l * f)
-}
-
-/// World point of the last joint of `chain` of a moby: `FUN_002645a8(moby, list, out)` (partial evaluation,
-/// `P.r3 · scale/1024`, rows, + position), on `rc_formats::moby_anim::{joint_translations, bone_points}`.
-pub(super) fn list_point(p: &moby_anim::Rows, rows: &[moby_anim::V4; 3], pos: [f32; 3], scale: f32) -> V4 {
-    let t = [p[3][0].to_bits(), p[3][1].to_bits(), p[3][2].to_bits(), p[3][3].to_bits()];
-    let w = moby_anim::bone_points(&[t], rows, pos, scale)[0];
-    w.map(Pf)
-}
-
-/// The in-hand part of the wrench update 0x2be1c0 (called from the slot loop with the slot ready): the
-/// swap state byte 0x1403fc = 0, the wrench's sequence upkeep (back to sequence 1 when a sequence wraps or
-/// when the hero leaves the combo on 3..5), its playback speed = Ratchet's 0x13fde0, and in group 6 the
-/// swing test:
-/// * hand = Ratchet's joint list 0, head = the wrench's list 1 (0x13fd40 / 0x13fd50; last tick's kept at
-///   0x13fd60 / 0x13fd70); the head is re-derived as `hand + setlen(head − hand, |…| + 0.17)`, shortened by
-///   [`reach_by_facing`] (not in 0x14);
-/// * aim = the facing, or in 0x13 the direction to the head ± 90°;
-/// * inside the hit window (not blending, frame in the combo row's [hit-from, hit-to], and the head within
-///   90° of the facing except in 0x14): template {dir = (cos aim, sin aim)·(1 | 1.55), z 1, flags 0x10000,
-///   damage 1 (2 for the jump attack), class 0x47}, a 5-step sweep of lines between last tick's and this
-///   tick's hand → head (`FUN_0026ebe8`) and a sphere of radius 0.35 (0.47 in 0x14) at the head − 0.085
-///   (`coll_sphere_mobys`); the first hit of the swing plays the wrench's hit sound (counted).
-pub fn wrench_update(hero: &mut Hero, table: &mut MobyTable, anim: &dyn AnimCtl, env: &ItemEnv, hits: &mut dyn HitSink, rng: &mut crate::rng::Rng) {
-    hero.items.slot.swap = 0;
-    if hero.items.slot.state == 3 { return; }
-    let Some(class) = hero.items.slot.item.as_ref().and_then(|m| env.data.class(m.o_class)) else { return };
-    let st = hero.state;
-    // Thrown (+0x20 = 10 / 11): the flight (super::comet); other non-zero states do nothing.
-    match hero.items.slot.item.as_ref().map_or(0, |m| m.mstate) {
-        super::comet::OUT | super::comet::BACK => return super::comet::thrown_update(hero, table, anim, env, hits, rng),
-        _ => {}
-    }
-    // The look stance's reticle (0x2be1c0 in hand): state 1 with R1 / R2 held (0x13cae0 & 0xa), the screen-centre marker
-    // `FUN_0020fb60(1.0, 0, 90°, wrench, 0xff917267, none, 0x25, −1, 4)` the Comet-Strike's first-person throw aims by.
-    if st == 1 && env.pad.held & (button::R1 | button::R2) != 0 {
-        let m = crate::targeting::Marker { size: 1.0, angle: 0.0, rgba: LOOK_MARKER_RGBA, at: None, fx: LOOK_MARKER_FX };
-        hero.weapons.markers.register(env.frame as u64, m);
-    }
-    {
-        let it = hero.items.slot.item.as_mut().unwrap();
-        if it.mstate != 0 { return; }
-        let seq = it.anim.seq_b;
-        let wrapped = it.anim.flags & 2 != 0;
-        let mut done = false;
-        if seq == 0xe {
-            if wrapped { moby_anim::set_sequence(&mut it.anim, &class.anim, 1, 0, ticks(5), &mut it.snapshot); }
-            done = true;
-        } else if seq != 0 && hero.items.f13fe != 0 {
-            // (special groups only)
-        } else if seq == 0xf || seq == 0x10 {
-            moby_anim::set_sequence(&mut it.anim, &class.anim, 0xe, 0, ticks(2), &mut it.snapshot);
-            done = true;
-        }
-        if done { return; }
-        if wrapped && st != 0x3b && it.anim.seq_b != 1 {
-            moby_anim::set_sequence(&mut it.anim, &class.anim, 1, 0, ticks(5), &mut it.snapshot);
-        }
-        // FUN_002bd968: state 0x3b only.
-        if !matches!(st, 0x13 | 0x21 | 0x2b | 0x70 | 0x14) && (3..6).contains(&it.anim.seq_b) {
-            moby_anim::set_sequence(&mut it.anim, &class.anim, 1, 0, ticks(4), &mut it.snapshot);
-        }
-        it.anim.speed = hero.anim_speed.to_f32();
-    }
-    if hero.group != 6 && st != 0x2b { return; }
-    let v = anim.view();
-    let frame = Pf::f(v.frame);
-    let row = *hero.combo_row();
-    let mut window = !(v.blending() || frame < Pf::from_i32(row[C_HIT_FROM]) || Pf::from_i32(row[C_HIT_TO]) < frame);
-    let m = &hero.melee;
-    let (hand_prev, tip_prev) = (m.hand, m.tip);
-    // The two points (wrench list 1, Ratchet list 0).
-    let it = hero.items.slot.item.as_ref().unwrap();
-    let Some(wchain) = class.chains.get(1).filter(|c| !c.is_empty()) else { return };
-    let wp = moby_anim::evaluate_chains(&class.anim, &it.anim, it.snapshot.as_ref(), &[wchain.as_slice()]);
-    let tip = list_point(&wp[0], &it.rows, it.position, it.scale);
-    let Some(hchain) = env.data.hero_chains.first().filter(|c| !c.is_empty()) else { return };
-    let Some(hp) = anim.eval_chains_with(&[hchain.as_slice()], &hero.weapons.layers, &table.mobys[env.hero_moby].joint_mods).into_iter().next() else { return };
-    let r = &table.mobys[env.hero_moby];
-    let rrows: [moby_anim::V4; 3] = [0, 1, 2].map(|i| r.rows[i].map(f32::to_bits));
-    let hand = list_point(&hp, &rrows, [r.position[0], r.position[1], r.position[2]], r.scale);
-    let _ = HERO_LISTS;
-    let yaw = hero.rot[2];
-    let mut aim = yaw;
-    if matches!(st, 0x13 | 0x70 | 0x2b) {
-        let a = fast_arctan(tip[0] - hero.pos[0], tip[1] - hero.pos[1]);
-        let q = if row[C_STEP] == 1 { -HALF_PI } else { HALF_PI };
-        aim = fast_add_rotations(a, q);
-    }
-    let mut d = vsub(tip, hand);
-    let l = len3(d);
-    d = set_len3(d, l + Pf::b(0x3e2e_147b));
-    // The head's turn off the facing (f20: 0 when not measured).
-    let mut turn = Pf::ZERO;
-    if hero.group != 0xf && st != 0x70 && st != 0x14 {
-        turn = fast_diff_rots(yaw, fast_arctan(tip[0] - hero.pos[0], tip[1] - hero.pos[1]));
-        if HALF_PI < turn { window = false; }
-        d = reach_by_facing(d, yaw);
-    }
-    let tip = vadd(hand, d);
-    hero.melee.hand_prev = hand_prev;
-    hero.melee.tip_prev = tip_prev;
-    hero.melee.hand = hand;
-    hero.melee.tip = tip;
-    wall_sparks(hero, table, env, hits, rng, &v, st, turn, aim);
-    if !window { return; }
-    let jump = st == 0x14;
-    let (s, dmg) = if jump { (Pf::b(0x3fc6_6666), 2) } else { (Pf::ONE, 1) };
-    let mut dir = [fast_cos(aim), fast_sin(aim), Pf::ZERO, Pf::ZERO];
-    dir = set_len2(dir, s);
-    dir[2] = Pf::ONE;
-    dir[3] = Pf::b(0x45af_df66);
-    let tmpl = HitTemplate { dir, attacker: None, flags: 0x1_0000, b18: 0, b19: 1, h1a: WRENCH_CLASS as u16, damage: Pf::from_i32(dmg), w20: 1 };
-    let ignore = Some(env.hero_moby);
-    // FUN_0026ebe8: five lines between last tick's and this tick's hand → head.
-    let k = Pf::ONE / Pf::from_i32(5);
-    let (dh, dt) = (vsub(hand, hand_prev), vsub(tip, tip_prev));
-    let mut t = k;
-    let mut swept = None;
-    for _ in 0..5 {
-        let a = vadd(vscale(dh, t), hand_prev);
-        let b = vadd(vscale(dt, t), tip_prev);
-        if let Some(h) = hits.line(table, a, b, 0, ignore, &tmpl) {
-            swept = Some(h);
-            break;
-        }
-        t = t + k;
-    }
-    // 0x2be5e4..: a moby whose target record has flag 2 (`FUN_002bdad8`) sends Ratchet back (0x21); any other plays
-    // the hit sound once a swing, unless its class type is 0x14.
-    let mut rebound = None;
-    if let Some(Some(m)) = swept {
-        if rebounds(table, m) {
-            rebound = Some(m);
-        } else if hero.melee.hit == 0 && class_type_of(table, hits, m) != Some(0x14) {
-            hero.melee.hit = 1;
-            hero.items.hit_sounds += 1;
-            hero.fx.item_sounds.push(wrench_hit_sound(table, Some(m)));
-        }
-    }
-    let mut v2 = vsub(tip, hand);
-    let l2 = len3(v2);
-    v2 = set_len3(v2, l2 - Pf::b(0x3dae_147b));
-    let c = vadd(v2, hand);
-    let mut r = Pf::b(0x3eb3_3333);
-    if hero.group == 0xf { r = Pf::b(0x3f33_3333); }
-    if jump { r = Pf::b(0x3ef0_a3d7); }
-    let sphere = hits.sphere(table, r, c, 0, ignore, &tmpl);
-    // (0x1742d8 is the last test's moby: the sphere's when it listed one, else still the line's.)
-    let last = sphere.or(match swept { Some(Some(m)) => Some(m), _ => None });
-    if let Some(m) = sphere.filter(|&m| class_type_of(table, hits, m) != Some(0x12)) {
-        if rebounds(table, m) {
-            rebound = Some(m);
-        } else if hero.melee.hit == 0 {
-            hero.melee.hit = 1;
-            hero.items.hit_sounds += 1;
-            hero.fx.item_sounds.push(wrench_hit_sound(table, sphere));
-        }
-    }
-    // The rebound: `SetState(0x21, 1)` (after the slot loop, `Weapons::deferred`) and its direction 0x13fdb8: from the
-    // moby hit last to Ratchet, else behind him.
-    if rebound.is_some() {
-        hero.weapons.deferred = Some(0x21);
-        hero.packs.rebound_yaw = match last.and_then(|m| table.mobys.get(m)) {
-            Some(m) => fast_arctan(hero.pos[0] - Pf::f(m.position[0]), hero.pos[1] - Pf::f(m.position[1])).to_f32(),
-            None => fast_add_rotations(hero.rot[2], Pf::b(0x4049_0fdb)).to_f32(),
-        };
-    }
-}
-
-/// The swing's wall line and the jump attack's ground line (`0x2be7d4..0x2be9e0`):
-/// * not in 0x2b / 0x70, the head within 70° of the facing (0 when not measured: the jump attack, grinding), more than
-///   10 ticks into the state, nothing hit yet this swing (0x13fdb4): a line (flags 2) from 0.5 above Ratchet 1.4 toward
-///   the head (its length by the facing, `0x2be110`); a hit on a surface (`CollType` ≠ 0) with no moby, a non-crate or
-///   the crate class 502 (`0x273228`) → hit, the class sound 2, the burst ([`super::fx::wrench_burst`]), a moby hit
-///   (damage 1, flags 0x10000, along the aim);
-/// * 0x14 with Ratchet's key time passing 27: the class sound 2, a line (flags 2) from 0.7 above the head to 0.9 below
-///   (`0x248d80`); a hit → the burst.
-#[allow(clippy::too_many_arguments)]
-fn wall_sparks(hero: &mut Hero, table: &mut MobyTable, env: &ItemEnv, hits: &mut dyn HitSink, rng: &mut crate::rng::Rng, view: &AnimView, st: i32, turn: Pf, aim: Pf) {
-    let cam = env.camera.map_or([0.0; 3], |c| c.0);
-    let p = hero.pos;
-    if st != 0x2b && st != 0x70 && turn < Pf::b(0x3f9c_61aa) && ticks(10) < hero.timer && hero.melee.hit == 0 {
-        let a = [p[0], p[1], p[2] + Pf::b(0x3f00_0000), p[3]];
-        let tip = hero.melee.tip;
-        let y = fast_arctan(tip[0] - p[0], tip[1] - p[1]);
-        let k = Pf::b(0x3fb3_3333);
-        let v = reach_by_facing([fast_cos(y) * k, fast_sin(y) * k, Pf::ZERO, Pf::ZERO], hero.rot[2]);
-        let b = vadd(a, v);
-        if let Some(Some(pr)) = hits.probe_moby(table, a, b, 2, None) {
-            // `0x273228`: `FUN_00273278` (a live moby of class 500..540) false, or the class 502.
-            let crate_ok = |m: MobyId| table.mobys.get(m).is_none_or(|x| (x.o_class as i32 - 500) as u32 & 0xffff >= 0x29 || x.o_class == 0x1f6);
-            if pr.surface != 0 && pr.moby.is_none_or(crate_ok) {
-                hero.melee.hit = 1;
-                hero.fx.item_sounds.push(2);
-                super::fx::wrench_burst(hero, rng, pr.point, cam);
-                if let Some(m) = pr.moby {
-                    let dir = [fast_cos(aim), fast_sin(aim), Pf::ZERO, Pf::ZERO];
-                    let tmpl = HitTemplate { dir, attacker: None, flags: 0x1_0000, b18: 0, b19: 0, h1a: WRENCH_CLASS as u16, damage: Pf::ONE, w20: 1 };
-                    hits.deliver(table, m, &tmpl);
-                }
-            }
-        }
-    }
-    if st == 0x14 && super::comet::passed(view, 27.0) {
-        hero.fx.item_sounds.push(2);
-        let tip = hero.melee.tip;
-        let a = [tip[0], tip[1], tip[2] + Pf::b(0x3f33_3333), tip[3]];
-        let b = [tip[0], tip[1], tip[2] - Pf::b(0x3f66_6666), tip[3]];
-        if let Some(Some(pr)) = hits.probe_moby(table, a, b, 2, None) { super::fx::wrench_burst(hero, rng, pr.point, cam); }
-    }
-}
-
-/// `FUN_002bdad8`: the moby's target record (`targeting::record`, `FUN_002711f8`) has flag 2 in its +0x1e.
-pub fn rebounds(table: &MobyTable, id: MobyId) -> bool {
-    let Some(m) = table.mobys.get(id) else { return false };
-    let Some(r) = crate::targeting::record(m) else { return false };
-    m.pvars.get(r + 0x1e..r + 0x20).is_some_and(|b| u16::from_le_bytes([b[0], b[1]]) & 2 != 0)
-}
-
-/// The class type byte (+0x46) of moby `id`'s class, through the hit sink's class data.
-fn class_type_of(table: &MobyTable, hits: &dyn HitSink, id: MobyId) -> Option<u8> { table.mobys.get(id).and_then(|m| hits.class_type(m.o_class)) }
-
-impl Hero {
-    /// SetState 0x21 (0x23cf98): group 10, speed 9·dt, 0x1415d4 = 0; with `play` Ratchet's sequence 0x27 + the combo
-    /// row's step (2 for the jump attack's row) from frame 5 over ticks(5), and the wrench's 7 + step alike.
-    pub(super) fn rebound_entry(&mut self, c: &mut Ctx, play: bool) {
-        self.group = 10;
-        self.speed = DT * Pf::from_i32(9);
-        self.f15d4 = 0;
-        if !play { return; }
-        let row = *self.combo_row();
-        let step = if row[C_KIND] == 1 { 2 } else { row[C_STEP] };
-        let b = ticks(5);
-        self.set_anim(c.anim, c.rng, Pf::from_i32(b), (0x27 + step) as u8, 5);
-        if self.hand_is_wrench() { self.items.pending_blend = Some(((7 + step) as u8, 5, b)); }
-    }
-}
-
-/// The jump attack's shockwave queued by 0x14's physics: `coll_sphere_mobys(0.4, centre, 0x10, Ratchet,
-/// {dir, Ratchet's moby, flags 0x10000, damage 2, class 0x47})`.
-pub fn jump_attack_shockwave(hero: &mut Hero, table: &mut MobyTable, env: &ItemEnv, hits: &mut dyn HitSink) {
-    let Some((p, dir)) = hero.shockwave.take() else { return };
-    let tmpl = HitTemplate { dir, attacker: Some(env.hero_moby), flags: 0x1_0000, b18: 0, b19: 1, h1a: WRENCH_CLASS as u16, damage: Pf::b(0x4000_0000), w20: 1 };
-    hits.sphere(table, Pf::b(0x3ecc_cccd), p, 0x10, Some(env.hero_moby), &tmpl);
-}
-
-/// One moby of the target list 0x1abe80 as the melee aim search `0x22e238` reads it: its position (+0x10), its record's
-/// health (`FUN_002711f8(m)` +0x00; mobys without a record are skipped when the list is built), mode 0x1000 and the
-/// crate test `0x273278` (classes 500..=540).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MeleeTarget {
-    pub id: MobyId,
-    pub pos: [f32; 3],
-    pub health: f32,
-    pub targetable: bool,
-    pub is_crate: bool,
-    /// The record's `+0x38` (the head look's range), `+0x39` (its priority), `+0x3a` (its height ×0.125):
-    /// `HeroScanTargets`' bytes (`super::pose`).
-    pub look: [u8; 3],
-}
-
-/// The target list `list` (0x1abe80, `crate::targeting::target_list`) as [`MeleeTarget`]s (the mobys with a record).
-pub fn melee_targets(table: &MobyTable, list: &[MobyId]) -> Vec<MeleeTarget> {
-    list.iter()
-        .filter_map(|&id| {
-            let m = table.mobys.get(id)?;
-            let health = crate::targeting::record_health(m)?;
-            let pos = [m.position[0], m.position[1], m.position[2]];
-            let targetable = m.mode & crate::moby_runtime::mode::TARGETABLE != 0;
-            let r = crate::targeting::record(m)?;
-            let look = [0x38, 0x39, 0x3a].map(|o| m.pvars.get(r + o).copied().unwrap_or(0));
-            Some(MeleeTarget { id, pos, health, targetable, is_crate: (0..=40).contains(&(m.o_class as i32 - 500)), look })
-        })
-        .collect()
-}
-
-/// `FUN_0022dff0(aim, range, cone, cone2, moby, &reject)`: the score of one target for the melee aim search, None when
-/// rejected: farther than `range` (3D, from Ratchet's position; in the jump attack 0x14 from his ground height
-/// 0x13f628), more than `cone` (> 0) from `aim` in yaw or more than `cone2` (> 0) in elevation; the score is `d +
-/// yaw_off·d`, + 7 for a crate. The look stances' branch (states 1 / 0x1e: the angles from the camera) is not reachable
-/// from its callers (their SetState entries and physics run in their own states) and is not ported.
-pub fn aim_score(from: [f32; 3], aim: f32, range: f32, cone: f32, cone2: f32, t: &MeleeTarget) -> Option<f32> {
-    let d = [t.pos[0] - from[0], t.pos[1] - from[1], t.pos[2] - from[2]];
-    let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-    let mut reject = range < dist;
-    let yaw_off = crate::moby_update::creature::diff_rots(d[1].atan2(d[0]), aim);
-    let flat = (d[0] * d[0] + d[1] * d[1]).sqrt();
-    let pitch_off = crate::moby_update::creature::diff_rots(d[2].atan2(flat), 0.0);
-    if 0.0 < cone && cone < yaw_off { reject = true; }
-    if 0.0 < cone2 && cone2 < pitch_off { reject = true; }
-    if reject { return None; }
-    let mut score = dist + yaw_off * dist;
-    if t.is_crate { score += 7.0; }
-    Some(score)
-}
-
-/// `FUN_0022e238(range, aim, cone, cone2)`: the best-scoring (lowest, the first on a tie) target of the list with a
-/// non-zero health that is targetable ([`aim_score`]).
-pub fn aim_search(targets: &[MeleeTarget], from: [f32; 3], aim: f32, range: f32, cone: f32, cone2: f32) -> Option<MeleeTarget> {
-    let mut best = 1e8f32;
-    let mut out = None;
-    for t in targets {
-        if t.health == 0.0 || !t.targetable { continue; }
-        if let Some(s) = aim_score(from, aim, range, cone, cone2, t) {
-            if s < best {
-                best = s;
-                out = Some(*t);
-            }
-        }
-    }
-    out
-}
-
-impl Hero {
-    /// `FUN_002351d0(range, cone, cone2)` with its target search: unless already aimed (0x13fda8), the facing, or the
-    /// stick's direction when it is past 0.5 (then aimed, the target cleared); a target of [`aim_search`] from there
-    /// turns the aim toward it and becomes 0x13fda4 (a target kept from before with the stick not taken keeps the
-    /// aim). Its callers: the wrench states 0x13 / 0x14 / 0x15 ([`AIM_45`]) and the gadget lunge 0x20
-    /// (`super::walloper`, (11, 50°, −1)).
-    pub(super) fn aim_assist(&mut self, env: &Env, range: f32, cone: f32, cone2: f32) {
-        let mut a = self.melee.aim_yaw;
-        if self.melee.aimed == 0 {
-            a = self.rot[2];
-            if Pf::b(0x3f00_0000) < self.stick_mag {
-                self.stick_target(env, Pf::ONE);
-                self.melee.aimed = 1;
-                self.melee.target = None;
-                a = self.target_yaw;
-            }
-            let mut from = super::physics::to_f32x3(self.pos);
-            if self.state == 0x14 { from[2] = self.ground_z.to_f32(); }
-            let targets = env.world.map_or(&[][..], |w| w.melee_targets());
-            if let Some(t) = aim_search(targets, from, a.to_f32(), range, cone, cone2) {
-                if self.melee.target.is_some() && self.melee.aimed == 0 {
-                    self.melee.aim_yaw = a;
-                    return;
-                }
-                let h = super::physics::to_f32x3(self.pos);
-                a = fast_arctan(Pf::f(t.pos[0]) - Pf::f(h[0]), Pf::f(t.pos[1]) - Pf::f(h[1]));
+        let found = self.target_search(env, range, yaw, yaw_cone, pitch_cone, false);
+        match found {
+            Some(t) if self.melee.target.is_none() || self.melee.aim != 0 => {
+                self.melee.aim_yaw = atan2(t.pos[0] - self.pos[0], t.pos[1] - self.pos[1]);
+                self.melee.aim_dir = sub(t.pos, self.pos);
                 self.melee.target = Some(t.id);
+                self.melee.target_pos = t.pos;
+            }
+            _ => {
+                self.melee.aim_dir = dir;
+                self.melee.aim_yaw = yaw;
             }
         }
-        self.melee.aim_yaw = a;
-    }
-}
-
-/// For the tests: the view fields the melee code reads.
-pub fn frame_of(v: &AnimView) -> Pf { Pf::f(v.frame) }
-
-/// The hit window of the in-hand wrench update: not blending and `frame` in the row's [hit-from, hit-to].
-pub fn in_hit_window(combo: i32, frame: Pf, blending: bool) -> bool {
-    let row = &COMBO[combo.clamp(0, 6) as usize];
-    !(blending || frame < Pf::from_i32(row[C_HIT_FROM]) || Pf::from_i32(row[C_HIT_TO]) < frame)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::items::{self, HandItem, ItemClass, ItemData, ItemDef, ItemEnv, ItemGlobals};
-    use super::super::testkit::*;
-    use super::super::{hero_update, AnimView, HeroTick};
-    use super::*;
-    use crate::pad::PadInput;
-    use crate::rng::Rng;
-    use rc_formats::moby_anim::{AnimState, MobyAnimClass};
-
-    /// A data-free animation whose readout the tests can follow: `set_anim` blends for `blend` ticks (the
-    /// readout jumps to the target frame), then the readout advances by the playback speed per tick; a
-    /// sequence "ends" at frame 40.
-    #[derive(Default)]
-    struct FrameAnim {
-        v: AnimView,
-        blend_left: i32,
-        calls: Vec<(Pf, u8, i32)>,
+        self.melee.aim_dir[2] = 0.0;
     }
 
-    impl AnimCtl for FrameAnim {
-        fn set_anim(&mut self, blend: Pf, seq: u8, frame: i32) {
-            self.calls.push((blend, seq, frame));
-            self.v.seq_a = 0xff;
-            self.v.seq_b = seq;
-            self.v.frame_b = frame as u8;
-            self.blend_left = if Pf::ZERO < blend { blend.to_i32() } else { 1 };
+    /// `0x2ae900(range, yaw, yaw cone, pitch cone, dir, class type −1, line test)` with `0x2ae400`'s score: over the
+    /// target list, the moby with the lowest `d + d·(yaw off + pitch off)` (crates and type 0x16 classes: + range ·
+    /// 0.8), out of range or outside a cone (cones ≤ 0: none) left out; with `line`, one hidden behind the world (a
+    /// line from the hero's head `0x189f00` to `pos + up`) is left out too.
+    pub fn target_search(&self, env: &Env, range: f32, yaw: f32, yaw_cone: f32, pitch_cone: f32, line: bool) -> Option<Target> {
+        let mut best = 1e8;
+        let mut out = None;
+        let eye = if self.state == 0x14 { [self.pos[0], self.pos[1], self.ground_z] } else { self.pos };
+        for t in env.targets {
+            let d = dist(eye, t.pos);
+            let mut skip = range < d;
+            let a_yaw = rot_dist(atan2(t.pos[0] - eye[0], t.pos[1] - eye[1]), yaw);
+            let a_pitch = rot_dist(atan2(dist2(eye, t.pos), t.pos[2] - eye[2]), 0.0);
+            if 0.0 < yaw_cone && yaw_cone < a_yaw { skip = true; }
+            if 0.0 < pitch_cone && pitch_cone < a_pitch { skip = true; }
+            let mut score = d + (a_yaw + a_pitch) * d;
+            if t.crate_like || t.kind == 0x16 { score += range * 0.8; }
+            if skip || best <= score { continue; }
+            if line {
+                let head = add(self.pos, [0.0, 0.0, 1.0]);
+                if env.line(head, add(t.pos, t.up), 2).is_some() { continue; }
+            }
+            best = score;
+            out = Some(*t);
         }
-        fn advance(&mut self, speed: Pf) {
-            self.v.flags = 0;
-            let old = self.v.frame;
-            if self.v.seq_a != self.v.seq_b {
-                self.blend_left -= 1;
-                if self.blend_left <= 0 {
-                    self.v.seq_a = self.v.seq_b;
-                    self.v.frame = self.v.frame_b as f32;
+        out
+    }
+
+    /// The aim's turn (the states' "aiming" branch): the target yaw and direction are the aim's; the yaw springs.
+    fn aim_turn(&mut self, k: f32, max: f32) {
+        self.target_yaw = self.melee.aim_yaw;
+        self.stick_dir = self.melee.aim_dir;
+        self.turn_to(k, 0.2, max, 0);
+    }
+
+    /// `0x2ba8e0` group 6.
+    pub(super) fn phys_melee(&mut self, env: &Env, anim: &mut dyn AnimCtl) {
+        let v = anim.view();
+        let sw = *self.swing();
+        let frame = v.frame;
+        match self.state {
+            0x1f => return self.phys_glove(env),
+            0x6d => return self.phys_ground(env, anim),
+            0x93 => return,
+            _ => {}
+        }
+        match self.state {
+            0x13 => {
+                if v.blending() || frame < sw[HIT_TO] as f32 { self.items.use_state = 2; }
+                self.target_speed = 0.0;
+                let mut lunge = self.melee.lunge;
+                if let (Some(_), true) = (self.melee.target, self.timer <= 3) {
+                    // Closer than the swing's reach: the lunge shortens (to 1.1·the gap, at most 4 / 1.9).
+                    let d = (dist2(self.melee.target_pos, self.pos) - 0.5).max(0.0);
+                    let (cap, far, d) = match sw[KIND] { 0 => (0.8, 4.0, d - 0.75), 1 => (1.7, 4.0, d - 0.6), _ => (1.7, 1.9, d - 1.3) };
+                    if d.abs() < cap + 3.0 {
+                        let l = (d * 1.111_111_2).min(far);
+                        lunge = if l <= 1.0 { self.melee.lunge } else { l };
+                    }
                 }
-            } else {
-                self.v.frame += speed.to_f32();
-                if self.v.frame >= 40.0 { self.v.flags = 2; }
+                self.melee.lunge = lunge;
+                match sw[KIND] {
+                    1 => {
+                        if v.blending() || frame < 9.0 {
+                            let s = if 8.0 < frame { 0.050_000_004 } else if 7.0 < frame { 0.075 } else { 0.095 };
+                            self.target_speed = self.melee.lunge * s;
+                        }
+                    }
+                    0 => if frame < 18.0 { self.target_speed = self.melee.lunge * 0.073_333_34 },
+                    2 => if v.blending() || frame < 12.0 { self.target_speed = self.melee.lunge * 0.061_666_67 },
+                    _ => {}
+                }
+                approach(1.0, 0.2, &mut self.anim_speed);
+                if self.melee.aim == 0 && self.melee.target.is_none() {
+                    if !(sw[KIND] == 1 && !v.blending() && 7.0 < frame) { self.aim_search(env, 5.0, 0.785_398_2, 0.785_398_2); }
+                } else {
+                    let a = sub_rot(self.melee.aim_yaw, self.rot[2]);
+                    if sw[KIND] == 1 && 0.0 < a { self.anim_speed = 1.0 / (a.abs() + 1.0); }
+                    self.aim_turn(0.05, 0.282_160_5);
+                }
+                self.speed_step(0.010_277_778, 0.007_777_778);
+                if self.melee.aim == 0 { self.set_planar_vel(YAW_KEEP) } else { self.set_planar_vel(self.melee.aim_yaw) }
+                if self.air_ticks == 0 { self.gravity(0.015) } else { self.gravity_from(self.eff_v[2], 0.006_944_444) }
+                self.edge_brake(env, 3.7, 0.0);
             }
-            self.v.frame_step = if old <= self.v.frame { self.v.frame - old } else { 0.0 };
+            0x14 => {
+                if v.blending() || frame < sw[IDLE_AFTER] as f32 { self.items.use_state = 2; }
+                self.target_speed = 0.0;
+                let up_close = 4.0 < self.height;
+                match self.melee.target {
+                    None => {
+                        if up_close && self.timer < 0x46 { self.target_speed = 0.075; }
+                        self.speed_step(0.004_166_667, 0.004_166_667);
+                        self.vel = set_len2(self.vel, self.speed);
+                    }
+                    Some(_) => {
+                        let d = len2(sub(self.melee.target_pos, self.pos));
+                        if (2.0 < d && d < 5.0) || up_close { self.target_speed = 0.075; }
+                        self.speed_step(0.006_944_444, 0.006_944_444);
+                        let f = scale(self.rows[0], self.speed);
+                        (self.vel[0], self.vel[1]) = (f[0], f[1]);
+                    }
+                }
+                if self.melee.aim == 0 && self.melee.target.is_none() {
+                    if frame < 25.0 { self.aim_search(env, 8.0, 1.047_197_6, 1.047_197_6); }
+                } else {
+                    self.aim_turn(0.05, 0.282_160_5);
+                }
+                let rise = if 2.25 < self.height { 0.064_166_67 } else if 1.8 < self.height { 0.089_833_33 } else { 0.128_333_34 };
+                if 8 < self.timer {
+                    if 0xe < self.timer {
+                        self.gravity(0.036_111_11);
+                        if self.vel[2] < 0.0 { self.melee.fell = 1.0; }
+                        if self.vel[2] < -0.616_666_7 { self.vel[2] = -0.616_666_7; }
+                    }
+                } else {
+                    let mut z = self.vel[2];
+                    approach(rise, 0.041_666_668, &mut z);
+                    self.vel[2] = z;
+                }
+            }
+            0x15 | 0x83 => {
+                self.target_speed = 0.0;
+                if v.blending() || frame < sw[IDLE_AFTER] as f32 { self.items.use_state = 2; }
+                let from_look = self.prev_state == 1 && 0x15 <= self.prev_timer;
+                if !from_look {
+                    if self.melee.aim == 0 && self.melee.target.is_none() {
+                        let early = !(self.state == 0x83 && 0xb < self.timer) && (v.blending() || frame <= 6.0);
+                        if early && self.state == 0x15 { self.aim_search(env, 14.0, 0.523_598_8, 0.785_398_2); }
+                    } else {
+                        let a = sub_rot(self.melee.aim_yaw, self.rot[2]);
+                        if 0.0 < a { self.anim_speed = 1.0 / (rot_dist(self.melee.aim_yaw, self.rot[2]) + 1.0); }
+                        self.aim_turn(0.057, 0.282_160_5);
+                    }
+                }
+                // The throw at frame 33 of the throw's sequence (`0x2b3aa0(33)`).
+                if !v.blending() && v.seq_b == 0x1a && passed(&v, 33.0) && self.state == 0x15 { self.throw_wrench(); }
+                self.speed_step(0.010_277_778, 0.007_777_778);
+                self.set_planar_vel(YAW_KEEP);
+                if self.air_ticks != 0 { self.gravity_from(self.eff_v[2], 0.006_944_444) } else { self.gravity(0.015) }
+            }
+            0x22 => {
+                self.target_speed = 0.0;
+                if self.melee.aim == 0 {
+                    self.aim_search(env, 5.5, 0.872_664_6, -1.0);
+                } else {
+                    self.aim_turn(0.04, 0.282_160_5);
+                }
+                self.speed_step(0.008_333_334, 0.009_722_223);
+                self.set_planar_vel(YAW_KEEP);
+                if self.air_ticks != 0 { self.gravity_from(self.disp[2], 0.015) } else { self.gravity(0.015) }
+            }
+            _ => {}
         }
-        fn view(&self) -> AnimView { self.v }
-        fn frame_count(&self, _: u8) -> u8 { 40 }
-        fn set_loop(&mut self, _: i32, _: i32) {}
-        fn clear_loop(&mut self) {}
     }
 
-    fn wrench() -> HandItem {
-        let anim = AnimState { seq_a: 1, frame_a: 0, seq_b: 1, frame_b: 0, t: 0.0, speed: 1.0, rate: 1.0, flags: 0, trigger_count: 0, skip_advance: false };
-        HandItem { o_class: WRENCH_CLASS, mstate: 0, anim, snapshot: None, scale: 1.0, position: [0.0; 3], rows: [[0; 4]; 3], hit_timer: 0, flight: Default::default() }
-    }
-
-    /// Ratchet on a flat floor with the wrench in hand (slot ready, fire mask □).
-    fn runner() -> (crate::hero::testkit::Runner, rc_formats::collision::Collision, FrameAnim) {
-        let coll = floor(100.0, 100, 106, 100, 106);
-        let mut r = Runner::new([410.0, 410.0, 100.0], 0.0);
-        r.hero.items.slot = items::HandSlot { item: Some(wrench()), fire_mask: button::SQUARE, state: 2, id: 8, ..Default::default() };
-        let mut a = FrameAnim::default();
-        for _ in 0..3 { tick(&mut r, &coll, &mut a, PadInput::neutral()); }
-        (r, coll, a)
-    }
-
-    fn tick(r: &mut crate::hero::testkit::Runner, coll: &rc_formats::collision::Collision, a: &mut FrameAnim, input: PadInput) -> HeroTick {
-        r.pad.update(Some(&input.bytes()), false);
-        let env = Env { coll, pad: &r.pad, cam_yaw: r.cam_yaw, cam_rows: r.cam_rows, mirror: false, death_z: Pf::ZERO, mobys: None, hero_moby: None, water: None, world: None };
-        hero_update(&mut r.hero, &mut r.moby, &env, a, &mut r.rng)
-    }
-
-    fn sq() -> PadInput { PadInput::neutral().press(button::SQUARE) }
-
-    #[test]
-    fn square_starts_the_combo_and_chains_in_the_window() {
-        let (mut r, coll, mut a) = runner();
-        tick(&mut r, &coll, &mut a, sq());
-        assert_eq!((r.hero.state, r.hero.group, r.hero.melee.combo), (0x13, 6, 0));
-        assert_eq!(a.calls.last(), Some(&(Pf::from_i32(5), 0x17, 0)));
-        assert_eq!(r.hero.items.pending_blend, Some((3, 0, 5)));
-        // Swing 1 plays; a second □ before frame 26 (chain-from) is ignored, but it stays buffered: the
-        // window is (int(frame) − 19)·2 ticks (1..15), so a press at frame ≥ 22 still counts at 26.
-        let mut chained_at = None;
-        for t in 0..60 {
-            let early = t == 10;
-            let at_23 = (a.v.frame as i32) == 23 && a.v.seq_a == a.v.seq_b;
-            let inp = if early || at_23 { sq() } else { PadInput::neutral() };
-            tick(&mut r, &coll, &mut a, inp);
-            if r.hero.melee.combo == 1 && chained_at.is_none() { chained_at = Some(a.calls.last().unwrap().2); break; }
+    /// `0x2cb650` group 6.
+    pub(super) fn trans_melee(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> Option<i32> {
+        let v = anim.view();
+        let sw = *self.swing();
+        let frame = v.frame;
+        let held_r1 = env.pad.held & button::R1 != 0;
+        match self.state {
+            0x1f => {
+                if self.items.hand.is_some() && !v.blending() && 20.0 < frame { self.set_state(anim, env, 0, false); }
+                return None;
+            }
+            0x6d => return ((sw[IDLE_AFTER] as f32) < frame).then_some(0),
+            0x93 => return None,
+            _ => {}
         }
-        assert_eq!(r.hero.state, 0x13);
-        assert_eq!(r.hero.melee.combo, 1, "second swing");
-        assert_eq!(a.calls.last().map(|c| (c.0, c.1)), Some((Pf::from_i32(7), 0x18)));
-        assert_eq!(chained_at, Some(1));
-    }
-
-    /// The rebound 0x21: a target record with flag 2 (+0x1e) sends Ratchet back; the entry (group 10, 9 u/s, his
-    /// sequence 0x27 + step from frame 5, the wrench's 7 + step), then 0x7a's brake along 0x13fdb8.
-    #[test]
-    fn a_flag_2_target_rebounds_the_wrench() {
-        let mut m = crate::moby_runtime::Moby { mode: 0x20, pvars: vec![0; 0x40], ..crate::moby_runtime::Moby::default() };
-        m.pvars[0..4].copy_from_slice(&8u32.to_le_bytes());
-        let mut t = MobyTable::new(vec![m], 1);
-        assert!(!rebounds(&t, 0));
-        t.mobys[0].pvars[8 + 0x1e] = 2;
-        assert!(rebounds(&t, 0));
-        let (mut r, coll, mut a) = runner();
-        tick(&mut r, &coll, &mut a, sq());
-        assert_eq!(r.hero.state, 0x13);
-        r.hero.weapons.deferred = Some(0x21);
-        r.hero.packs.rebound_yaw = 1.0;
-        {
-            let env = Env { coll: &coll, pad: &r.pad, cam_yaw: r.cam_yaw, cam_rows: r.cam_rows, mirror: false, death_z: Pf::ZERO, mobys: None, hero_moby: None, water: None, world: None };
-            let mut c = crate::hero::states::Ctx { env: &env, anim: &mut a, rng: &mut r.rng, voice: None };
-            crate::hero::weapons::after_items(&mut r.hero, &mut c);
+        match self.state {
+            0x13 | 0x15 => {
+                let mut window = (frame as i32 - sw[REF]) * 2;
+                if self.state == 0x15 { window = 8; }
+                let mut late = true;
+                if sw[JUMP_AFTER] as f32 >= frame {
+                    late = false;
+                } else if !v.blending() {
+                    if !(self.state == 0x15 && self.f16c == 1) && Self::cross_within(env, window) {
+                        if !held_r1 { return Some(7); }
+                        if self.crouch_jump_from(anim, env, 7) { return None; }
+                    }
+                    late = false;
+                }
+                if !late && !v.blending() {
+                    if 34.0 < frame && 0.9 < self.stick_mag {
+                        // The run, at the walk entry's frame for substate 0 (`$gp − 0x7218`).
+                        self.set_state(anim, env, 2, false);
+                        self.set_anim(anim, 13.0, 3, 8);
+                        return None;
+                    }
+                    if (sw[IDLE_AFTER] as f32) < frame {
+                        if 0.8 < self.stick_mag { return Some(2); }
+                        if frame <= (sw[IDLE_AFTER] + 5) as f32 && v.flags & 2 == 0 { return None; }
+                        self.set_state(anim, env, 0, false);
+                        return None;
+                    }
+                }
+                if self.state != 0x15 { return None; }
+                if self.items.item == 10 && 0x64 < self.timer && self.melee.catch_t < 0x1a {
+                    // `0x2d2870(2)`: out of the throw's hold loop.
+                    anim.exit_loop(2);
+                    self.melee.catch_t = 0x1a;
+                }
+                None
+            }
+            0x83 => {
+                if 37.0 < frame && !v.blending() {
+                    if Self::cross_within(env, 7) {
+                        if !held_r1 { return Some(7); }
+                        if self.crouch_jump_from(anim, env, 7) { return None; }
+                    }
+                    self.set_state(anim, env, 0, false);
+                    let seq = self.idle_seq();
+                    self.set_anim(anim, 15.0, seq, 0);
+                }
+                None
+            }
+            0x14 => {
+                let eta = self.land_eta(0.036_111_11).min(60.0) as i32;
+                if self.melee.fell == 0.0 {
+                    self.anim_speed = 0.33;
+                } else if self.air_ticks == 0 || eta == 0 || 26.0 - frame <= 1.0 {
+                    self.anim_speed = if self.air_ticks == 0 && frame < 26.0 { 2.0 } else { 1.0 };
+                } else {
+                    self.anim_speed_for_ticks(&v, 26.0, eta as f32, 0.5, -1.0);
+                    if self.height < 0.7 && self.anim_speed < 0.75 { self.anim_speed = 0.75; }
+                }
+                if (sw[JUMP_AFTER] as f32) < frame {
+                    if v.blending() { return None; }
+                    if Self::cross_within(env, (frame as i32 - sw[REF]) * 2) {
+                        if !held_r1 { return Some(7); }
+                        if self.crouch_jump_from(anim, env, 7) { return None; }
+                    }
+                }
+                if v.blending() { return None; }
+                if (sw[IDLE_AFTER] as f32) < frame { self.set_state(anim, env, 0, false); }
+                None
+            }
+            0x22 => {
+                if 19.0 < frame && Self::cross_within(env, 0xb) { return Some(7); }
+                if 21.0 <= frame { self.set_state(anim, env, 0, false); }
+                None
+            }
+            _ => None,
         }
-        assert_eq!((r.hero.state, r.hero.group), (0x21, 10));
-        assert_eq!(a.calls.last(), Some(&(Pf::from_i32(5), 0x27, 5)));
-        let v0 = r.hero.speed;
-        tick(&mut r, &coll, &mut a, PadInput::neutral());
-        assert!(r.hero.speed < v0, "braking");
-        assert!((r.hero.target_yaw.to_f32() - crate::moby_update::creature::add_rot(1.0, std::f32::consts::PI)).abs() < 1e-5, "faces away from the push");
     }
 
-    #[test]
-    fn a_late_press_does_not_chain_and_the_combo_ends_in_idle() {
-        let (mut r, coll, mut a) = runner();
-        tick(&mut r, &coll, &mut a, sq());
-        let mut states = Vec::new();
-        for _ in 0..60 {
-            tick(&mut r, &coll, &mut a, PadInput::neutral());
-            states.push((r.hero.state, a.v.frame));
+    /// `0x2cadb0(7)` called from a swing's chain: the crouch's jumps (the flip with the stick off the facing, else 7).
+    fn crouch_jump_from(&mut self, anim: &mut dyn AnimCtl, env: &Env, _n: i32) -> bool {
+        let gap = self.flip_gap(env);
+        if env.pad.held & button::R1 != 0 && 0 < gap && env.pad.combo(button::CROSS, super::states::FLIP_DIRS, gap + 5, gap) {
+            self.set_state(anim, env, 0xb, true);
+            return true;
         }
-        // Blend 5 ticks, then the readout counts 0, 1, …; idle (SetState(0, no anim)) once frame > 31.
-        let idle = states.iter().position(|s| s.0 == 0).unwrap();
-        assert!(states[idle - 1].1 <= 31.0 && states[idle].1 > 31.0, "{:?}", &states[idle - 2..idle + 1]);
-        // A press after frame 33 (chain-before) starts swing 1 again, not swing 2.
-        tick(&mut r, &coll, &mut a, sq());
-        assert_eq!((r.hero.state, r.hero.melee.combo), (0x13, 0));
+        if self.timer < 7 || !Self::cross_within(env, 9) { return false; }
+        self.set_state(anim, env, 7, true);
+        true
     }
 
-    #[test]
-    fn third_swing_wraps_to_the_first() {
-        let (mut r, coll, mut a) = runner();
-        tick(&mut r, &coll, &mut a, sq());
-        let mut seen = vec![0];
-        for _ in 0..200 {
-            let from = COMBO[r.hero.melee.combo as usize][C_CHAIN_FROM] as f32;
-            let inp = if a.v.seq_a == a.v.seq_b && a.v.frame >= from && r.hero.state == 0x13 { sq() } else { PadInput::neutral() };
-            tick(&mut r, &coll, &mut a, inp);
-            if r.hero.state == 0x13 && *seen.last().unwrap() != r.hero.melee.combo { seen.push(r.hero.melee.combo); }
-            if seen.len() >= 3 { break; }
+    /// `0x2ba610`: the throw — once per throw (`0x18b05a`), the wrench moby leaves the hand (state 10) along the
+    /// facing (or the look stance's camera from 0x1 / 0x1d after 0x15 ticks), with the throw's push (0.383) and its
+    /// sequence 6; the flight is the wrench's update.
+    pub fn throw_wrench(&mut self) {
+        if self.items.thrown != 0 { return; }
+        let Some(_) = self.items.hand.filter(|_| self.items.hand_class == 0x47) else { return };
+        self.items.thrown = 1;
+        self.items.throw = Some(super::items::Throw { dir: self.rows[0], push: 0.383_333_33 });
+    }
+
+    /// `0x2c96d0` for the wrench (item 10): □ within 10 ticks, on the ground (groups 0 / 1, or a landed jump), the
+    /// hand item ready: R1 held, or the look stance after 0x14 ticks → the throw 0x15; else the combo 0x13. In the air
+    /// (a jump past 10 ticks, the fall, the double jump past frame 32): □ within 0xe (0x12 after a flip / double jump)
+    /// → the swing 0x13 below 0.1 (0.57 descending) above the ground, else the jump attack 0x14. During the combo: □
+    /// within the chain window (`+0x10` frame on, `(frame − ref)·2`, 1..0xf) → the next swing (0x15 with R1).
+    /// Returns whether a state was set.
+    pub fn melee_trigger(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> bool {
+        let it = &self.items;
+        // `0x18c0dc` (states that keep the item away; the wrench still with `0x18a168` = 1, not tracked here).
+        if it.no_use != 0 { return false; }
+        if it.item != 10 || it.hand.is_none() || it.thrown != 0 || it.ready != 2 { return false; }
+        let mask = it.trigger;
+        let pressed = |n: i32| env.pad.pressed_within(mask, n).is_some();
+        let held_r1 = env.pad.held & button::R1 != 0;
+        let grounded_ok = self.land_lag == 0 && (self.group < 2 || (self.group == 4 && self.jump.landed != 0));
+        if grounded_ok {
+            if !pressed(10) { return false; }
+            let mut id = 0x13;
+            if held_r1 || ((self.state == 1 || self.state == 0x1d) && 0x14 < self.timer) {
+                if (self.state == 1 || self.state == 0x1d) && 0x14 < self.timer {
+                    self.throw_wrench();
+                    return false;
+                }
+                id = 0x15;
+            }
+            return self.set_state(anim, env, id, true);
         }
-        // Swing 2 (row 1) chains at frame ≥ 12 (< 25); swing 3 (row 2) has chain-before 0: the next press
-        // restarts at swing 1.
-        assert_eq!(seen, vec![0, 1, 2]);
-        // Swing 3's idle-after (21) comes before its chain-from (23): it always ends in idle, and □ there
-        // starts swing 1 (previous group 0).
-        let mut st = Vec::new();
-        for _ in 0..40 { tick(&mut r, &coll, &mut a, PadInput::neutral()); st.push(r.hero.state); }
-        assert_eq!(*st.last().unwrap(), 0);
-        tick(&mut r, &coll, &mut a, sq());
-        seen.push(r.hero.melee.combo);
-        assert_eq!(seen, vec![0, 1, 2, 0]);
-    }
-
-    #[test]
-    fn hit_frames() {
-        let w = |c: i32| (0..40).filter(|&f| in_hit_window(c, Pf::from_i32(f), false)).collect::<Vec<_>>();
-        assert_eq!(w(0), (17..=23).collect::<Vec<_>>());
-        assert_eq!(w(1), (8..=13).collect::<Vec<_>>());
-        assert_eq!(w(2), (12..=16).collect::<Vec<_>>());
-        assert_eq!(w(4), (1..=28).collect::<Vec<_>>());
-        assert!(!in_hit_window(0, Pf::from_i32(20), true), "no hits while the anim blends");
-    }
-
-    #[test]
-    fn square_in_the_air_is_the_jump_attack() {
-        let (mut r, coll, mut a) = runner();
-        tick(&mut r, &coll, &mut a, PadInput::neutral().press(button::CROSS));
-        for _ in 0..11 { tick(&mut r, &coll, &mut a, PadInput::neutral()); }
-        assert_eq!(r.hero.state, 7);
-        assert!(r.hero.height > Pf::b(0x3dcc_cccd));
-        tick(&mut r, &coll, &mut a, sq());
-        assert_eq!((r.hero.state, r.hero.melee.combo, r.hero.items.slot.swap_timer), (0x14, 4, 10));
-        assert_eq!(a.calls.last(), Some(&(Pf::from_i32(11), 0x2b, 4)));
-        // It lands and ends in idle (frame > 30) without freezing.
-        let mut last = HeroTick::Ran;
-        for _ in 0..120 { last = tick(&mut r, &coll, &mut a, PadInput::neutral()); }
-        assert_eq!(last, HeroTick::Ran);
-        assert_eq!(r.hero.state, 0);
-        assert!(r.hero.grounded());
-    }
-
-    #[test]
-    fn swap_to_the_glove_and_back() {
-        let (mut r, _coll, _a) = runner();
-        let empty = MobyAnimClass { joint_count: 1, skeleton: vec![], rest: vec![[0.0; 3]], parent_word: vec![0], sequences: vec![] };
-        let cls = |o| ItemClass { o_class: o, anim: empty.clone(), scale: 1.0, chains: vec![] };
-        let mut defs = vec![ItemDef::default(); 37];
-        defs[8] = ItemDef { slot: 0, attach: 0, o_class: 0x47, b18: 0 };
-        defs[10] = ItemDef { slot: 0, attach: 6, o_class: 0xc0, b18: 0 };
-        let data = ItemData { defs, hero_chains: vec![], classes: vec![cls(0x47), cls(0xc0)] };
-        let mut g = ItemGlobals { request: 10, saved: 10, previous: 0, wrench_flag: 1, drone: false };
-        let mut rng = Rng::new();
-        let mut table = crate::moby_runtime::MobyTable::new(vec![crate::moby_runtime::Moby::zeroed()], 4);
-        let pad = crate::pad::PadState::default();
-        let anim = FrameAnim::default();
-        let mut frame = 100;
-        let mut hand = Vec::new();
-        for _ in 0..8 {
-            let env = ItemEnv { data: &data, pad: &pad, frame, hero_moby: 0, coll: None, mobys: None, camera: None, camera_up: None, targets: &[] };
-            items::items_update(&mut r.hero, &mut g, &mut table, &anim, &mut rng, &env, &mut items::NoHits);
-            hand.push((r.hero.items.slot.id, r.hero.items.slot.state, r.hero.items.slot.item.as_ref().map(|m| m.o_class)));
-            frame += 1;
+        let air = matches!(self.state, 7 | 9 | 0x89 | 8 | 6) || (self.state == 0xe && 32.0 < anim.view().frame);
+        let flip_late = self.state == 0xb && (if self.jump.flip_dir != 3 { 18.0 } else { 20.0 }) < anim.view().frame;
+        if air || flip_late || self.state == 0x2c || self.state == 0x11 {
+            if self.timer < 0xb { return false; }
+            let n = if self.state == 0xb || self.state == 0xe { 0x12 } else { 0xe };
+            if !pressed(n) { return false; }
+            let low = if self.jump.descending == 0 { 0.1 } else { 0.57 };
+            let id = if self.height <= low && !(self.state == 8 && 0.57 < self.height) { 0x13 } else { 0x14 };
+            return self.set_state(anim, env, id, true);
         }
-        // Tick 0: the swap starts (put away, state 3, request consumed, the wrench flag cleared, one RNG draw);
-        // tick 1: deleted, the gate at frame + 2; ticks 2–3 empty; tick 4: the glove (class 0xc0, fire ○).
-        assert_eq!(hand[0], (8, 3, Some(0x47)));
-        assert_eq!(hand[1], (0, 0, None));
-        assert_eq!(hand[2], (0, 0, None));
-        assert_eq!(hand[3], (0, 0, None));
-        assert_eq!(hand[4], (10, 2, Some(0xc0)));
-        assert_eq!((g.request, g.wrench_flag, g.saved), (0, 0, 10));
-        assert_eq!(r.hero.items.slot.fire_mask, button::CIRCLE);
-        // □ with the glove in hand swaps back to the wrench.
-        let mut p = crate::pad::PadState::default();
-        p.update(Some(&PadInput::neutral().press(button::SQUARE).bytes()), false);
-        let env = ItemEnv { data: &data, pad: &p, frame, hero_moby: 0, coll: None, mobys: None, camera: None, camera_up: None, targets: &[] };
-        items::items_update(&mut r.hero, &mut g, &mut table, &anim, &mut rng, &env, &mut items::NoHits);
-        assert_eq!((r.hero.items.target, r.hero.items.slot.state, g.wrench_flag), (8, 3, 1));
+        if self.group == 6 && !anim.view().blending() {
+            let sw = *self.swing();
+            let frame = anim.view().frame;
+            if self.state == 0x15 && 0x1e < self.timer && sw[CHAIN_FROM] as f32 <= frame && held_r1 && pressed(0xf) {
+                return self.set_state(anim, env, 0x15, true);
+            }
+            if sw[CHAIN_FROM] as f32 <= frame && self.items.thrown == 0 {
+                let w = ((frame as i32 - sw[REF]) * 2).clamp(1, 0xf);
+                if pressed(w) { return self.set_state(anim, env, if held_r1 { 0x15 } else { 0x13 }, true); }
+            }
+        }
+        false
     }
 }
+
+/// `0x2b3aa0(f)`: the frame passed `f` this tick.
+pub fn passed(v: &crate::hero::anim::AnimView, f: f32) -> bool { f < v.frame && v.frame - f <= v.frame_step }

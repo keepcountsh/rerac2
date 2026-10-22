@@ -1,111 +1,160 @@
-//! Fall 6 (group 2): the SetState entry (0x23cf98 case 6 / 0x77), physics (0x2370b8, case 0x23af54) and
-//! transitions (0x242930 case 6 / 0x2d). Spec: docs/plan/player_controller.md §3.1, §4.3; docs/plan/hero_states.md.
-//! (0x77, the death fall, shares the entry in the game: it is [`super::damage`]'s; 0x2d, the fall after a swing,
-//! shares the transitions: [`super::swingshot`].)
-#![allow(clippy::neg_cmp_op_on_partial_ord, clippy::assign_op_pattern)] // FPU compare semantics and op order are spelled out on purpose.
+//! The fall 6 (group 2): SetState entry (L00 `0x2c4560` case 6 / 0x74), physics (`0x2ba8e0` case 6 / 0x2c, the air
+//! control `0x2b6cd0`, gravity `0x18a8a0` with the fall speed capped at 50 / 60) and transitions (`0x2cb650` case 6
+//! / 0x2c): the high-fall sequence 0xb after 18 ticks or above 1.75, and the landing — idle, stop or walk by the
+//! stick and the speed, with the landing lag `0x18a000` after a high fall.
+//!
+//! The tumble 0x2c (group 2, camera 7: knocked through the air) shares it: the body's pitch springs to 0.44 above a
+//! height of 4 and the roll to 0 (0.02, 0.3, at most 0.0437), and it lands with a longer lag (10).
+//!
+//! In the air: ✕ held with Clank on the back (more than 0.6 up) opens the glide 8; a ledge in reach (0x17).
+//!
+//! Not ported: the stuck-in-air jump (`0x18a022`), the landing effects (`0x2a6188`) and the
+//! camera jolt (`0x2d35e8`).
 
-use super::common::*;
 use super::physics::*;
-use super::states::Ctx;
+use super::states::Entry;
 use super::Hero;
-use crate::ps2v::Pf;
+use crate::hero::anim::AnimCtl;
 
 impl Hero {
-    /// SetState entry of 6.
-    pub(super) fn fall_entry(&mut self, c: &mut Ctx, play: bool) -> Option<bool> {
-        self.group_gravity = DT2 * Pf::b(0x41c0_0000);
-        self.fc94 = DT2 * Pf::b(0x40e0_0000);
+    pub(super) fn fall_entry(&mut self, _anim: &mut dyn AnimCtl, _env: &Env, id: i32, _play: bool) -> Entry {
+        if id == 0x2c {
+            self.group = 2;
+            self.cam_mode = 7;
+            self.rot_vel = [0.0; 2];
+            self.vel = self.eff;
+            self.substate = 0;
+            return Entry::Anim(15.0, 0xb, 0);
+        }
         self.group = 2;
-        self.f15d4 = 0;
+        self.fall_g = 0.006_111_111_5;
+        self.fall_dec = 0.001_944_444_5;
         self.substate = 0;
         self.vel = self.eff;
-        self.idle.blink_period = 0x68;
-        if play {
-            if Pf::b(0x3fe0_0000) < self.height {
-                self.set_anim(c.anim, c.rng, blend(12), 0xb, 0);
-                self.substate = 1;
+        if 1.75 < self.height {
+            self.substate = 1;
+            return Entry::Anim(12.0, 0xb, 0);
+        }
+        Entry::Anim(10.0, 10, 0)
+    }
+
+    pub(super) fn phys_fall(&mut self, env: &Env, _anim: &mut dyn AnimCtl) {
+        if self.state == 0x2c {
+            let t = if 4.0 < self.height { 0.436_332_3 } else { 0.0 };
+            let (mut a, mut v) = (self.rot[1], self.rot_vel[1]);
+            turn_spring(t, 0.02, 0.3, 0.043_633_23, &mut a, &mut v, 0);
+            (self.rot[1], self.rot_vel[1]) = (a, v);
+            let (mut a, mut v) = (self.rot[0], self.rot_vel[0]);
+            turn_spring(0.0, 0.02, 0.3, 0.043_633_23, &mut a, &mut v, 0);
+            (self.rot[0], self.rot_vel[0]) = (a, v);
+            if 1.0 < self.height { self.substate = 1; }
+        }
+        self.run_target(env);
+        // `0x18a000`: the air control waits out the landing lag.
+        if self.land_lag == 0 { self.air_control(env); }
+        self.lean();
+        self.drag(0.7, 0.0);
+        self.vel[2] -= self.fall_g;
+        if self.vel[2] < -50.0 * DT { self.vel[2] = -50.0 * DT; }
+    }
+
+    pub(super) fn trans_fall(&mut self, env: &Env, anim: &mut dyn AnimCtl) -> Option<i32> {
+        if self.substate == 0 && (0x11 < self.timer || 1.75 < self.height) {
+            self.set_anim(anim, 16.0, 0xb, 0);
+            self.substate = 1;
+            self.cam_mode = if self.state == 0x2c { 7 } else { 0 };
+        }
+        if self.air_ticks != 0 {
+            if self.hp < 1 { return None; }
+            // In the air: ✕ held with Clank on the back → the glide; a ledge in reach is grabbed (`0x18a398`), a rail
+            // (0x27) or a pole (0x71).
+            if env.pad.held & crate::pad::button::CROSS != 0 && env.clank && env.pack != 4 && self.land_lag == 0 && 0.6 < self.height { return Some(8); }
+            if self.ledge.found { return Some(0x17); }
+            if self.grind.found { return Some(0x27); }
+            if self.grind.pole.is_some() { return Some(0x71); }
+            return None;
+        }
+        if self.state == 0x2c {
+            self.rot[0] = 0.0;
+            self.rot[1] = 0.0;
+        }
+        self.disp[2] = self.disp[2].max(-0.15);
+        self.vel[2] = self.vel[2].max(-0.15);
+        if self.hp <= 0 { return Some(0x39); }
+        if self.timer < 0x5a {
+            if self.substate == 1 {
+                if self.set_state(anim, env, 0, false) { self.set_anim(anim, -1.0, 0xc, 9); }
+                self.momentum[2] = 0.0;
+                if 0.116_666_67 < len(self.momentum) { self.momentum = set_len(self.momentum, 0.116_666_67); }
+                self.land_lag = if self.prev_state == 0x2c { 10 } else { 7 };
+                if !self.on_moby && 0x32 < self.timer { self.land_lag = 0x12; }
+            } else if self.stick_mag <= 0.5 || self.land_lag != 0 {
+                if 0.05 < self.eff_len_xy {
+                    if self.set_state(anim, env, 3, false) {
+                        self.set_anim(anim, 12.0, 6, 0);
+                        if 0.128_333 < len(self.momentum) { self.momentum = set_len(self.momentum, 0.128_333); }
+                    }
+                    return None;
+                }
+                self.set_state(anim, env, 0, true);
             } else {
-                self.set_anim(c.anim, c.rng, blend(10), 10, 0);
+                self.set_state(anim, env, 2, true);
             }
+        } else {
+            if self.set_state(anim, env, 0, false) { self.set_anim(anim, 6.0, 0xc, 4); }
+            if !self.on_moby { self.land_lag = 0x16; }
         }
         None
     }
 
-    /// Fall 6 (0x23af54).
-    pub(super) fn phys_fall(&mut self, env: &Env) {
-        self.stick_target_table(env);
-        if self.lockout == 0 { self.air_control(env); }
-        self.lean(); // HeroLean 0x235638: super::idle.
-        self.drag(Pf::b(0x3f33_3333), DT * Pf::ZERO);
-        let z = self.vel[2];
-        self.gravity_from(z, self.group_gravity);
-        let floor = -(DT * Pf::b(0x4248_0000));
-        if self.vel[2] < floor { self.vel[2] = floor; }
+    /// `0x2b6cd0`'s default path (the jumps 7 / 9 and the fall): turn toward the stick (0.04, 0.2, `0x18a2b4`) —
+    /// strafing (`0x18b274`), toward the camera's yaw and forward row instead, the stick's yaw and direction then put
+    /// back and kept as the strafe's (`0x18b278` / `0x18b260`), so he moves along the stick facing ahead — the drag
+    /// (0.7, 0) carried as momentum, then the air acceleration `0x2b62a0` — 1/180 when the stick asks for more than a
+    /// fifth of the run speed, else (fall group 2) the horizontal speed falls toward 0 by `0x18a8a4`, or 1/450 (1/1800
+    /// when blocked ahead; 11/3600 on a moby).
+    pub(super) fn air_control(&mut self, env: &Env) {
+        let (yaw, dir) = (self.target_yaw, self.stick_dir);
+        if self.strafe != 0 {
+            self.target_yaw = env.cam_yaw;
+            self.stick_dir = env.cam_rows[0];
+        }
+        self.turn_to(0.04, 0.2, self.jump.air_turn, 0);
+        if self.strafe != 0 {
+            (self.target_yaw, self.stick_dir) = (yaw, dir);
+            (self.strafe_yaw, self.strafe_dir) = (yaw, dir);
+        }
+        self.drag(0.7, 0.0);
+        self.momentum = self.drag;
+        let mut a = 0.005_555_556;
+        if self.target_speed < RUN_SPEED * 0.003_333_333_6 {
+            if self.group == 2 {
+                let mut s = len2(self.vel);
+                approach(0.0, self.fall_dec, &mut s);
+                self.vel = set_len2(self.vel, s);
+                return;
+            }
+            a = if self.jump.blocked != 0 { 0.000_555_555_6 } else { 0.002_222_222_3 };
+        }
+        self.air_accel(a);
     }
 
-    pub(super) fn tr_fall(&mut self, c: &mut Ctx) {
-        if self.substate == 0 && (ticks(18) <= self.timer || Pf::b(0x3fe0_0000) < self.height) {
-            self.set_anim(c.anim, c.rng, blend(16), 0xb, 0);
-            self.substate = 1;
-            self.f15d4 = 0;
-        }
-        if self.air_ticks == 0 {
-            // HeroFootstepSound(0x14063d, 0 / 1, 1): the landing's two steps (super::fx::footstep, played after the
-            // transitions), and the wrapper's level-12 footprints at the same two feet.
-            self.fx.footsteps.extend([(self.footstep, 0), (self.footstep, 1)]);
-            super::fx::footprints(self, &*c.anim, c.env);
-            let lim = DT * Pf::b(0xc110_0000);
-            if self.disp[2] < lim { self.disp[2] = lim; }
-            if self.vel[2] < lim { self.vel[2] = lim; }
-            if self.health <= 0 { self.set_state(c, 0x3d, true); return; }
-            let off_moby = self.ground_moby.is_none();
-            if !(self.timer < ticks(90)) {
-                if self.set_state(c, 0, false) { self.set_anim(c.anim, c.rng, blend(6), 0xc, 4); }
-                if off_moby { self.lockout = ticks(22); }
-                // `0x248920`: the landing's foot motes (super::pose).
-                self.land_motes(super::pose::motes::LAND_HARD);
-                return;
-            }
-            if self.substate == 1 {
-                if self.set_state(c, 0, false) { self.set_anim(c.anim, c.rng, Pf::b(0xbf80_0000), 0xc, 9); }
-                self.momentum[2] = Pf::ZERO;
-                clamp_len_2745f0(&mut self.momentum, DT * Pf::b(0x40e0_0000));
-                self.lockout = ticks(7);
-                if self.prev_state == 0x2d { self.lockout = ticks(10); }
-                if off_moby && ticks(50) < self.timer { self.lockout = ticks(18); }
-                self.land_motes(super::pose::motes::LAND_ROLL);
-                return;
-            }
-            if Pf::b(0x3f00_0000) < self.stick_mag && self.lockout == 0 {
-                self.set_state(c, 2, true);
-                self.land_motes(super::pose::motes::LAND_WALK);
-                return;
-            }
-            if DT * Pf::b(0x4040_0000) < self.eff_len_xy {
-                if self.set_state(c, 3, false) {
-                    self.set_anim(c.anim, c.rng, blend(12), 6, 0);
-                    clamp_len_2745f0(&mut self.momentum, DT * Pf::b(0x40f6_6666));
-                }
-                return;
-            }
-            self.set_state(c, 0, true);
-            self.land_motes(super::pose::motes::LAND);
-            return;
-        }
-        if self.health < 1 { return; }
-        // Heli-Pack glide 8 (✕ held, Heli-Pack owned, height > 0.6): super::packs.
-        if super::packs::fall_to_glide(self, c) { return; }
-        if ticks(20) < self.f532 as i32 {
-            // 0x13f524 (set by the pack glide 8) shortens the jump buffer to this tick.
-            let n = if self.f524 == 0 { ticks(6) } else { 1 };
-            if self.try_jump(c, n, false) { return; }
-        }
-        // Thruster-Pack ✕ + R1 combo → 0x10: super::packs.
-        if super::packs::fall_to_thruster(self, c) { return; }
-        // Ledge grab (0x13f838, set by the ledge probes of super::ledge) → 0x18; grind rail (0x13f8bc) → 0x28;
-        // cable (0x13f94c) → 0x74 (super::boots).
-        if self.f838 != 0 { self.set_state(c, 0x18, true); return; }
-        if super::boots::rail_contact(self) { self.set_state(c, 0x28, true); return; }
-        if super::boots::cable_contact(self) { self.set_state(c, 0x74, true); }
+    /// `0x2b62a0(a)` in gravity mode 0: the velocity's xy moves toward the stick's (target yaw, target speed; 1/12 when
+    /// blocked against a wall in a jump) by at most `a·k`, k = 1.5·(1 − cos(angle between them)) in 1..3; then the
+    /// speed = forward speed − the drag along the facing.
+    pub(super) fn air_accel(&mut self, a: f32) {
+        let want = if self.group == 4 && self.jump.blocked != 0 && self.cap_hit != 0 { 1.0 / 12.0 } else { self.target_speed };
+        let (s, c) = self.target_yaw.sin_cos();
+        let d = [c * want, s * want, self.vel[2]];
+        let (ld, lv) = (len2(d), len2(self.vel));
+        let f = if ld == 0.0 || lv == 0.0 { 0.0 } else { (-(self.vel[0] * d[0] + self.vel[1] * d[1]) / ld) / lv };
+        let k = ((f + 1.0) * 1.5).clamp(1.0, 3.0);
+        let mut diff = sub(d, self.vel);
+        diff[2] = 0.0;
+        if a * k < len2(diff) { diff = set_len2(diff, a * k); }
+        self.vel = add(self.vel, diff);
+        self.eff_h = self.vel;
+        let (s, c) = self.rot[2].sin_cos();
+        self.speed = self.fwd_speed - (self.drag[0] * c + self.drag[1] * s);
     }
 }

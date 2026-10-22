@@ -100,7 +100,7 @@ pub struct MobyAnim {
     /// does not. R&C1 never sets it.
     pub game_advanced: Vec<bool>,
     /// Per instance: the runtime joint-modifier list of a driven moby (`Moby::joint_mods`, its class manipulators:
-    /// `rc_game::moby_update::manip`); applied by the evaluation (`evaluate_posed`), which makes the pose private.
+    /// `rc_game::base::moby_update::manip`); applied by the evaluation (`evaluate_posed`), which makes the pose private.
     pub mods: Vec<Vec<rc_formats::moby_anim::JointModifier>>,
     /// Per instance: pose layers blended over its key ([`InstanceLayer`]; Going Commando's Ratchet, crate::rac2_play).
     /// R&C1 never sets them.

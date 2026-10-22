@@ -45,7 +45,7 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
 
 /// The hand gadgets the port loads with every level (`G/GADGET.WAD`, rc_formats::rac2::gadget): the game streams the
 /// one in Ratchet's hand (`0x306018`) when he takes it; the port has them from the start.
-pub const GADGETS: [i32; 1] = [rc_game2::hero::items::LANCER_CLASS as i32];
+pub const GADGETS: [i32; 1] = [rc_game::hero::items::LANCER_CLASS as i32];
 
 /// Gadget `o_class` (part A of its `GADGET.WAD` entry): its class and sequences added to the level's moby classes, its
 /// textures appended to the moby texture table (slot `k` = entry `moby_textures.len() + k`, as the armour's).
@@ -94,7 +94,7 @@ fn attach_ship_paint(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
 fn bytemuck_zeroed() -> rc_formats::level::TextureEntry { rc_formats::level::TextureEntry { data_offset: 0, width: 0, height: 0, ty: 0, palette: 0, mipmap: 0, pad: 0 } }
 
 /// What the moby system reads of the level's class blobs, re-read from the level file (the loaded level keeps no
-/// class blobs): the collision blobs (class header +0x10; the same blob and kernels as R&C1's, rc_game2::moby) and
+/// class blobs): the collision blobs (class header +0x10; the same blob and kernels as R&C1's, rc_game::moby) and
 /// the joint lists of the classes that carry attachments (class header +0x1c; Ratchet's, for his attachment points).
 pub struct ClassBlobs {
     pub collision: Vec<(i32, rc_formats::moby_collision::MobyCollision)>,
@@ -180,7 +180,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
         .ok();
     let ties = crate::tie_render::load_ties(&core, &core_data, gs_ram, &gameplay, &textures).context("loading ties")?;
     let shrubs = crate::shrub_render::load_shrubs(&core, &core_data, gs_ram, &gameplay, &textures).context("loading shrubs")?;
-    // The shells turn by the game's own rotations (rc_game2::sky).
+    // The shells turn by the game's own rotations (rc_game::sky).
     let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?;
     let mut textures = textures;
     let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
@@ -193,9 +193,6 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let occlusion = crate::occlusion::load(&core, &core_data, &gameplay, &tfrags, &ties.instances, &mobys.instances).context("loading occlusion")?;
     let particles = crate::particle_render::LevelParticles {
         textures: rc_formats::particle_tex::parse_particle_textures(&core, core_index, &core_data).map_err(|e| eprintln!("rac2: no particle textures ({e})")).ok(),
-        owners: Vec::new(),
-        level: index,
-        grid: rc_formats::level::HeightGrid::parse(&core.header, &core_data),
     };
     let death_z = rc_formats::rac2::gameplay::level_settings(&gameplay)?
         .and_then(|s| s.get(0x28..0x2c))

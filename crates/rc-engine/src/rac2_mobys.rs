@@ -1,4 +1,4 @@
-//! Going Commando's mobys in the engine (rc_game2::moby): the moby world made from the loaded level (classes, the
+//! Going Commando's mobys in the engine (rc_game::moby): the moby world made from the loaded level (classes, the
 //! static spawn), the host the moby loop and the class updates call (the animation states: crate::moby_anim's for
 //! the placed instances, a store of their own for the mobys the game creates; joint positions; Ratchet's attachment
 //! points), the moby scene the collision queries test (the moby pass of rc_game's kernels, which is R&C2's), and the
@@ -11,9 +11,9 @@ use bevy::prelude::*;
 use bevy::render::storage::ShaderBuffer;
 use rc_formats::moby_anim::{self, AnimState, MobyAnimClass, MobyFrame};
 use rc_formats::moby_collision::MobyCollision;
-use rc_game::collision_query::mobys::{pose_joints, CollMoby, MobyGrid, MobyScene, MobySource, PoseCache};
-use rc_game2::hero::physics::V3;
-use rc_game2::moby::{ClassInfo, Moby, MobyHost, MobyWorld};
+use rc_game::collision::mobys::{pose_joints, CollMoby, MobyGrid, MobyScene, MobySource, PoseCache};
+use rc_game::hero::physics::V3;
+use rc_game::moby::{ClassInfo, Moby, MobyHost, MobyWorld};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -47,9 +47,9 @@ pub struct Rac2Mobys {
     pub created: HashMap<usize, Created>,
     /// Created mobys posed from another's joints (Ratchet's head item: [`Rac2Mobys::skin_head`]): their palettes.
     pub skinned: HashMap<usize, Vec<moby_anim::Rows>>,
-    /// The ship's canopy (`rc_game2::canopy`, from the level overlay) and this tick's for the draw.
-    pub canopy: Option<rc_game2::canopy::Canopy>,
-    pub canopy_frame: Option<rc_game2::canopy::CanopyFrame>,
+    /// The ship's canopy (`rc_game::canopy`, from the level overlay) and this tick's for the draw.
+    pub canopy: Option<rc_game::canopy::Canopy>,
+    pub canopy_frame: Option<rc_game::canopy::CanopyFrame>,
     /// The mobys' loop-sound voice slots (`+0x6d`, [`HostSound::loops`]).
     pub loop_slots: HashMap<usize, u8>,
     /// Ratchet's joint lists (chains) for his attachment points, and the joint each list's modifiers act on
@@ -58,15 +58,15 @@ pub struct Rac2Mobys {
     pub hero_targets: Vec<u8>,
     /// The second byte lists of his joint lists (a pose layer's joints, `0x311e10(moby, list)`).
     pub hero_seconds: Vec<Vec<u8>>,
-    /// The holding classes 1 / 2 (rc_game2::hero::layers: his first 0x17 sequences with the arm holding the item).
+    /// The holding classes 1 / 2 (rc_game::hero::layers: his first 0x17 sequences with the arm holding the item).
     pub hold: [Option<Arc<rc_game::hero::anim::HoldClass>>; 2],
     /// Every class's joint lists (class header `+0x1c`, [`rc_formats::gadget::joint_list`]'s chains): what the
     /// joint queries take as their joint (`0x3175f8(m, 1, [list], out)`: the last joint of list `list`).
     pub chains: Chains,
     /// The level's grind paths (the gameplay's section 31).
-    pub rails: Vec<rc_game2::paths::GrindPath>,
+    pub rails: Vec<rc_game::paths::GrindPath>,
     /// The level's volumes and paths.
-    pub level: rc_game2::level::LevelData,
+    pub level: rc_game::level::LevelData,
     /// The level defs' footstep base (`$gp − 0x60e4`, `0x3012a0`): the level settings' word after their variant
     /// blocks (`[0x17 + 8·n]`, n = `[0x1a]`; `[0x1f]` without blocks).
     pub footstep_base: usize,
@@ -84,9 +84,9 @@ pub struct HeroPose<'a> {
     pub pos: V3,
     pub rows: [V3; 3],
     pub scale: f32,
-    /// His posture's joint modifiers (rc_game2::hero::posture), as his drawn pose has them.
+    /// His posture's joint modifiers (rc_game::hero::posture), as his drawn pose has them.
     pub mods: &'a [rc_formats::moby_anim::JointModifier],
-    /// His pose layers (rc_game2::hero::layers, [`Rac2Mobys::hero_layers`]), as his drawn pose has them.
+    /// His pose layers (rc_game::hero::layers, [`Rac2Mobys::hero_layers`]), as his drawn pose has them.
     pub layers: &'a [crate::moby_anim::InstanceLayer],
 }
 
@@ -329,7 +329,7 @@ impl MobyHost for Host<'_> {
     /// on the audio system's stream.
     fn play_sound(&mut self, m: &Moby, index: i32, mode: i32) -> i32 {
         let Some(s) = self.sound.as_mut() else { return -1 };
-        let ev = rc_game::moby_update::services::SoundEvent { index, flags: mode as u32, moby: m.index, o_class: m.o_class, sound_class: m.o_class, pos: m.pos, tick: s.tick };
+        let ev = rc_game::audio::SoundEvent { index, flags: mode as u32, moby: m.index, o_class: m.o_class, sound_class: m.o_class, pos: m.pos, tick: s.tick };
         let mut rng = s.system.rng;
         let k = s.system.play_class_sound(&ev, None, &s.listener, &mut rng);
         s.system.rng = rng;
@@ -366,9 +366,9 @@ fn footstep_base(gameplay: &[u8]) -> usize {
 }
 
 impl Rac2Mobys {
-    /// Ratchet's pose layers for the evaluator (rc_game2::hero::layers), in his `+0x60` list's order (the newest node
+    /// Ratchet's pose layers for the evaluator (rc_game::hero::layers), in his `+0x60` list's order (the newest node
     /// first): each over its joint list's second byte list; a holding layer's keys below 0x17 from its class.
-    pub fn hero_layers(&self, l: &rc_game2::hero::layers::Layers) -> Vec<crate::moby_anim::InstanceLayer> {
+    pub fn hero_layers(&self, l: &rc_game::hero::layers::Layers) -> Vec<crate::moby_anim::InstanceLayer> {
         let mut v: Vec<(u32, crate::moby_anim::InstanceLayer)> = l
             .hold
             .iter()
@@ -380,7 +380,7 @@ impl Rac2Mobys {
                     0 => None,
                     k => {
                         let c = self.hold.get(k as usize - 1)?.clone()?;
-                        let s = rc_game2::hero::layers::HOLD_SEQS;
+                        let s = rc_game::hero::layers::HOLD_SEQS;
                         Some((c, n.seq_a < s, n.seq_b < s))
                     }
                 };
@@ -391,9 +391,9 @@ impl Rac2Mobys {
         v.into_iter().map(|x| x.1).collect()
     }
 
-    /// `0x2aa278` for the head item (`rc_game2::hero::items::head_pass`): a keyframe of its own built from Ratchet's
+    /// `0x2aa278` for the head item (`rc_game::hero::items::head_pass`): a keyframe of its own built from Ratchet's
     /// current pose (`0x3181c0`: his blended key as a frame, [`moby_anim::snapshot`]) — joint 0 at rest, joints 1 and
-    /// 2 his [`rc_game2::hero::items::HEAD_JOINTS`]' quaternions, their scale where it is not 1 (inherited; with his
+    /// 2 his [`rc_game::hero::items::HEAD_JOINTS`]' quaternions, their scale where it is not 1 (inherited; with his
     /// joint modifiers' scale, not their rotations: the head look is not carried yet) and their
     /// translation where it differs from the head item's rest — evaluated with the head item's class as key A. It is
     /// drawn in his frame, so it follows his head.
@@ -403,7 +403,7 @@ impl Rac2Mobys {
         let Some(m) = self.world.mobys.get(id) else { return };
         let (Some(ac), Some(hc)) = (lv.mobys.anim.get(h.class), lv.mobys.classes.iter().position(|c| c.o_class == m.o_class as i32).and_then(|ci| lv.mobys.anim.get(ci))) else { return };
         let Some(f) = moby_anim::snapshot(ac, h.state, h.snapshot) else { return };
-        let joints = rc_game2::hero::items::HEAD_JOINTS;
+        let joints = rc_game::hero::items::HEAD_JOINTS;
         let mut quats = vec![[0, 0, 0, 0x7fff]];
         let (mut scales, mut trans) = (Vec::new(), Vec::new());
         for (k, &j) in joints.iter().enumerate() {
@@ -435,7 +435,7 @@ impl Rac2Mobys {
     }
 
     /// The class table (core order) and the static spawn of the level's moby instances.
-    pub fn load(lv: &crate::level_load::LoadedLevel, blobs: crate::rac2_level::ClassBlobs, host: &Host, game: &mut rc_game2::game::GameState, fresh: bool) -> Rac2Mobys {
+    pub fn load(lv: &crate::level_load::LoadedLevel, blobs: crate::rac2_level::ClassBlobs, host: &Host, game: &mut rc_game::game::GameState, fresh: bool) -> Rac2Mobys {
         let m = &lv.mobys;
         let classes = m
             .classes
@@ -444,7 +444,7 @@ impl Rac2Mobys {
             .map(|(ci, c)| ClassInfo {
                 o_class: c.o_class as i16,
                 slot: 0,
-                update: rc_game2::moby::classes::update_for(c.o_class as i16),
+                update: rc_game::moby::classes::update_for(c.o_class as i16),
                 scale: c.class.header.scale,
                 has_collision: c.class.header.collision != 0,
                 mode: c.class.header.mode_bits as u16,
@@ -462,7 +462,7 @@ impl Rac2Mobys {
                             .map(|q| {
                                 let td = q.as_ref()?.header.trigger_data as usize;
                                 if td == 0 { return None; }
-                                rc_game2::moby::ai::Reaction::parse(blob?.get(td..td + 0x20)?)
+                                rc_game::moby::ai::Reaction::parse(blob?.get(td..td + 0x20)?)
                             })
                             .collect()
                     })
@@ -477,10 +477,10 @@ impl Rac2Mobys {
         for r in &records {
             let o = r.base.o_class as i16;
             if classes.iter().any(|c| c.o_class == o) { continue; }
-            classes.push(ClassInfo { o_class: o, update: rc_game2::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
+            classes.push(ClassInfo { o_class: o, update: rc_game::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
         }
         let mut world = MobyWorld::new(classes);
-        let data = rc_game2::moby::SpawnData {
+        let data = rc_game::moby::SpawnData {
             pvars: g2::pvar_blocks(&lv.gameplay).map_err(|e| eprintln!("rac2: pvars: {e}")).unwrap_or_default(),
             links: g2::pvar_fixups(&lv.gameplay, "pvar_moby_links").unwrap_or_default(),
             fixups: g2::pvar_fixups(&lv.gameplay, "pvar_pointer_fixups").unwrap_or_default(),
@@ -494,9 +494,9 @@ impl Rac2Mobys {
         };
         let ground = |p: [f32; 3]| -> Option<f32> {
             let coll = lv.collision.as_ref()?;
-            rc_game::collision_query::coll_line(coll, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.01], rc_game::collision_query::QueryFlags(2)).map(|o| o.point[2])
+            rc_game::collision::coll_line(coll, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.01], rc_game::collision::QueryFlags(2)).map(|o| o.point[2])
         };
-        let mut rules = rc_game2::moby::SpawnRules { game, fresh, ground: &ground };
+        let mut rules = rc_game::moby::SpawnRules { game, fresh, ground: &ground };
         world.spawn_static(&records, &data, host, &mut rules);
         let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
         let lists: Vec<(Vec<u8>, Vec<u8>)> = m
@@ -530,7 +530,7 @@ impl Rac2Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game2::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }

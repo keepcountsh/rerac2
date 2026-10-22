@@ -1,18 +1,8 @@
 //! Particles: the game's simulation (`rc_game::particles`, run on the 60 Hz fixed clock) and `PartProc`'s
 //! sprite renderer (docs/plan/particles.md §7, level01 0x27c878, VU1 program 221571).
 //!
-//! **Simulation.** With the game tick (crate::gameplay, the default): the class-27 emitters (0x2bd100) are
-//! moby updates run by the moby scheduler at their place in the moby order (its load pass, then every tick),
-//! on the game's one `rand` stream, spawning into [`ParticleSim::sys`]; the tick's particle hook then runs
-//! only `UpdateParts` ([`update_parts`]). With `RC_PLAY=0` this plugin runs the old stand-alone loop on a
-//! stream of its own: at level start `srand(1234)` (level init 0x255958), pool reset, then the load-time
-//! moby pass (`FUN_002792d0`: every moby's update runs once before the first frame, with no distance gate)
-//! runs the class-27 emitters once; every `FixedUpdate` tick: the emitters in instance order (the moby loop;
-//! the activity gate is update distance 0xff or `|pos − cam|² ≤ ud²`, all ten Novalis emitters have 0xff),
-//! then `UpdateParts`. The emitters' `FastBSphereCheck` reads the camera of the previous frame's render (the game
-//! builds 0x16d140 during the render), which in `FixedUpdate` is the camera `Transform` as last drawn.
-//! Only Novalis (level 1) has class 27 with this update (0x2bd100 is a Novalis-only function), so no other
-//! level spawns anything yet. `RC_PART_STATS=1` prints the pool once per second of ticks.
+//! **Simulation.** The game's tick runs `UpdateParts` on [`ParticleSim::sys`] (crate::rac2_play: `rc_game::particles`,
+//! on the game's one `rand` stream); this plugin draws the pool.
 //!
 //! **Pass 1 (cull, per frame on the CPU, as the EE does it).** For each live record 0..=hw: camera space
 //! `c = R·(pos − cam)` (x right, y down, z forward, game units), `z12 = ftoi12(c.z)`; culled when
@@ -77,13 +67,11 @@ use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, Extent3d, RenderPipelineDescriptor,
-    SpecializedMeshPipelineError, TextureDimension, TextureFormat,
-};
+    SpecializedMeshPipelineError, TextureDimension, TextureFormat};
 use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 use rc_formats::particle_tex::ParticleTextures;
-use rc_game::particles::{rec, type06, BSphereView, Owner, Particles, FLAG_DRAWN, PART_TYPES, POOL_RECORDS};
-use rc_game::rng::{Rng, LEVEL_SEED};
+use rc_game::particles::{rec, Particles, FLAG_DRAWN, POOL_RECORDS};
 
 const SHADER_PATH: &str = "shaders/particle.wgsl";
 
@@ -161,31 +149,19 @@ pub(crate) fn view_tans(p: Option<&Projection>) -> (f32, f32) {
     }
 }
 /// gp−0x6a84: global particle far, 500 units in 20.12 (before the first `GameFog`).
-const GLOBAL_FAR12: i32 = rc_game::fog_zones::PARTICLE_FAR12;
+const GLOBAL_FAR12: i32 = crate::game_camera::PARTICLE_FAR12;
 /// Transparent3d sort bias: after every scene item.
 const DRAW_BIAS: f32 = 1.0e6;
 
 /// Level data for the particle system.
 pub struct LevelParticles {
     pub textures: Option<ParticleTextures>,
-    /// Class-27 emitters in instance order, with their update distance byte (moby+0x30).
-    pub owners: Vec<(Owner, u8)>,
-    pub level: u32,
-    /// The level's height grid (core +0xa4; Batalia, Orxon, Oltanis): the weather particles read it.
-    pub grid: Option<rc_formats::level::HeightGrid>,
 }
 
 /// The live simulation.
 #[derive(Resource)]
 pub struct ParticleSim {
     pub sys: Particles,
-    /// The `RC_PLAY=0` stream (`srand(1234)`); with the game tick the game's one stream is used instead.
-    pub rng: Rng,
-    level: u32,
-    update_distance: Vec<u8>,
-    loaded: bool,
-    tick: u64,
-    stats: bool,
     /// The (tan_x, tan_y) of the frame last drawn (0x16cf70 / 0x16cf74): the particles' size and cull, and the
     /// emitters' `FastBSphereCheck` view of the next ticks.
     pub view_tan: (f32, f32),
@@ -193,10 +169,6 @@ pub struct ParticleSim {
     drawn: usize,
     culled: usize,
     other_kinds: u64,
-    alive_sum: u64,
-    /// The tick is driven by the gameplay tick (crate::gameplay: pad → mobys (the emitters) → hero →
-    /// particles ([`update_parts`]) → camera); this plugin's own `FixedUpdate` system then does nothing.
-    pub external: bool,
 }
 
 /// A particle draw entity of blend group `additive`.
@@ -275,7 +247,6 @@ impl Plugin for ParticlePlugin {
         app.add_plugins(MaterialPlugin::<ParticleMaterial>::default())
             .add_systems(crate::level_switch::LevelStartup, setup)
             .add_systems(crate::level_switch::LevelUnload, (crate::level_switch::remove::<ParticleSim>, crate::level_switch::remove::<ParticleMesh>))
-            .add_systems(FixedUpdate, tick)
             .add_systems(PostUpdate, build_sprites);
     }
 }
@@ -290,38 +261,19 @@ fn setup(
 ) {
     let lp = &level.0.particles;
     let defs = lp.textures.as_ref().map(|t| t.defs.clone());
-    let owners: Vec<Owner> = lp.owners.iter().map(|(o, _)| o.clone()).collect();
-    let mut rng = Rng::new();
-    rng.srand(LEVEL_SEED);
-    let mut sys = Particles::new(defs, owners);
+    let mut sys = Particles::new(defs);
     sys.pool.level_init();
-    sys.level = lp.level;
-    // The world mesh the sparks' lines test (type 25).
-    sys.coll = level.0.collision.clone().map(std::sync::Arc::new);
-    // The height grid the weather particles read (types 0, 73, `SpawnImpactSparks`).
-    sys.grid = lp.grid.clone().map(std::sync::Arc::new);
-    let stats = std::env::var("RC_PART_STATS").is_ok_and(|v| v.trim() == "1");
     println!(
-        "particles: {} part textures, {} fx textures, {} class-27 emitters (instances {:?})",
+        "particles: {} part textures, {} fx textures",
         lp.textures.as_ref().map_or(0, |t| t.textures.len()),
         lp.textures.as_ref().map_or(0, |t| t.fx_textures.iter().flatten().count()),
-        lp.owners.len(),
-        lp.owners.iter().map(|(o, _)| o.instance).collect::<Vec<_>>()
     );
     commands.insert_resource(ParticleSim {
         sys,
-        rng,
-        level: lp.level,
-        update_distance: lp.owners.iter().map(|(_, ud)| *ud).collect(),
-        loaded: false,
-        tick: 0,
-        stats,
         view_tan: (TAN_HALF_FOV_X, TAN_HALF_FOV_X * NTSC_Y_RATIO),
         drawn: 0,
         culled: 0,
         other_kinds: 0,
-        alive_sum: 0,
-        external: false,
     });
 
     // Textures: one layer per part texture, alpha back in GS units (0x80 = 1.0) like shrub_render::mip_image. The
@@ -381,76 +333,8 @@ fn setup(
 /// The game-space camera of a Bevy transform: eye and (forward, left, up) rows.
 fn camera(t: &Transform) -> ([f32; 3], [Vec3; 3]) { (game_eye(t).to_array(), game_rows(t)) }
 
-/// The `FastBSphereCheck` view (0x16d140) of the camera as last drawn, with that frame's (tan_x, tan_y)
-/// ([`ParticleSim::view_tan`]).
-pub(crate) fn bsphere_view(t: &Transform, (tx, ty): (f32, f32)) -> BSphereView {
-    let (eye, [f, l, u]) = camera(t);
-    BSphereView::from_camera(eye, f.to_array(), l.to_array(), u.to_array(), tx, ty)
-}
-
 type MainCamera<'w, 's> = Query<'w, 's, (&'static Transform, Option<&'static Projection>), (With<Camera3d>, Without<crate::sky_render::SkyCamera>)>;
 
-/// One 60 Hz game tick: the emitters (moby loop), then `UpdateParts`.
-/// `pub(crate)` so the sky star step (`crate::sky_stars`) can run after it on the same tick (it shares `rng`).
-pub(crate) fn tick(sim: Option<ResMut<ParticleSim>>, cams: MainCamera) {
-    let Some(mut sim) = sim else { return };
-    if sim.external { return; }
-    let t = cams.iter().next().map(|(t, _)| *t);
-    step(&mut sim, t.as_ref());
-}
-
-/// The body of [`tick`] for camera transform `cam_t` (the main camera as last drawn): the `RC_PLAY=0` loop.
-fn step(sim: &mut ParticleSim, cam_t: Option<&Transform>) {
-    let tans = sim.view_tan;
-    let view = cam_t.map(|t| bsphere_view(t, tans));
-    let eye = cam_t.map(|t| camera(t).0);
-    if !sim.loaded {
-        // Load-time pass (FUN_002792d0): every update once, no distance gate.
-        for i in 0..sim.sys.owners.len() { type06::emitter_update(&mut sim.sys, &mut sim.rng, i, view.as_ref(), sim.level); }
-        sim.loaded = true;
-    }
-    for i in 0..sim.sys.owners.len() {
-        // Moby activity gate (fun_0020d868): update distance 0xff, or within it of the camera (0x167240).
-        let ud = sim.update_distance[i];
-        let p = sim.sys.owners[i].pos;
-        let active = ud == 0xff || eye.is_none_or(|e| (0..3).map(|k| (p[k] - e[k]).powi(2)).sum::<f32>() <= (ud as f32).powi(2));
-        if active { type06::emitter_update(&mut sim.sys, &mut sim.rng, i, view.as_ref(), sim.level); }
-    }
-    if let Some(e) = eye { sim.sys.camera = e.map(f32::to_bits); }
-    update_parts(sim, None);
-}
-
-/// `UpdateParts` 0x27c7e8 and the stats line. `rng` is the game's one `rand` stream (the type-11 sparks draw
-/// from it); `None` falls back to [`ParticleSim::rng`], the `RC_PLAY=0` stream. The camera 0x167240 the sparks
-/// read is [`Particles::camera`]: the caller may set it from the tick's camera, else it is the camera as last
-/// drawn (written by `build_sprites`).
-pub(crate) fn update_parts(sim: &mut ParticleSim, rng: Option<&mut Rng>) {
-    let state = match rng {
-        Some(r) => {
-            sim.sys.update_parts(r);
-            r.state
-        }
-        None => {
-            sim.sys.update_parts(&mut sim.rng);
-            sim.rng.state
-        }
-    };
-    sim.tick += 1;
-    sim.alive_sum += sim.sys.pool.count as u64;
-    if sim.stats && sim.tick.is_multiple_of(60) {
-        let s = &sim.sys.stats;
-        let by_type = sim.sys.live_by_type();
-        let live: Vec<String> = (0..PART_TYPES).filter(|&t| by_type[t] > 0).map(|t| format!("{t}:{}", by_type[t])).collect();
-        let unported: Vec<String> = (0..PART_TYPES).filter(|&t| s.unported_kills[t] > 0).map(|t| format!("{t}:{}", s.unported_kills[t])).collect();
-        println!(
-            "particles: tick {} alive {} (mean {:.0} over the last 60 ticks, by type [{}]), hw {}, created {}, killed {}, pool full {}, \
-             drawn {} culled {} (last frame), kinds 2-3 drawn (total) {}, unported types killed [{}], collision branch skipped {}, rng state {:#010x}",
-            sim.tick, sim.sys.pool.count, sim.alive_sum as f64 / 60.0, live.join(" "), sim.sys.pool.hw, s.created, s.killed,
-            s.create_failed, sim.drawn, sim.culled, sim.other_kinds, unported.join(" "), s.unported_collision, state
-        );
-        sim.alive_sum = 0;
-    }
-}
 
 /// Pass 1 + pass 2 for this frame's camera: rewrite the sprite buffers in back-to-front order.
 /// `t` resampled to `w × h`: each new texel bilinearly from `t` at its centre's position (clamped to the edges).
@@ -489,8 +373,6 @@ fn build_sprites(
     let (tx, ty) = view_tans(proj);
     sim.view_tan = (tx, ty);
     let size_px = size_to_pixels(tx / display.map_or(1.0, |d| crate::display::hor_scale(d.aspect)));
-    // 0x167240 for the next ticks' particle updates (type 11): the camera as last drawn.
-    sim.sys.camera = eye.map(f32::to_bits);
     let eye = Vec3::from_array(eye);
     let (sec_x, sec_y) = ((1.0 + tx * tx).sqrt(), (1.0 + ty * ty).sqrt());
     let n_layers = sim.sys.defs.as_ref().map_or(0, |d| d.header[1].max(0) as u32);

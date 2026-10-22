@@ -22,7 +22,7 @@
 //! core), noise voices, voice pitch modulation (PMON), the 989snd RPC layer itself.
 
 pub mod class_sounds;
-pub mod grain_vm;
+pub(crate) mod grain_vm;
 pub mod music;
 pub mod reverb;
 pub mod scene;
@@ -39,9 +39,9 @@ pub const OUTPUT_RATE: u32 = 48_000;
 /// Output samples per 60 Hz game frame.
 pub const SAMPLES_PER_FRAME: usize = 800;
 /// Output samples per 989snd tick (240 Hz).
-pub const SAMPLES_PER_IOP_TICK: usize = 200;
+pub(crate) const SAMPLES_PER_IOP_TICK: usize = 200;
 /// SPU2 voices (two cores of 24).
-pub const SPU_VOICES: usize = 48;
+pub(crate) const SPU_VOICES: usize = 48;
 
 // ---------------------------------------------------------------------------------------------------
 // ADSR
@@ -51,12 +51,12 @@ pub const SPU_VOICES: usize = 48;
 /// steps of `step << max(0, 11 − shift)` every `2^max(0, shift − 11)` samples, with the exponential
 /// increase slowed ×4 above 0x6000 and the exponential decrease scaled by the level.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Adsr {
-    pub adsr1: u16,
-    pub adsr2: u16,
-    pub phase: Phase,
+pub(crate) struct Adsr {
+    pub(crate) adsr1: u16,
+    pub(crate) adsr2: u16,
+    pub(crate) phase: Phase,
     /// 0..=0x7fff.
-    pub level: i32,
+    pub(crate) level: i32,
     counter: u32,
     shift: u8,
     step: i8,
@@ -66,7 +66,7 @@ pub struct Adsr {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Phase {
+pub(crate) enum Phase {
     Attack,
     Decay,
     Sustain,
@@ -116,7 +116,7 @@ impl Adsr {
     }
 
     /// Key on: attack from level 0.
-    pub fn attack(&mut self) {
+    pub(crate) fn attack(&mut self) {
         self.phase = Phase::Attack;
         self.level = 0;
         self.counter = 0;
@@ -124,7 +124,7 @@ impl Adsr {
     }
 
     /// Key off: release from the current level.
-    pub fn release(&mut self) {
+    pub(crate) fn release(&mut self) {
         if self.phase == Phase::Stopped { return; }
         self.phase = Phase::Release;
         self.counter = 0;
@@ -132,7 +132,7 @@ impl Adsr {
     }
 
     /// End of a non-repeating sample: silent at once.
-    pub fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         self.phase = Phase::Stopped;
         self.level = 0;
     }
@@ -154,7 +154,7 @@ impl Adsr {
     }
 
     /// One sample.
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         if self.phase == Phase::Stopped { return; }
         self.step();
         if self.phase == Phase::Sustain { return; }
@@ -177,7 +177,7 @@ impl Adsr {
 /// DuckStation carry the same numbers, OpenGOAL `common/interp_table.inc` as 256 × 4 rows
 /// `{g[255−i], g[511−i], g[256+i], g[i]}`). A hardware constant, not disc data. Each row sums to ~0x7f80.
 #[rustfmt::skip]
-pub static GAUSS: [i16; 512] = [
+pub(crate) static GAUSS: [i16; 512] = [
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 3, 3,
     3, 4, 4, 5, 5, 6, 7, 7, 8, 9, 9, 10, 11, 12, 13, 14,
@@ -215,7 +215,7 @@ pub static GAUSS: [i16; 512] = [
 /// `out = Σ (g · s) >> 15` over the four samples `s[idx−3..=idx]` with `i = (counter >> 4) & 0xff`, each
 /// product shifted separately as the hardware does.
 #[inline]
-pub fn gauss_interpolate(i: usize, s: [i32; 4]) -> i32 {
+pub(crate) fn gauss_interpolate(i: usize, s: [i32; 4]) -> i32 {
     ((GAUSS[0xff - i] as i32 * s[0]) >> 15)
         + ((GAUSS[0x1ff - i] as i32 * s[1]) >> 15)
         + ((GAUSS[0x100 + i] as i32 * s[2]) >> 15)
@@ -227,15 +227,15 @@ pub fn gauss_interpolate(i: usize, s: [i32; 4]) -> i32 {
 
 /// One queued VAG stream part: a body up to and including its end frame.
 #[derive(Clone, Debug)]
-pub struct StreamPart {
-    pub data: Arc<[u8]>,
+pub(crate) struct StreamPart {
+    pub(crate) data: Arc<[u8]>,
     /// Repeat this part when it ends and nothing is queued behind it (stream flag 4).
-    pub looped: bool,
+    pub(crate) looped: bool,
 }
 
 /// Where a voice reads its ADPCM frames.
 #[derive(Clone, Debug)]
-pub enum VoiceData {
+pub(crate) enum VoiceData {
     /// Sound RAM (the level bank's sample chunk), with the hardware loop rules: LSA latches at a
     /// loop-start frame; after an end frame the voice jumps to LSA if the repeat flag is set, else it stops
     /// (ADSR level 0 at once, psx-spx "Loop End without Repeat").
@@ -257,12 +257,12 @@ impl Default for VoiceData {
 /// OpenGOAL's `Voice::Run` interpolates over the next four decoded samples instead, three samples earlier.
 #[derive(Clone, Debug, Default)]
 pub struct SpuVoice {
-    pub adsr: Adsr,
-    pub pitch: u16,
+    pub(crate) adsr: Adsr,
+    pub(crate) pitch: u16,
     /// VOLL / VOLR registers (0..0x3fff as 989snd writes them).
-    pub vol: [u16; 2],
+    pub(crate) vol: [u16; 2],
     /// Bumped on every key-on, so owners can tell a reused voice from theirs.
-    pub generation: u32,
+    pub(crate) generation: u32,
     data: VoiceData,
     nax: usize,
     lsa: usize,
@@ -274,7 +274,7 @@ pub struct SpuVoice {
     /// Frames played in the current stream part (for the time remaining).
     part_frame: usize,
     /// The voice's output also goes to the reverb (989snd sets it for a tone with flag 1; cleared at key-on).
-    pub reverb: bool,
+    pub(crate) reverb: bool,
 }
 
 impl SpuVoice {
@@ -299,7 +299,7 @@ impl SpuVoice {
     }
 
     /// Key on at byte address `start` of `data`.
-    pub fn key_on(&mut self, data: VoiceData, start: usize, pitch: u16, adsr1: u16, adsr2: u16) {
+    pub(crate) fn key_on(&mut self, data: VoiceData, start: usize, pitch: u16, adsr1: u16, adsr2: u16) {
         self.data = data;
         self.nax = start;
         self.lsa = start;
@@ -316,20 +316,20 @@ impl SpuVoice {
         self.adsr.attack();
     }
 
-    pub fn key_off(&mut self) { self.adsr.release(); }
+    pub(crate) fn key_off(&mut self) { self.adsr.release(); }
 
     /// Silence at once (voice stolen, stream stopped).
-    pub fn stop(&mut self) { self.adsr.stop(); }
+    pub(crate) fn stop(&mut self) { self.adsr.stop(); }
 
     pub fn active(&self) -> bool { self.adsr.phase != Phase::Stopped }
 
     /// Queue a stream part behind the current one.
-    pub fn queue_part(&mut self, part: StreamPart) {
+    pub(crate) fn queue_part(&mut self, part: StreamPart) {
         if let VoiceData::Stream { queue, .. } = &mut self.data { queue.push_back(part); }
     }
 
     /// Stream: source samples left in the current part (0 for a RAM voice).
-    pub fn stream_remaining(&self) -> usize {
+    pub(crate) fn stream_remaining(&self) -> usize {
         match &self.data {
             VoiceData::Stream { cur, .. } => {
                 let frames = cur.data.len() / vag::FRAME_BYTES;
@@ -370,7 +370,7 @@ impl SpuVoice {
     }
 
     /// One output sample: (left, right) after envelope and volume.
-    pub fn run(&mut self) -> (i32, i32) {
+    pub(crate) fn run(&mut self) -> (i32, i32) {
         if self.adsr.phase == Phase::Stopped { return (0, 0); }
         let idx = (self.counter >> 12) as usize;
         let at = |k: isize| -> i32 { if k >= 0 { self.block[k as usize] as i32 } else { self.prev[(3 + k) as usize] as i32 } };
@@ -397,16 +397,16 @@ impl SpuVoice {
 #[derive(Clone, Debug)]
 pub struct Spu {
     pub voices: Vec<SpuVoice>,
-    pub master: [u16; 2],
+    pub(crate) master: [u16; 2],
     /// Sound RAM: the level bank's sample chunk.
-    pub ram: Arc<[u8]>,
+    pub(crate) ram: Arc<[u8]>,
     pub reverb: reverb::ReverbFx,
 }
 
 impl Spu {
-    pub fn new(ram: Arc<[u8]>) -> Self { Spu { voices: vec![SpuVoice::default(); SPU_VOICES], master: [0x3fff; 2], ram, reverb: reverb::ReverbFx::default() } }
+    pub(crate) fn new(ram: Arc<[u8]>) -> Self { Spu { voices: vec![SpuVoice::default(); SPU_VOICES], master: [0x3fff; 2], ram, reverb: reverb::ReverbFx::default() } }
 
-    pub fn mix(&mut self) -> [i16; 2] {
+    pub(crate) fn mix(&mut self) -> [i16; 2] {
         let (mut l, mut r) = (0i32, 0i32);
         let mut send = [0i32; 2];
         for v in &mut self.voices {
@@ -431,7 +431,7 @@ impl Spu {
 /// (a signed 16-bit level) `>> 15`, clamped to 16 bits. The product is taken in 64 bits: three or more loud voices
 /// (the R.Y.N.O.'s salvo: seven missiles with their class sound and blasts) take the 32-bit product past `i32`,
 /// which panicked in the dev build (overflow check) and wrapped into a full-scale click in the release build.
-pub fn master_out(x: i32, reg: u16) -> i16 {
+pub(crate) fn master_out(x: i32, reg: u16) -> i16 {
     ((x as i64 * (reg << 1) as i16 as i64) >> 15).clamp(i16::MIN as i64, i16::MAX as i64) as i16
 }
 
@@ -456,44 +456,8 @@ pub struct LevelAudio {
     pub collision: Option<Arc<Collision>>,
 }
 
-impl LevelAudio {
-    /// Builds the level's audio data from its lumps: `sound_bank`, the raw core index with its parsed header
-    /// and the decompressed core data (defs + remap), the decompressed gameplay file (sound instances, pvars,
-    /// env points), the level header (music table) and the music VAGs by table slot. The collision mesh is
-    /// optional (occlusion).
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_parts(
-        sound_bank: &[u8],
-        core_index: &[u8],
-        core: &rc_formats::level::LevelCore,
-        core_data: &[u8],
-        gameplay: &[u8],
-        level_header: &[u8],
-        music_files: &[Option<Vec<u8>>; 15],
-        collision: Option<Collision>,
-    ) -> rc_formats::buf::Result<Self> {
-        use rc_formats::sound_bank as sb;
-        let bank = Arc::new(sb::parse_bank(sound_bank)?);
-        let mut sounds = sb::parse_level_sounds(core_index, core, core_data)?;
-        // The hand items' (gadget classes') defs from their own blobs, as the game applies them when one is loaded.
-        let gadgets = rc_formats::gadget::parse_gadget_classes(core, core_data)?;
-        let blobs: Vec<(i32, &[u8])> = gadgets.iter().map(|g| (g.moby.o_class, g.blob.as_slice())).collect();
-        sb::apply_gadget_defs(&mut sounds, &blobs)?;
-        let instances = sb::parse_sound_instances(gameplay)?;
-        let instance_pvars = instances.iter().map(|s| sb::pvar_block(gameplay, s.pvar_index)).collect::<rc_formats::buf::Result<Vec<_>>>()?;
-        let table = sb::music_table(level_header)?;
-        let mut music: [Option<Arc<MusicTrack>>; 15] = Default::default();
-        for (k, m) in music.iter_mut().enumerate() {
-            if table[k] == 0 { continue; }
-            if let Some(bytes) = &music_files[k] { *m = Some(Arc::new(MusicTrack::from_vag(bytes)?)); }
-        }
-        let env_points = sb::parse_env_sample_points(gameplay)?;
-        Ok(LevelAudio { bank, sounds, instances, instance_pvars, music, env_points, collision: collision.map(Arc::new) })
-    }
-}
-
 /// One logged class sound play: `(tick, sound class, class sound index, flags, slot)`.
-pub type ClassPlay = (u64, i16, i32, u32, i32);
+pub(crate) type ClassPlay = (u64, i16, i32, u32, i32);
 
 /// Per-frame input from the game.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -506,25 +470,25 @@ pub struct FrameInput {
 /// Counters for reports and tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AudioStats {
-    pub frames: u64,
-    pub samples: u64,
+    pub(crate) frames: u64,
+    pub(crate) samples: u64,
     pub plays: u64,
     /// `PlayClassSound` requests ([`class_sounds`]) and how many got a slot.
     pub class_sounds: u64,
     pub class_slots: u64,
-    pub max_voices: usize,
-    pub max_slots: usize,
+    pub(crate) max_voices: usize,
+    pub(crate) max_slots: usize,
 }
 
 /// The whole audio side of the game (see the module docs).
 pub struct AudioSystem {
     pub data: LevelAudio,
     pub slots: SoundSlots,
-    pub emitters: Emitters,
+    pub(crate) emitters: Emitters,
     pub music: Music,
-    pub boxes: Vec<MusicBox>,
+    pub(crate) boxes: Vec<MusicBox>,
     pub snd: grain_vm::Snd989,
-    pub streams: Streams,
+    pub(crate) streams: Streams,
     pub spu: Spu,
     /// A private `rand` stream (`srand(1234)`) for the standalone frames ([`AudioSystem::tick`] /
     /// [`AudioSystem::game_frame`], e.g. without a game tick). With the game running, the sound code draws from
@@ -536,7 +500,7 @@ pub struct AudioSystem {
     pub music_option: i32,
     /// The Sound options page is open (`SoundOptionsMenu` 0x290538): group 2 (0x13e5a0) plays at the music volume
     /// while it is, back to sfx·8/10 on its leave 0x290508 (the engine sets it from the page menu).
-    pub sound_page: bool,
+    pub(crate) sound_page: bool,
     pub stats: AudioStats,
     /// Mode-2 scene audio: speech voice, music pause / resume, cutscene volumes ([`scene`]).
     pub scene: scene::SceneAudio,
@@ -544,17 +508,17 @@ pub struct AudioSystem {
     /// `(tick, sound class, class sound index, flags, slot)`; None: not logged.
     pub play_log: Option<Vec<ClassPlay>>,
     /// The EE's reverb request 0x13e5b0.. ([`reverb`]).
-    pub reverb: reverb::ReverbRequest,
+    pub(crate) reverb: reverb::ReverbRequest,
     /// The level's reverb boxes (sound instance class 3), in instance order.
-    pub reverb_boxes: Vec<reverb::ReverbBox>,
+    pub(crate) reverb_boxes: Vec<reverb::ReverbBox>,
     /// The reverb commands sent, when logging (`RC_AUDIO_TRACE`): `(frame, command)`.
     pub reverb_log: Option<Vec<(u64, SndCommand)>>,
     /// The underwater flag 0x167494 as the camera update last left it (the engine's `UnderwaterTest` 0x20e9f0,
-    /// crate::fog_zones::UnderwaterState): the tick's sound step puts it into the listener
+    /// crate::base::fog_zones::UnderwaterState): the tick's sound step puts it into the listener
     /// ([`class_sounds::sound_step`]).
     pub underwater: bool,
     /// The checkpoint record's music track 0x1bc304 ([`AudioSystem::checkpoint_saved`]); None: no record this visit.
-    pub checkpoint_track: Option<i16>,
+    pub(crate) checkpoint_track: Option<i16>,
     started: bool,
     /// The level start's `music_start_track(0, 1, 0x400)` done ([`AudioSystem::level_music_start`]).
     music_started: bool,
@@ -581,8 +545,7 @@ impl AudioSystem {
             .filter_map(|(i, s)| reverb::ReverbBox::from_instance(i, s, data.instance_pvars.get(i)?.as_deref()?))
             .collect();
         let spu = Spu::new(Arc::from(data.bank.samples.as_slice()));
-        let mut rng = crate::rng::Rng::new();
-        rng.srand(crate::rng::LEVEL_SEED);
+        let rng = crate::rng::Rng::default();
         AudioSystem {
             data,
             slots: SoundSlots::new(),
@@ -619,16 +582,9 @@ impl AudioSystem {
         self.render(SAMPLES_PER_FRAME, out);
     }
 
-    /// One 60 Hz frame on the game's stream: [`AudioSystem::game_frame_with`], then 800 output samples appended
-    /// to `out`.
-    pub fn tick_with(&mut self, input: &FrameInput, frame: u32, rng: &mut crate::rng::Rng, owner_pos: &dyn Fn(u32) -> Option<[f32; 3]>, out: &mut Vec<[i16; 2]>) {
-        self.game_frame_with(input, frame, rng, owner_pos);
-        self.render(SAMPLES_PER_FRAME, out);
-    }
-
     /// The EE part of a standalone frame ([`AudioSystem::game_frame_with`] on the private stream
     /// [`AudioSystem::rng`], the frame count as the counter, no moby owners).
-    pub fn game_frame(&mut self, input: &FrameInput) {
+    pub(crate) fn game_frame(&mut self, input: &FrameInput) {
         let mut rng = self.rng;
         let frame = self.stats.frames as u32 + 1;
         self.game_frame_with(input, frame, &mut rng, &|_| None);
@@ -660,7 +616,7 @@ impl AudioSystem {
     /// `sound_update` (0x2a0638) alone, as the page menu's frame runs it (`SceneController` 0x28c990 after
     /// `MobyUpdateLoop`, and once more on the close): the replies, the reverb command, the slots and `music_Update`;
     /// no sound-instance update (0x2a19a8 runs from the level update 0x256810 only) and no reverb boxes.
-    pub fn sound_update_with(&mut self, input: &FrameInput, frame: u32, rng: &mut crate::rng::Rng, owner_pos: &dyn Fn(u32) -> Option<[f32; 3]>) {
+    pub(crate) fn sound_update_with(&mut self, input: &FrameInput, frame: u32, rng: &mut crate::rng::Rng, owner_pos: &dyn Fn(u32) -> Option<[f32; 3]>) {
         let l = input.listener;
         for r in self.snd_replies.drain(..) { self.slots.apply_reply(r); }
         for r in self.stream_replies.drain(..) { self.music.reply(r); }
@@ -760,7 +716,7 @@ impl AudioSystem {
     /// so before any class update. The port's sound step comes after the moby loop, so a class's first-tick
     /// `MusicRequestTrack` (Orxon's Clank section, class 22: `(2, 4)`) makes it first ([`class_sounds`]): the request
     /// then finds the main player busy and becomes a transition, as in the game, instead of being overwritten by track 0.
-    pub fn level_music_start(&mut self) {
+    pub(crate) fn level_music_start(&mut self) {
         if self.music_started { return; }
         self.music_started = true;
         self.music.start_track(0, 1, 0x400, &mut self.stream_cmds);
@@ -777,38 +733,13 @@ impl AudioSystem {
     /// `HeroTeleport` 0x2368e0's `EnvNearestSamplePoint(hero)` 0x264e98, audio part: the env sample point nearest to
     /// `pos` within 8 units sets the reverb (when its +0x27 is set) and, while the music is idle (main player state 0,
     /// phase 0, no pending track), the track the music starts next (+0x28 when ≥ 0). Nothing without such a point.
-    pub fn hero_teleported(&mut self, pos: [f32; 3]) {
+    pub(crate) fn hero_teleported(&mut self, pos: [f32; 3]) {
         let Some(i) = reverb::nearest_env_point(&self.data.env_points, pos) else { return };
         let p = self.data.env_points[i];
         self.reverb.apply_env_point(&p);
         let m = &mut self.music;
         if p.music_track >= 0 && m.main.state == 0 && m.phase == 0 && m.pending_track == -1 { m.main.track = p.music_track as i16; }
     }
-
-    /// The main loop's death reload (`entry` on the death flag 0x141401): `sound_StopAllSounds` and `music_Stop`
-    /// ([`AudioSystem::movie_stop`]'s state), the reload (`FUN_00244110(0, 1)`; with a checkpoint record `0x29adc8` puts
-    /// its reverb and its music track back), then `music_start_track(0x151708, 1, 0x400)`: that track from the start.
-    pub fn death_reload(&mut self, checkpoint: bool) {
-        self.movie_stop();
-        if checkpoint {
-            self.checkpoint_restored();
-            // 0x29adc8: 0x151708 = the record's track 0x1bc304.
-            if let Some(t) = self.checkpoint_track { self.music.main.track = t; }
-        }
-        let track = self.music.main.track;
-        self.music.start_track(track, 1, 0x400, &mut self.stream_cmds);
-    }
-
-    /// The checkpoint record (`0x29ac10`): the reverb request saved, and the music track 0x1bc304 (the pending track
-    /// 0x1516f2 when one is set, else the current 0x151708).
-    pub fn checkpoint_saved(&mut self) {
-        self.reverb.checkpoint();
-        let m = &self.music;
-        self.checkpoint_track = Some(if m.pending_track != -1 { m.pending_track as i16 } else { m.main.track });
-    }
-
-    /// The death reload's placement (`0x29adc8`): the saved reverb back (resent at the next `sound_update`).
-    pub fn checkpoint_restored(&mut self) { self.reverb.restore(); }
 
     /// The movie sound as the SPU outputs it: 989snd's movie player (`snd_init_movie_sound(…, vol 0x400, pan 0,
     /// group 5, …)`) plays the left and right channels on two voices; each gets the stream-voice volume law
@@ -853,332 +784,24 @@ pub fn wav_bytes(samples: &[[i16; 2]]) -> Vec<u8> {
     w
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gauss_rows_sum_to_unity() {
-        for i in 0..256 {
-            let s = GAUSS[0xff - i] as i32 + GAUSS[0x1ff - i] as i32 + GAUSS[0x100 + i] as i32 + GAUSS[i] as i32;
-            assert!((0x7f7f..=0x7f81).contains(&s), "row {i}: {s:#x}");
-        }
-        assert_eq!(GAUSS[511], 0x59b3);
-        // A constant signal stays (almost) constant through the filter.
-        assert_eq!(gauss_interpolate(0, [10000; 4]), gauss_interpolate(255, [10000; 4]));
-    }
-
-    #[test]
-    fn adsr_phases() {
-        let mut a = Adsr { adsr1: 0x80ff, adsr2: 0x9fc0, ..Default::default() };
-        a.attack();
-        // Exponential attack, step +7 at shift 0: 7 << 11 per sample up to 0x6000, then every 4th sample:
-        // 0x3800, 0x7000, (4 samples) 0x7fff → decay; sustain level 15 (0x8000) is met at once → sustain.
-        a.run();
-        a.run();
-        assert_eq!(a.level, 0x7000);
-        for _ in 0..4 { a.run(); }
-        assert_eq!((a.level, a.phase), (0x7fff, Phase::Decay));
-        a.run();
-        assert_eq!(a.phase, Phase::Sustain);
-        a.release();
-        // Release shift 0, linear −8 << 11 per sample.
-        a.run();
-        assert_eq!(a.level, 0x7fff - 0x4000);
-        a.run();
-        a.run();
-        assert_eq!(a.phase, Phase::Stopped);
-        // Slow linear attack: shift 20 → one step (+7 << 0... = 7) every 2^9 samples.
-        let mut b = Adsr { adsr1: 20 << 10, adsr2: 0, ..Default::default() };
-        b.attack();
-        for _ in 0..512 { b.run(); }
-        assert_eq!(b.level, 7);
-    }
-
-    /// Regression (the R.Y.N.O. crash, 2026-09-28): many loud voices at once — the mix clamps, it does not overflow
-    /// (the 32-bit master product panicked in the dev build past about two full-scale voices).
-    #[test]
-    fn loud_mix_clamps_without_overflow() {
-        assert_eq!(master_out(48 * 32767, 0x3fff), i16::MAX);
-        assert_eq!(master_out(-48 * 32768, 0x3fff), i16::MIN);
-        assert_eq!(master_out(1000, 0x3fff), ((1000 * 0x7ffe) >> 15) as i16, "the level below the clamp is unchanged");
-        let mut ram = Vec::new();
-        ram.extend(frame(6, 0x77));
-        ram.extend(frame(2, 0x77));
-        ram.extend(frame(3, 0x77));
-        let ram: Arc<[u8]> = Arc::from(ram);
-        let mut spu = Spu::new(ram.clone());
-        for v in spu.voices.iter_mut().take(12) {
-            v.key_on(VoiceData::Ram(ram.clone()), 0, 0x1000, 0x00ff, 0x1fc0);
-            v.vol = [0x3fff, 0x3fff];
-        }
-        let out: Vec<[i16; 2]> = (0..400).map(|_| spu.mix()).collect();
-        assert!(out.iter().any(|s| s[0] == i16::MAX || s[0] == i16::MIN), "twelve loud voices clip");
-    }
-
-    fn frame(flags: u8, v: u8) -> [u8; 16] {
-        let mut f = [v; 16];
-        f[0] = 0;
-        f[1] = flags;
-        f
-    }
-
-    #[test]
-    fn voice_plays_one_shots_and_loops() {
-        // One-shot: zero frame, a loud frame, end. At pitch 0x1000 (one sample per output sample) the voice
-        // stops after 3 · 28 samples.
-        let mut ram = Vec::new();
-        ram.extend(frame(0, 0));
-        ram.extend(frame(0, 0x11));
-        ram.extend(frame(1, 0x11));
-        ram.extend(frame(7, 0));
-        let loop_at = ram.len();
-        ram.extend(frame(6, 0));
-        ram.extend(frame(2, 0x33));
-        ram.extend(frame(3, 0x33));
-        let ram: Arc<[u8]> = Arc::from(ram);
-        let mut v = SpuVoice::default();
-        v.key_on(VoiceData::Ram(ram.clone()), 0, 0x1000, 0x00ff, 0x1fc0);
-        v.vol = [0x3fff, 0x3fff];
-        let out: Vec<i32> = (0..120).map(|_| v.run().0).collect();
-        assert!(out[..28].iter().all(|&x| x == 0));
-        assert!(out[40..80].iter().any(|&x| x != 0));
-        assert!(!v.active());
-        assert!(out[85..].iter().all(|&x| x == 0));
-        // Loop: keeps playing past its end, jumping back to the loop-start frame.
-        let mut v = SpuVoice::default();
-        v.key_on(VoiceData::Ram(ram), loop_at, 0x1000, 0x00ff, 0x1fc0);
-        v.vol = [0x3fff, 0x3fff];
-        let out: Vec<i32> = (0..28 * 10).map(|_| v.run().0).collect();
-        assert!(v.active());
-        assert!(out[28 * 7..].iter().any(|&x| x != 0));
-        // Streams: two parts, the second repeating.
-        let a = StreamPart { data: Arc::from(&[frame(0, 0x11), frame(1, 0x11)].concat()[..]), looped: false };
-        let b = StreamPart { data: Arc::from(&[frame(0, 0x22), frame(1, 0x22)].concat()[..]), looped: true };
-        let mut v = SpuVoice::default();
-        v.key_on(VoiceData::Stream { cur: a, queue: VecDeque::from([b]) }, 0, 0x1000, 0x00ff, 0x1fc0);
-        assert_eq!(v.stream_remaining(), 56);
-        for _ in 0..56 * 5 { v.run(); }
-        assert!(v.active());
-        assert!(v.stream_remaining() <= 56);
-    }
-
-    /// Every level's gadget classes (the hand items) get their class sound defs from their blobs with the parked
-    /// remap: the wrench on every level, the Swingshot (0xd0) wherever it is in the gadget table, every remapped id
-    /// a sound of the bank (skipped without `extracted/`).
-    #[test]
-    fn gadget_class_sounds_on_every_level() {
-        use rc_formats::sound_bank as sb;
-        let mut seen = 0;
-        for level in 0..19 {
-            let root = rc_formats::test_data::root().join(format!("levels/{level:02}"));
-            let Ok(bank) = std::fs::read(root.join("sound_bank.bin")) else { continue };
-            let rd = |n: &str| std::fs::read(root.join(n)).unwrap();
-            let idx = rd("core_index.bin");
-            let data = rc_formats::test_data::core_data(level).unwrap();
-            let core = rc_formats::level::parse_level_core(&idx, data.len()).unwrap();
-            let bank = sb::parse_bank(&bank).unwrap();
-            let mut sounds = sb::parse_level_sounds(&idx, &core, &data).unwrap();
-            let gadgets = rc_formats::gadget::parse_gadget_classes(&core, &data).unwrap();
-            let before = sounds.def(sb::SoundOwner::Class(71), 0).is_some();
-            let blobs: Vec<(i32, &[u8])> = gadgets.iter().map(|g| (g.moby.o_class, g.blob.as_slice())).collect();
-            sb::apply_gadget_defs(&mut sounds, &blobs).unwrap();
-            assert!(!before, "level {level}: the wrench had defs before");
-            let n_sounds = bank.sounds.len();
-            let mut report = Vec::new();
-            for g in &gadgets {
-                let Some(c) = sounds.classes.iter().find(|c| c.o_class == g.moby.o_class) else { continue };
-                for (j, d) in c.defs.iter().enumerate().take(c.bank_ids.len().min(15)) {
-                    assert!((d.index as usize) < n_sounds, "level {level} class {} def {j}: id {} of {n_sounds}", c.o_class, d.index);
-                }
-                report.push((c.o_class, c.defs.len()));
-            }
-            assert!(sounds.def(sb::SoundOwner::Class(71), 0).is_some(), "level {level}: no wrench sound");
-            if gadgets.iter().any(|g| g.moby.o_class == 0xd0) { assert!(sounds.def(sb::SoundOwner::Class(0xd0), 2).is_some(), "level {level}: Swingshot"); }
-            eprintln!("level {level}: gadget classes (o_class, defs) {report:?}");
-            seen += 1;
-        }
-        eprintln!("{seen} levels checked");
-    }
-
-    /// Novalis from `extracted/` (skipped when absent): 10 s at the spawn, listener a few units behind
-    /// Ratchet looking along +y. Music must start at once, the looped emitter (instance 9) must play, and two
-    /// runs must be sample-identical.
-    #[test]
-    fn novalis_start_renders_music_and_ambience() {
-        let _lock = scene::TEST_INBOX.lock().unwrap_or_else(|e| e.into_inner());
-        let root = rc_formats::test_data::root().join("levels/01");
-        let Ok(bank) = std::fs::read(root.join("sound_bank.bin")) else { eprintln!("skipped: no extracted/"); return };
-        let rd = |n: &str| std::fs::read(root.join(n)).unwrap();
-        let idx = rd("core_index.bin");
-        let data = rc_formats::test_data::core_data(1).unwrap();
-        let core = rc_formats::level::parse_level_core(&idx, data.len()).unwrap();
-        let gameplay = rc_formats::test_data::gameplay(1).unwrap();
-        let music: [Option<Vec<u8>>; 15] = std::array::from_fn(|k| std::fs::read(root.join(format!("music/{k:03}.bin"))).ok());
-        let coll = rc_formats::collision::parse_collision(&core, &data).ok();
-        let audio = LevelAudio::from_parts(&bank, &idx, &core, &data, &gameplay, &rd("level_header.bin"), &music, coll).unwrap();
-        assert_eq!(audio.music[0].as_ref().unwrap().name, "L01_Enemy_Start");
-        let listener = Listener { pos: [162.5, 130.0, 63.0], rows: [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], ..Default::default() };
-        let input = FrameInput { listener, hero_pos: [162.5, 136.4, 60.5] };
-        let run_with = |frames: usize, music_option: i32| {
-            let mut sys = AudioSystem::new(audio.clone());
-            sys.music_option = music_option;
-            let mut out = Vec::new();
-            for _ in 0..frames { sys.tick(&input, &mut out); }
-            (out, sys)
-        };
-        let run = |frames: usize| run_with(frames, 0x2cc);
-        let (a, sys) = run(600);
-        let (b, _) = run(600);
-        // Effects alone (music option 0): the looped emitter (instance 9, bank sound 2) from the first frames.
-        let (fx, _) = run_with(600, 0);
-        assert_eq!(a.len(), 480_000);
-        assert!(a == b, "not deterministic");
-        let rms = |s: &[[i16; 2]]| (s.iter().map(|x| (x[0] as f64).powi(2) + (x[1] as f64).powi(2)).sum::<f64>() / (2 * s.len()).max(1) as f64).sqrt();
-        let per_second: Vec<f64> = a.chunks(48_000).map(rms).collect();
-        eprintln!("novalis 10 s: RMS per second {per_second:.0?}; stats {:?}; voices active {}; 989 handlers {}; unimplemented {:?}",
-                  sys.stats, sys.spu.voices.iter().filter(|v| v.active()).count(), sys.snd.playing(), sys.snd.unimplemented);
-        let fx_second: Vec<f64> = fx.chunks(48_000).map(rms).collect();
-        eprintln!("novalis 10 s, effects only: RMS per second {fx_second:.1?}");
-        assert!(fx_second.iter().all(|&r| r > 1.0), "no ambience");
-        assert!(per_second.iter().all(|&r| r > 100.0), "silent second");
-        // Music from the start: the first 50 ms are not silent (the VAG's leading zero frame is 28 samples).
-        assert!(rms(&a[..2400]) > 1.0);
-        // The emitters at the spawn started (instance 9's loop at least).
-        assert!(sys.stats.plays >= 1, "no ambience played");
-    }
-
-    /// Orxon's first visit: the Clank section (class 22) hands the hero to Clank on the first tick and requests
-    /// `MusicRequestTrack(2, 4)` from the moby loop, before the tick's sound step. The level start's track 0 has
-    /// already started (`entry` 0x259c40 starts it before its main loop), so the request becomes a transition: the
-    /// stinger, then Clank's track 2 ("Clank's Second Foray"), not Ratchet's track 0.
-    #[test]
-    fn orxon_clank_first_tick_request_plays_clanks_track() {
-        let _lock = scene::TEST_INBOX.lock().unwrap_or_else(|e| e.into_inner());
-        let root = rc_formats::test_data::root().join("levels/10");
-        let Ok(bank) = std::fs::read(root.join("sound_bank.bin")) else { eprintln!("skipped: no extracted/"); return };
-        let rd = |n: &str| std::fs::read(root.join(n)).unwrap();
-        let idx = rd("core_index.bin");
-        let data = rc_formats::test_data::core_data(10).unwrap();
-        let core = rc_formats::level::parse_level_core(&idx, data.len()).unwrap();
-        let gameplay = rc_formats::test_data::gameplay(10).unwrap();
-        let music: [Option<Vec<u8>>; 15] = std::array::from_fn(|k| std::fs::read(root.join(format!("music/{k:03}.bin"))).ok());
-        let coll = rc_formats::collision::parse_collision(&core, &data).ok();
-        let audio = LevelAudio::from_parts(&bank, &idx, &core, &data, &gameplay, &rd("level_header.bin"), &music, coll).unwrap();
-        let input = FrameInput { listener: Listener::default(), hero_pos: [0.0; 3] };
-        // The old order (the request before the level start): the idle player takes track 2, then the start
-        // overwrites it with track 0 — Ratchet's music for Clank.
-        let mut old = AudioSystem::new(audio.clone());
-        old.music.request(2, 4);
-        let mut out = Vec::new();
-        for _ in 0..600 { old.tick(&input, &mut out); }
-        assert_eq!(old.music.main.track, 0);
-        let mut sys = AudioSystem::new(audio);
-        // The first tick: the class request (through the class sound sink's path), then the sound step.
-        sys.level_music_start();
-        sys.music.request(2, 4);
-        let mut out = Vec::new();
-        let mut tracks = Vec::new();
-        for _ in 0..1200 {
-            sys.tick(&input, &mut out);
-            tracks.push(sys.music.main.track);
-        }
-        assert_eq!(sys.music.main.track, 2, "main track after 20 s (tracks seen {:?})", { let mut t = tracks.clone(); t.dedup(); t });
-        assert!(sys.music.main.state != 0, "the main player plays");
-    }
-
-    /// Blarg's escape 1108 at the end of the tube ride: `MusicRequestTrack(6, 9)` while the level's track plays (the
-    /// forum's "self-destruct music never starts"): the stinger, then track 6 — also when a scene paused the music at
-    /// any point of an earlier transition (the shuttle's (4, 8)).
-    #[test]
-    fn blarg_escape_request_plays_track_6() {
-        let _lock = scene::TEST_INBOX.lock().unwrap_or_else(|e| e.into_inner());
-        let root = rc_formats::test_data::root().join("levels/06");
-        let Ok(bank) = std::fs::read(root.join("sound_bank.bin")) else { eprintln!("skipped: no extracted/"); return };
-        let rd = |n: &str| std::fs::read(root.join(n)).unwrap();
-        let idx = rd("core_index.bin");
-        let data = rc_formats::test_data::core_data(6).unwrap();
-        let core = rc_formats::level::parse_level_core(&idx, data.len()).unwrap();
-        let gameplay = rc_formats::test_data::gameplay(6).unwrap();
-        let music: [Option<Vec<u8>>; 15] = std::array::from_fn(|k| std::fs::read(root.join(format!("music/{k:03}.bin"))).ok());
-        let coll = rc_formats::collision::parse_collision(&core, &data).ok();
-        let audio = LevelAudio::from_parts(&bank, &idx, &core, &data, &gameplay, &rd("level_header.bin"), &music, coll).unwrap();
-        let input = FrameInput { listener: Listener::default(), hero_pos: [0.0; 3] };
-        let level_audio = audio.clone();
-        let mut sys = AudioSystem::new(audio);
-        // A scene pausing the music at points of an earlier transition (the shuttle's (4, 8)), then the escape's request.
-        for pause_at in [0usize, 1, 3, 30, 91, 95, 150, 280, 400] {
-            let mut t = AudioSystem::new(level_audio.clone());
-            t.level_music_start();
-            let mut out = Vec::new();
-            for _ in 0..600 { t.tick(&input, &mut out); }
-            t.music.request(4, 8);
-            for _ in 0..pause_at { t.tick(&input, &mut out); }
-            t.scene_command(scene::SceneAudioCmd::PauseMusic);
-            for _ in 0..300 { t.tick(&input, &mut out); }
-            t.scene_command(scene::SceneAudioCmd::ResumeMusic { after: 30 });
-            for _ in 0..900 { t.tick(&input, &mut out); }
-            let before = (t.music.main.track, t.music.main.state, t.music.phase, t.music.pending_track);
-            t.music.request(6, 9);
-            for _ in 0..1800 { t.tick(&input, &mut out); }
-            assert_eq!((t.music.main.track, t.music.phase, t.music.pending_track), (6, 0, -1), "a pause {pause_at} ticks into the (4, 8) transition (before the escape {before:?})");
-            assert!(t.music.main.state != 0);
-        }
-        sys.level_music_start();
-        let mut out = Vec::new();
-        for _ in 0..600 { sys.tick(&input, &mut out); }
-        sys.music.request(6, 9);
-        let mut seen = Vec::new();
-        for f in 0..1800 {
-            sys.tick(&input, &mut out);
-            let m = &sys.music;
-            let k = (m.main.track, m.main.state, m.transition.state, m.phase, m.pending_track);
-            if seen.last().map(|x: &(i32, (i16, u16, u16, i16, i8))| x.1) != Some(k) { seen.push((f, k)); }
-        }
-        assert_eq!(sys.music.main.track, 6, "{seen:?}");
-        assert!(sys.music.main.state != 0, "{seen:?}");
-    }
-
-    /// The Start → Loop hand-over is sample-exact: a stream voice playing part A then part B outputs the same
-    /// samples as one RAM voice playing A's frames (end flag cleared) followed by B's, at the music pitch.
-    #[test]
-    fn stream_queue_is_seamless() {
-        let mut a = Vec::new();
-        let mut b = Vec::new();
-        for k in 0..6u8 {
-            let mut f = [0u8; 16];
-            f[0] = (k % 4) << 4 | 3;
-            for (i, x) in f[2..].iter_mut().enumerate() { *x = k.wrapping_mul(37).wrapping_add((i as u8).wrapping_mul(11)) ^ 0x5a; }
-            let mut g = f;
-            g[0] = ((k + 1) % 5) << 4 | 2;
-            a.extend(f);
-            b.extend(g);
-        }
-        a[5 * 16 + 1] = 1; // end frames
-        b[5 * 16 + 1] = 1;
-        let mut joined = a.clone();
-        joined[5 * 16 + 1] = 0;
-        joined.extend(&b);
-        let pitch = rc_formats::vag::rate_to_pitch(44100);
-        let mut s = SpuVoice::default();
-        let (pa, pb) = (StreamPart { data: Arc::from(&a[..]), looped: false }, StreamPart { data: Arc::from(&b[..]), looped: false });
-        s.key_on(VoiceData::Stream { cur: pa, queue: VecDeque::from([pb]) }, 0, pitch, 0x00ff, 0x1fc0);
-        let mut r = SpuVoice::default();
-        r.key_on(VoiceData::Ram(Arc::from(joined)), 0, pitch, 0x00ff, 0x1fc0);
-        for v in [&mut s, &mut r] { v.vol = [0x3fff, 0x3fff]; }
-        let n = 12 * 28 * 4096 / pitch as usize - 4;
-        let xs: Vec<(i32, i32)> = (0..n).map(|_| s.run()).collect();
-        let ys: Vec<(i32, i32)> = (0..n).map(|_| r.run()).collect();
-        assert_eq!(xs, ys);
-        assert!(xs.iter().filter(|x| x.0 != 0).count() > n / 2);
-    }
-
-    #[test]
-    fn wav_header() {
-        let w = wav_bytes(&[[1, -1], [2, -2]]);
-        assert_eq!(&w[..4], b"RIFF");
-        assert_eq!(w.len(), 44 + 8);
-        assert_eq!(u32::from_le_bytes(w[24..28].try_into().unwrap()), 48000);
-        assert_eq!(i16::from_le_bytes([w[46], w[47]]), -1);
-    }
+/// A `PlayClassSound(idx, flags, moby)` (level01 0x2a1618) call: class sound `index` of `o_class`
+/// (`sound_class` is the class whose sound table is used: 0x2a16c0 passes another class).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SoundEvent {
+    pub index: i32,
+    pub flags: u32,
+    pub moby: usize,
+    pub o_class: i16,
+    pub sound_class: i16,
+    pub pos: [f32; 3],
+    pub tick: u64,
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Hero-block writes
+
+// ---------------------------------------------------------------------------------------------------
+// The world a class update sees
+
+// ---------------------------------------------------------------------------------------------------
+// Hit delivery outside the moby loop (the hero's attacks)

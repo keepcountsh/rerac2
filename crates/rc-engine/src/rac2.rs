@@ -1,6 +1,6 @@
 //! Going Commando's (R&C2) front end in the engine: a data folder holding `RC2.HDR` (crate::disc_source::game) runs
 //! the shared app on its level (crate::rac2_level; Aranos, level 0, unless `RC_LEVEL`), and this plugin plays the
-//! boot's front end over it (docs/plan/rac2_bringup.md; logic in `rc_game2`), as R&C1's front end runs over its
+//! boot's front end over it (docs/plan/rac2_bringup.md; logic in `rc_game`), as R&C1's front end runs over its
 //! loaded level: the splash screens, the Insomniac movie, the title (the couch movies with "Press START") and the main
 //! menu. Its layer covers the world (an opaque camera above the world cameras) until New Game is taken; then the layer
 //! goes and the level shows. The original's New Game opens the save-slot page first (boot 0x2dd888, page 0x260ec8:
@@ -30,8 +30,8 @@ use rc_formats::rac2::front_end::FrontEnd as Blob;
 use rc_formats::rac2::toc::{self, Toc, MISC_FRONT_END, MOVIE_FILES};
 use rc_formats::rac2::{gui_sprite, Picture};
 use rc_formats::texture::Texture;
-use rc_game2::front_end::{clock_seed, Assets as FrontAssets, FrontEnd, Request};
-use rc_game2::gui;
+use rc_game::front_end::{clock_seed, Assets as FrontAssets, FrontEnd, Request};
+use rc_game::gui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Mutex;

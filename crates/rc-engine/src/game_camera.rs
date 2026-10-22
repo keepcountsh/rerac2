@@ -15,6 +15,9 @@ use bevy::prelude::*;
 use bevy::render::render_resource::ShaderType;
 
 /// NTSC GS draw buffer (`SetupFS_AA_buffer(0x200, 0x1a0, ...)` in `SetPalMode`, render_pipeline.md §4).
+/// The global particle far (`$gp` −0x6a84 in R&C1's frame code): 500 units in 20.12, before the first `GameFog`.
+pub const PARTICLE_FAR12: i32 = 0x1f_4000;
+
 pub const SCREEN_W: f32 = 512.0;
 pub const SCREEN_H: f32 = 416.0;
 /// Position units per game unit (`DrawTfrag` translates by `-Camera.pos × 1024`).
@@ -99,7 +102,7 @@ impl Plugin for GameCameraPlugin {
             self.fog.color, self.fog.near_intensity, self.fog.near_dist, self.fog.far_intensity, self.fog.far_dist,
             if std::env::var("RC_FOG").is_ok_and(|v| v.trim() == "0") { " (disabled by RC_FOG=0)" } else { "" }
         );
-        let fog = GameFog::new(self.fog, rc_game::fog_zones::PARTICLE_FAR12);
+        let fog = GameFog::new(self.fog, crate::game_camera::PARTICLE_FAR12);
         let buf = bevy::render::storage::ShaderBuffer::new(&fog_bytes(&fog.uniform, &crate::graphics::GraphicsSettings::default()), bevy::asset::RenderAssetUsages::default());
         let h = app.world_mut().resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>().add(buf);
         let _ = FOG_BUFFER.set(h);

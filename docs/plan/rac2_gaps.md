@@ -2,7 +2,7 @@
 
 One list of every known gap in the Going Commando port, **by missing shared system**. First harvest 2026-10-22, from
 the class census (`rac2_class_census.md`: the ranking of missing systems by the instances they block), the "not yet"
-notes of `rac2_bringup.md`, and the module docs and comments of `crates/rc-game2`, `crates/rc-engine/src/rac2*` and
+notes of `rac2_bringup.md`, and the module docs and comments of `crates/rc-game`, `crates/rc-engine/src/rac2*` and
 `crates/rc-formats/src/rac2` ("not ported", "not yet", "not drawn", "later"). The module docs stay the detailed record;
 this page is the index.
 
@@ -28,9 +28,9 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 
 | ID | System | Consumers | Census | Sources | Seen |
 |---|---|---|---|---|---|
-| G-REN-001 | **Blob shadows** `0x31da58` | enemies 0x0b0a / 0x0b0b; 86 class-port units on every level | 86 / 2,260 (38 / 727) | rc-game2/src/moby/classes/enemies.rs:20, 340; rac2_bringup.md §6 | yes |
-| G-REN-002 | **Breakable effects**: shards `0x32b580`, burst `0x2ecfb0`, debris `0x3210a8` / `0x327498`, death bursts `0x3f8348`, thrown chunks `0x327648` (mobys 0x43e, callback `0x39c6b8`) | the props that break (rc-game2 props.rs:155, 175), the enemies' deaths, 67 units | 67 / 2,312 (45 / 1,465) | props.rs:155, 175; enemies.rs:340, 842; census | yes |
-| G-REN-003 | **The first draw-callback list** `0x2e7718` (0x40 entries `0x1be040` / `0x1be140`, run by `0x2e7768` before the particles `0x3311e0`). The port has the second list (`0x2e7920`, crate::fx); each user's callback is its own code. On Aranos only the arrival ship's draw (`0x362b40`, done by the engine) and class 0xd0's ribbon (`0x39ac30`, not placed) use it (2026-10-22: Aranos's 0x0ce9 / 0x0340 were a census keying collision; they use the second list) | 152 units on the other levels (the registrar `H:582266980bbdcff0`, L01 `0x2dce00`) | partly: 72 / 485 | census; rc-game2/src/fx.rs | yes |
+| G-REN-001 | **Blob shadows** `0x31da58` | enemies 0x0b0a / 0x0b0b; 86 class-port units on every level | 86 / 2,260 (38 / 727) | rc-game/src/moby/classes/enemies.rs:20, 340; rac2_bringup.md §6 | yes |
+| G-REN-002 | **Breakable effects**: shards `0x32b580`, burst `0x2ecfb0`, debris `0x3210a8` / `0x327498`, death bursts `0x3f8348`, thrown chunks `0x327648` (mobys 0x43e, callback `0x39c6b8`) | the props that break (rc-game props.rs:155, 175), the enemies' deaths, 67 units | 67 / 2,312 (45 / 1,465) | props.rs:155, 175; enemies.rs:340, 842; census | yes |
+| G-REN-003 | **The first draw-callback list** `0x2e7718` (0x40 entries `0x1be040` / `0x1be140`, run by `0x2e7768` before the particles `0x3311e0`). The port has the second list (`0x2e7920`, crate::fx); each user's callback is its own code. On Aranos only the arrival ship's draw (`0x362b40`, done by the engine) and class 0xd0's ribbon (`0x39ac30`, not placed) use it (2026-10-22: Aranos's 0x0ce9 / 0x0340 were a census keying collision; they use the second list) | 152 units on the other levels (the registrar `H:582266980bbdcff0`, L01 `0x2dce00`) | partly: 72 / 485 | census; rc-game/src/fx.rs | yes |
 | G-REN-004 | **Effect quads**: the beam strip `0x2edd50`, trails `0x323c90` (the wrench's `+0x70`, the bites' `0x3dbde8` / `0x3dbe88` / `0x3dc100`), 0x0b0a's emerge flash `0x3d8920` → `0x2ee190` (FX 0x3b), 0x0b0b's wire `0x3db790`, the group branch of `0x3dc220` | wrench, 0x0b0a, 0x0b0b, 4 units | 4 / 400 (2 / 21) | fx.rs:13; wrench.rs:15; enemies.rs:340, 842 | yes |
 | G-REN-005 | **Moby colour take-over and flash**: `0x31fa50` / `0x3241d8`, the hit flash `0x3201e8` | shards (shards.rs:26), enemies, 11 units | 11 / 336 (5 / 25) | shards.rs:26; enemies.rs:20 | yes |
 | G-REN-006 | **Lighting**: point lights (`0x2fda20`: the Lancer's flash), the enemies' lighting `0x31a8e4`, the moby lights and colours `0x3132e0` (bolts), tie and moby lighting (milestone D) | Lancer, enemies, bolts, 3 units | 3 / 56 (3 / 56) | lancer.rs:20; enemies.rs:20; bolts.rs:7; moby.rs:29; rac2_bringup.md §2 D | yes |

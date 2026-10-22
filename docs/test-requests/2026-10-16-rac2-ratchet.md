@@ -22,4 +22,4 @@ Run: `RC_DATA_DIR=<repo>/extracted-rac2 cargo dev` → title → Start → New G
 
 Not expected to work yet: any other move (the pack jumps, wrench, swingshot, gadgets, ledges, swimming,
 damage), Ratchet's lighting (drawn unlit), his sounds, Clank on his back, mobys reacting to him. A state that is not
-ported freezes him and prints `rc_game2::hero: state 0x.. is not ported` once.
+ported freezes him and prints `rc_game::hero: state 0x.. is not ported` once.

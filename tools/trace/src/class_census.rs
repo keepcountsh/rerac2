@@ -384,7 +384,7 @@ impl Rac {
         ref_level: 0,
         ref_program: "rc2/level00.elf",
         boot_program: "rc2/SCUS_972.68",
-        cites: &["crates/rc-game2/", "crates/rc-engine/src/rac2", "crates/rc-formats/src/rac2", "docs/plan/rac2"],
+        cites: &["crates/rc-game/", "crates/rc-engine/src/rac2", "crates/rc-formats/src/rac2", "docs/plan/rac2"],
     };
 }
 
@@ -558,7 +558,7 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
 
 /// Going Commando's census (`class-census --game rac2`): every `G/LEVELn.WAD` of `extracted` (the R&C2 data folder),
 /// its overlay (the data lump 0), its placed moby instances and the static spawn's test on a first visit with an empty
-/// save (`rc_game2::moby::SpawnRules`), and rc-game2's class registry (`moby::classes::update_for`) as the port.
+/// save (`rc_game::moby::SpawnRules`), and rc-game's class registry (`moby::classes::update_for`) as the port.
 pub fn run_rac2(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Option<&Path>) -> Result<Summary> {
     use rc_formats::rac2::level::{LevelWad, Lump, Part};
     let mut inputs = Vec::new();
@@ -570,9 +570,9 @@ pub fn run_rac2(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file
         let g = wad.part_bytes(Part::Gameplay)?.with_context(|| format!("level {level:02} gameplay"))?;
         let g = if rc_formats::wad::is_wad(g) { rc_formats::wad::decompress(g)? } else { g.to_vec() };
         let records = rc_formats::rac2::gameplay::moby_instances(&g).with_context(|| format!("level {level:02} instances"))?;
-        let mut game = rc_game2::game::GameState::default();
+        let mut game = rc_game::game::GameState::default();
         let ground = |_: [f32; 3]| None;
-        let mut rules = rc_game2::moby::SpawnRules { game: &mut game, fresh: true, ground: &ground };
+        let mut rules = rc_game::moby::SpawnRules { game: &mut game, fresh: true, ground: &ground };
         let mut placed: BTreeMap<i32, (usize, usize)> = BTreeMap::new();
         for r in &records {
             let c = r.base.o_class;
@@ -582,7 +582,7 @@ pub fn run_rac2(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file
             e.0 += 1;
             if !skip { e.1 += 1; }
         }
-        let ports: HashMap<i32, String> = ov.vtbl().iter().filter(|e| rc_game2::moby::classes::update_for(e.o_class as i16).is_some()).map(|e| (e.o_class, "rc_game2".to_string())).collect();
+        let ports: HashMap<i32, String> = ov.vtbl().iter().filter(|e| rc_game::moby::classes::update_for(e.o_class as i16).is_some()).map(|e| (e.o_class, "rc_game".to_string())).collect();
         inputs.push((level, LevelIn { ov, placed, ports }));
     }
     census(&Rac::RAC2, inputs, Clusters(HashMap::new()), repo, work, out, tag_file)

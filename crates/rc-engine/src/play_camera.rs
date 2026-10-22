@@ -1,4 +1,4 @@
-//! The game's follow camera (`rc_game::follow_camera`, published by crate::gameplay each tick) driving the
+//! The game's follow camera (`rc_game::camera`, published by crate::gameplay each tick) driving the
 //! main view exactly as the fly camera does: position + rows → the Bevy `Transform` through `game_to_bevy`,
 //! the same `GameProjection` (tan(hfov/2) = 0.63 at 0x16cf70 unless the game changes it), letterbox and fog
 //! (crate::game_camera). The game's rows are (forward, left, up) in game space; the view looks along
@@ -11,7 +11,7 @@ use crate::fly_cam::FlyCam;
 use crate::game_camera::{CameraSource, TAN_HALF_FOV_X};
 use crate::tfrag_render::game_to_bevy;
 use bevy::prelude::*;
-use rc_game::follow_camera::CameraView;
+use rc_game::camera::CameraView;
 
 /// The camera the last gameplay tick produced, and the projection tangent it asks for.
 #[derive(Resource, Clone, Copy, Debug)]

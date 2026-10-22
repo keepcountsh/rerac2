@@ -1,7 +1,7 @@
 //! The eight dynamic point lights (level01 bank 0x180740, 8 × 0x20 bytes; per slot `{r, g, b, intensity}` then
 //! `{position, radius}`, the active flag at 0x180950 + 0x30·i): `WritePointLight_B` 0x252750 takes the first free
 //! slot (only while the frame-load measure 0x15f5d4 is at most 0.8), the owner rewrites its slot every tick, and
-//! `FreePointLight` 0x252850 clears it. The explosion light moby (class 0x27f, `crate::moby_update::creature::fx`)
+//! `FreePointLight` 0x252850 clears it. The explosion light moby (class 0x27f, `crate::base::moby_update::creature::fx`)
 //! is the owner on every level.
 //!
 //! Who reads the bank in the game: `MobyProc` merges the lights in range of a moby into its third directional light
@@ -30,32 +30,7 @@ pub struct PointLights {
     pub slots: [Option<PointLight>; 8],
     /// Bumped by every [`PointLights::alloc`] of the slot: `WritePointLight_*` zeroes the slot's attachment record
     /// (0x180940 + 0x30·i) and sets its state to 1, so [`WorldLightLists`] can tell a new light in a reused slot.
-    pub generation: [u32; 8],
-}
-
-impl PointLights {
-    /// `WritePointLight_B` 0x252750: the first free slot gets `l` (None when all eight are taken, or when the frame
-    /// load `load` (0x15f5d4) is above 0.8).
-    pub fn alloc(&mut self, l: PointLight, load: f32) -> Option<usize> {
-        if load > 0.8 { return None; }
-        let i = self.slots.iter().position(|s| s.is_none())?;
-        self.slots[i] = Some(l);
-        self.generation[i] = self.generation[i].wrapping_add(1);
-        Some(i)
-    }
-
-    /// The owner's per-tick rewrite of slot `i`.
-    pub fn set(&mut self, i: usize, l: PointLight) {
-        if let Some(s) = self.slots.get_mut(i) { *s = Some(l); }
-    }
-
-    /// `FreePointLight` 0x252850.
-    pub fn free(&mut self, i: usize) {
-        if let Some(s) = self.slots.get_mut(i) { *s = None; }
-    }
-
-    /// The active slots.
-    pub fn active(&self) -> impl Iterator<Item = &PointLight> { self.slots.iter().flatten() }
+    pub(crate) generation: [u32; 8],
 }
 
 /// The world instances' bounding spheres the attachment tests, in the game's run-time records: ties and shrubs
@@ -69,13 +44,13 @@ pub struct WorldSpheres {
 }
 
 /// A point-light nibble list with no light (the level loader's value; low nibble first, 0xf ends the list).
-pub const NO_LIGHTS: u16 = 0xffff;
+pub(crate) const NO_LIGHTS: u16 = 0xffff;
 /// Entries of one slot's instance list (`0x180ac0 + 0x400·i`, 0x200 u16), shared by ties, then tfrags, then shrubs.
-pub const LIST_CAPACITY: usize = 0x200;
+pub(crate) const LIST_CAPACITY: usize = 0x200;
 /// `UpdateAllPointLights` re-attaches a light once it is more than this far (game units, `vec_distance` 0x221360:
 /// 3D) from where it was attached; `CreatePointLight` tests the spheres with `radius + 8`, so the lists stay a
 /// superset of the instances the light can reach while it moves less than that.
-pub const MOVE_THRESHOLD: f32 = 8.0;
+pub(crate) const MOVE_THRESHOLD: f32 = 8.0;
 
 /// One slot's attachment record (0x180940 + 0x30·i): state (+0x10: 0 free, 1 written, 2 attached), the position it
 /// was attached at (+0x20) and the instances whose lists name it (the u16 list at +0x0c; counts +0x02/+0x0a/+0x06).
@@ -114,7 +89,7 @@ pub struct WorldLightLists {
 }
 
 /// `fun_001f9bb0`: true when the spheres overlap (`vsub.xyz`, `vadd.w`, `(dx² + dy²) + 1·dz² − (r₁ + r₂)²` negative).
-pub fn spheres_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
+pub(crate) fn spheres_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
     let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let r = a[3] + b[3];
     (d[0] * d[0] + d[1] * d[1]) + d[2] * d[2] - r * r < 0.0
@@ -122,7 +97,7 @@ pub fn spheres_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
 
 /// `CreatePointLight`'s nibble insert: the first free nibble of `list` (low end first) gets `slot`; false when all
 /// four are taken.
-pub fn add_to_list(list: &mut u16, slot: usize) -> bool {
+pub(crate) fn add_to_list(list: &mut u16, slot: usize) -> bool {
     let s = slot as u16 & 0xf;
     let l = *list;
     *list = if l == NO_LIGHTS {
@@ -141,7 +116,7 @@ pub fn add_to_list(list: &mut u16, slot: usize) -> bool {
 
 /// `DetachPointLight`'s nibble removal: the nibble naming `slot` goes, the higher ones move down, 0xf fills the top.
 /// (No match: the game prints an error and leaves the list; unreachable here.)
-pub fn remove_from_list(list: &mut u16, slot: usize) {
+pub(crate) fn remove_from_list(list: &mut u16, slot: usize) {
     let (l, s) = (*list as u32, slot as u32 & 0xf);
     let r = if l & 0xf == s {
         l >> 4 | 0xf000
@@ -234,89 +209,3 @@ impl WorldLightLists {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn first_free_slot_and_load_gate() {
-        let l = PointLight { color: [1.0; 3], intensity: 0.0, pos: [0.0; 3], radius: 5.0 };
-        let mut b = PointLights::default();
-        assert_eq!(b.alloc(l, 0.0), Some(0));
-        assert_eq!(b.alloc(l, 0.0), Some(1));
-        b.free(0);
-        assert_eq!(b.alloc(l, 0.9), None);
-        assert_eq!(b.alloc(l, 0.8), Some(0));
-        for _ in 0..6 { assert!(b.alloc(l, 0.0).is_some()); }
-        assert_eq!(b.alloc(l, 0.0), None);
-        assert_eq!(b.active().count(), 8);
-    }
-
-    fn light(pos: [f32; 3], radius: f32) -> PointLight { PointLight { color: [1.0; 3], intensity: 0.0, pos, radius } }
-
-    #[test]
-    fn nibble_lists_fill_from_the_low_end_and_compact() {
-        let mut l = NO_LIGHTS;
-        for s in [3, 5, 0, 7] { assert!(add_to_list(&mut l, s)); }
-        assert_eq!(l, 0x7053);
-        assert!(!add_to_list(&mut l, 1));
-        remove_from_list(&mut l, 5);
-        assert_eq!(l, 0xf703);
-        remove_from_list(&mut l, 3);
-        assert_eq!(l, 0xff70);
-        remove_from_list(&mut l, 7);
-        remove_from_list(&mut l, 0);
-        assert_eq!(l, NO_LIGHTS);
-    }
-
-    #[test]
-    fn overlap_is_strict() {
-        assert!(spheres_overlap([0.0, 0.0, 0.0, 1.0], [2.9, 0.0, 0.0, 2.0]));
-        assert!(!spheres_overlap([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 0.0, 2.0]));
-    }
-
-    #[test]
-    fn attach_margin_move_threshold_and_free() {
-        let spheres = WorldSpheres {
-            ties: vec![[10.0, 0.0, 100.0, 1.0], [0.0, 0.0, 200.0, 1.0]],
-            // Raw units: 16 units away, radius 1 (in reach of radius 10 + 8 + 1).
-            tfrags: vec![[16.0 * 1024.0, 0.0, 100.0 * 1024.0, 1024.0]],
-            shrubs: vec![[0.0, 30.0, 100.0, 1.0]],
-        };
-        let mut w = WorldLightLists::new(&spheres);
-        let mut bank = PointLights::default();
-        let s = bank.alloc(light([0.0, 0.0, 100.0], 10.0), 0.0).unwrap();
-        assert!(w.update(&bank, &spheres));
-        assert_eq!((w.ties.clone(), w.tfrags.clone(), w.shrubs.clone()), (vec![0xfff0, NO_LIGHTS], vec![0xfff0], vec![NO_LIGHTS]));
-        // Growing the radius alone never re-attaches; neither does a move of up to 8 units.
-        bank.set(s, light([0.0, 8.0, 100.0], 30.0));
-        assert!(!w.update(&bank, &spheres));
-        assert_eq!(w.shrubs, vec![NO_LIGHTS]);
-        bank.set(s, light([0.0, 8.1, 100.0], 30.0));
-        assert!(w.update(&bank, &spheres));
-        assert_eq!(w.shrubs, vec![0xfff0]);
-        // Free, then a new light in the same slot within one update: the old lists go, the new one attaches.
-        bank.free(s);
-        assert_eq!(bank.alloc(light([0.0, 0.0, 200.0], 1.0), 0.0), Some(s));
-        assert!(w.update(&bank, &spheres));
-        assert_eq!((w.ties.clone(), w.tfrags.clone(), w.shrubs.clone()), (vec![NO_LIGHTS, 0xfff0], vec![NO_LIGHTS], vec![NO_LIGHTS]));
-        bank.free(s);
-        assert!(w.update(&bank, &spheres));
-        assert_eq!(w.ties, vec![NO_LIGHTS; 2]);
-    }
-
-    #[test]
-    fn list_capacity_is_shared_ties_first() {
-        let spheres = WorldSpheres {
-            ties: vec![[0.0, 0.0, 0.0, 1.0]; LIST_CAPACITY + 3],
-            tfrags: vec![[0.0, 0.0, 0.0, 1024.0]],
-            shrubs: vec![[0.0, 0.0, 0.0, 1.0]],
-        };
-        let mut w = WorldLightLists::new(&spheres);
-        let mut bank = PointLights::default();
-        bank.alloc(light([0.0, 0.0, 9.0], 5.0), 0.0);
-        w.update(&bank, &spheres);
-        assert_eq!(w.ties.iter().filter(|&&l| l != NO_LIGHTS).count(), LIST_CAPACITY);
-        assert_eq!((w.tfrags[0], w.shrubs[0]), (NO_LIGHTS, NO_LIGHTS));
-    }
-}

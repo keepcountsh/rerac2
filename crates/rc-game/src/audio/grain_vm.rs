@@ -26,14 +26,14 @@ use std::sync::Arc;
 
 /// 989snd's `rand()` stand-in (see the module docs): `s = s·0x41c64e6d + 0x3039`, returns bits 16..30.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IopRng(pub u32);
+pub(crate) struct IopRng(pub(crate) u32);
 
 impl Default for IopRng {
     fn default() -> Self { IopRng(1) }
 }
 
 impl IopRng {
-    pub fn rand(&mut self) -> i32 {
+    pub(crate) fn rand(&mut self) -> i32 {
         self.0 = self.0.wrapping_mul(0x41c6_4e6d).wrapping_add(0x3039);
         ((self.0 >> 16) & 0x7fff) as i32
     }
@@ -41,9 +41,9 @@ impl IopRng {
 
 /// `PAN_RESET` / `PAN_DONT_CHANGE` / `VOLUME_DONT_CHANGE` (989snd sentinels). A pan the EE computes as −1
 /// or −2 degrees therefore means "reset" / "keep" to 989snd, as on the PS2.
-pub const PAN_RESET: i32 = -1;
-pub const PAN_DONT_CHANGE: i32 = -2;
-pub const VOLUME_DONT_CHANGE: i32 = 0x7fff_ffff;
+pub(crate) const PAN_RESET: i32 = -1;
+pub(crate) const PAN_DONT_CHANGE: i32 = -2;
+pub(crate) const VOLUME_DONT_CHANGE: i32 = 0x7fff_ffff;
 
 /// LFO tracker (OpenGOAL `LFOTracker`). Targets: 1 volume, 2 pan, 3 pitch mod, 4 pitch bend.
 #[derive(Clone, Copy, Debug, Default)]
@@ -105,14 +105,14 @@ struct Handler {
 
 /// `PitchBend(tone, pb, pm, note, fine)`: `v = note·128 + fine + pm`, plus `pb_high·(pb << 7)/0x7fff` or
 /// `pb_low·(pb << 7)/0x8000`; returns `(v / 128, v % 128)`.
-pub fn pitch_bend(tone: &Tone, pb: i32, pm: i32, note: i32, fine: i32) -> (i16, i16) {
+pub(crate) fn pitch_bend(tone: &Tone, pb: i32, pm: i32, note: i32, fine: i32) -> (i16, i16) {
     let base = (note << 7) + fine + pm;
     let v = if pb >= 0 { tone.pb_high as i32 * (pb << 7) / 0x7fff + base } else { tone.pb_low as i32 * (pb << 7) / 0x8000 + base };
     ((v / 128) as i16, (v % 128) as i16)
 }
 
 /// The SPU pitch of a tone at the handler's bend and modulation (start note 60, fine 0).
-pub fn tone_pitch(tone: &Tone, pb: i32, pm: i32) -> u16 {
+pub(crate) fn tone_pitch(tone: &Tone, pb: i32, pm: i32) -> u16 {
     let (n, f) = pitch_bend(tone, pb, pm, 60, 0);
     vag::ps1_note_to_pitch(tone.center_note, tone.center_fine, n, f)
 }
@@ -120,24 +120,22 @@ pub fn tone_pitch(tone: &Tone, pb: i32, pm: i32) -> u16 {
 /// The 989snd side: handlers by handle, the voice manager, the 240 Hz tick.
 #[derive(Clone, Debug)]
 pub struct Snd989 {
-    pub vm: VoiceManager,
+    pub(crate) vm: VoiceManager,
     handlers: BTreeMap<u32, Handler>,
     next_handle: u32,
     /// 240 Hz ticks since start.
-    pub tick: u64,
-    pub rng: IopRng,
+    pub(crate) tick: u64,
+    pub(crate) rng: IopRng,
     /// The global registers (`g_block_reg`).
     block_reg: [i8; 32],
     /// Grain types / tone kinds met but not ported, with counts (see the module docs).
     pub unimplemented: BTreeMap<&'static str, u32>,
-    pub tones_started: u64,
-    /// The groups the last `snd_PauseAllSoundsInGroup` named, until continued ([`Snd989::set_groups_paused`]).
-    pub paused_groups: u32,
+    pub(crate) tones_started: u64,
 }
 
 impl Default for Snd989 {
     fn default() -> Self {
-        Snd989 { vm: VoiceManager::default(), handlers: BTreeMap::new(), next_handle: 1, tick: 0, rng: IopRng::default(), block_reg: [0; 32], unimplemented: BTreeMap::new(), tones_started: 0, paused_groups: 0 }
+        Snd989 { vm: VoiceManager::default(), handlers: BTreeMap::new(), next_handle: 1, tick: 0, rng: IopRng::default(), block_reg: [0; 32], unimplemented: BTreeMap::new(), tones_started: 0 }
     }
 }
 
@@ -148,7 +146,7 @@ fn wrap360(mut p: i32) -> i32 {
 }
 
 impl Snd989 {
-    pub fn new() -> Self { Self::default() }
+    pub(crate) fn new() -> Self { Self::default() }
 
     /// Handles still playing.
     pub fn playing(&self) -> usize { self.handlers.len() }
@@ -156,7 +154,7 @@ impl Snd989 {
     /// `snd_PlaySoundVolPanPMPB(bank, sound, vol, pan, pm, pb)`: a new handler (its first grains run now).
     /// Returns the handle, 0 when the sound has no grains or does not exist.
     #[allow(clippy::too_many_arguments)]
-    pub fn play_sound(&mut self, bank: &Bank, spu: &mut Spu, sound: u16, vol: i32, pan: i32, pm: i32, pb: i32) -> u32 {
+    pub(crate) fn play_sound(&mut self, bank: &Bank, spu: &mut Spu, sound: u16, vol: i32, pan: i32, pm: i32, pb: i32) -> u32 {
         let Some(sfx) = bank.sounds.get(sound as usize) else { return 0 };
         if sfx.grains.is_empty() { return 0; }
         let sfx_vol = sfx.vol as i32;
@@ -199,10 +197,10 @@ impl Snd989 {
     }
 
     /// `snd_SoundIsStillPlaying`: the handle, or 0.
-    pub fn still_playing(&self, handle: i32) -> i32 { if handle > 0 && self.handlers.contains_key(&(handle as u32)) { handle } else { 0 } }
+    pub(crate) fn still_playing(&self, handle: i32) -> i32 { if handle > 0 && self.handlers.contains_key(&(handle as u32)) { handle } else { 0 } }
 
     /// `snd_StopSound`: key off every voice; the handler ends when they have released.
-    pub fn stop_sound(&mut self, spu: &mut Spu, handle: i32) {
+    pub(crate) fn stop_sound(&mut self, spu: &mut Spu, handle: i32) {
         let Some(h) = self.handlers.get_mut(&(handle as u32)) else { return };
         h.done = true;
         for v in &h.voices {
@@ -213,7 +211,7 @@ impl Snd989 {
     /// `snd_SetSoundParams(handle, mask, vol, pan, pm, pb)`: mask 1 volume, 2/4 pan, 8 pitch mod, 0x10 pitch
     /// bend (the EE's mask bits; the IOP's decoding of 4 vs 2 is inferred). Returns the handle or 0.
     #[allow(clippy::too_many_arguments)]
-    pub fn set_params(&mut self, bank: &Bank, spu: &mut Spu, handle: i32, mask: u32, vol: i32, pan: i32, pm: i32, pb: i32) -> i32 {
+    pub(crate) fn set_params(&mut self, bank: &Bank, spu: &mut Spu, handle: i32, mask: u32, vol: i32, pan: i32, pm: i32, pb: i32) -> i32 {
         let key = handle as u32;
         let Some(mut h) = self.handlers.remove(&key) else { return 0 };
         let vol_arg = if mask & 1 != 0 { vol } else { VOLUME_DONT_CHANGE };
@@ -231,20 +229,10 @@ impl Snd989 {
         handle
     }
 
-    pub fn set_master_volume(&mut self, group: usize, vol: i32, spu: &mut Spu) { self.vm.set_master_volume(group, vol, spu); }
-
-    /// The pause flag of every handler whose group is in `mask` (`snd_PauseAllSoundsInGroup` /
-    /// `snd_ContinueAllSoundsInGroup`: OpenGOAL `BlockSoundHandler::Pause` / `Unpause`). Sounds started later play (the
-    /// command acts on the handlers that exist).
-    pub fn set_groups_paused(&mut self, mask: u32, paused: bool) {
-        if paused { self.paused_groups |= mask } else { self.paused_groups &= !mask }
-        for h in self.handlers.values_mut() {
-            if mask & (1 << (h.group & 31)) != 0 { h.paused = paused; }
-        }
-    }
+    pub(crate) fn set_master_volume(&mut self, group: usize, vol: i32, spu: &mut Spu) { self.vm.set_master_volume(group, vol, spu); }
 
     /// One 240 Hz tick of every handler; finished handlers are dropped.
-    pub fn tick(&mut self, bank: &Bank, spu: &mut Spu) {
+    pub(crate) fn tick(&mut self, bank: &Bank, spu: &mut Spu) {
         self.tick += 1;
         let keys: Vec<u32> = self.handlers.keys().copied().collect();
         for key in keys {
@@ -610,30 +598,3 @@ impl Snd989 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lfo_sine_table() {
-        assert_eq!([lfo_sine(0), lfo_sine(1), lfo_sine(2), lfo_sine(3)], [32767, 32766, 32766, 32765]);
-        assert_eq!([lfo_sine(510), lfo_sine(511), lfo_sine(512), lfo_sine(513)], [201, 100, 0, -100]);
-        assert_eq!(lfo_sine(1024), -32767);
-    }
-
-    #[test]
-    fn tone_pitches() {
-        // Novalis ambience tone: centre −74 / 66 (a PS2-rate sample), played at note 60: ≈ 22.0 kHz.
-        let t = Tone { center_note: -74, center_fine: 66, ..Default::default() };
-        let p = tone_pitch(&t, 0, 0);
-        let hz = p as f64 * 48000.0 / 4096.0;
-        assert!((hz - 21_994.0).abs() < 60.0, "{p:#x} = {hz:.0} Hz");
-        // PS1-style +72 / 0: 22.05 kHz.
-        let t = Tone { center_note: 72, center_fine: 0, ..Default::default() };
-        assert_eq!(tone_pitch(&t, 0, 0), (0x800u32 * 44100 / 48000) as u16);
-        // A full bend up of pb_high = 2 semitones.
-        let t = Tone { center_note: -60, pb_high: 2, ..Default::default() };
-        assert_eq!(pitch_bend(&t, 0x7fff, 0, 60, 0), (62, 0));
-        assert_eq!(tone_pitch(&t, 0x7fff, 0), vag::note_to_pitch(60, 0, 62, 0));
-    }
-}

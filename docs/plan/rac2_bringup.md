@@ -8,7 +8,7 @@ New Game says "not yet". Nothing of R&C1 is rewritten for it.
 - **One engine, two games.** The engine (`rc-engine`), the renderer, the format readers (`rc-formats`) and the data
   layer (`rc-data`) are shared. Where a format differs between the games, the reader takes the game as a parameter;
   it is not copied.
-- **R&C2's game logic lives in its own crate, `rc-game2`,** the way R&C1's lives in `rc-game`. Systems that turn out
+- **R&C2's game logic lives in its own crate, `rc-game`,** the way R&C1's lives in `rc-game`. Systems that turn out
   to be the same code in both games (by `tools/ghidra/scripts/crossgame_diff.py`) move to shared modules when a
   second consumer exists, not before (no speculative ports).
 - **Evidence first.** Every R&C2 behaviour comes from the R&C2 binaries in the `ratchet2` Ghidra project
@@ -25,7 +25,7 @@ New Game says "not yet". Nothing of R&C1 is rewritten for it.
    movies, the title, the main menu's pages, the game-mode values, and the assets each needs (fonts, menu textures,
    text, background, music).
 3. **Engine boot path (done).** A data folder holding `RC2.HDR` starts Going Commando (`rc-engine` `disc_source::game`,
-   `rac2.rs`); the front end's logic is `rc-game2` (`front_end.rs`, `gui.rs`), its data readers `rc-formats` `rac2/`.
+   `rac2.rs`); the front end's logic is `rc-game` (`front_end.rs`, `gui.rs`), its data readers `rc-formats` `rac2/`.
    The splashes, the Insomniac movie, the title (couch movies, "Press START") and the main menu run and draw through
    one `hud_render::Layer`. Not yet: any sound (movie audio, menu sounds, music), what the rows open (New Game, Load,
    Options log "not in this version yet"), the subtitles over movies, PAL / other languages.
@@ -168,7 +168,7 @@ branch is taken on `rc_formats::Game::Rac2` only, and R&C1's default paths stay 
 1. **One engine app, the game picks its logic.** `rc-engine` keeps one Bevy app: the renderers (tfrag, tie, shrub,
    sky, mobys, particles, water, display, GS state, AA, graphics settings), the frame pace, the capture, audio out.
    The game-specific layer is a plugin: R&C1's `gameplay`, menus, travel and front end; R&C2's `rac2` (logic in
-   `rc-game2`). No second copy of a renderer.
+   `rc-game`). No second copy of a renderer.
 2. **Formats branch, not fork.** A reader whose layout differs takes the game from `LevelCore::game` (or a `Game`
    argument) and maps R&C2's bytes into the same structure (`tie::parse_tie_class_for`). A reader gets an R&C2
    twin only when the structure itself differs (moby classes, the gameplay table) — in `rc_formats::rac2`.
@@ -176,7 +176,7 @@ branch is taken on `rc_formats::Game::Rac2` only, and R&C1's default paths stay 
    R&C2 is its second consumer it moves out of `rc-game` into a shared place with a re-export left in `rc-game`, so
    R&C1's paths and behaviour do not change. Nothing is moved before R&C2 calls it.
 4. **Rewritten code is reimplemented, with R&C1 as the map.** The hero, the game state, the moby classes, the
-   menus and the cameras are written from R&C2's code in `rc-game2`, in the same organisation as R&C1's: the hero as
+   menus and the cameras are written from R&C2's code in `rc-game`, in the same organisation as R&C1's: the hero as
    a state registry (state → group module, the game's dispatchers for SetState, physics and transitions), one module
    per state group, a `physics` pipeline and an `anim` interface, field names with the R&C2 addresses. R&C1's
    modules are the hint for where to look, never the source of a behaviour.
@@ -188,7 +188,7 @@ branch is taken on `rc_formats::Game::Rac2` only, and R&C1's default paths stay 
    CRC-16 and keeps one folder per card (`rc_formats::save_game`, `rc_game::memcard`). `memcard_GetDataSize` is
    identical in R&C2 and `memcard_TestChecksum` nearly so: R&C2's saves are read with the same reader given R&C2's
    table addresses and file names (475 KB per save, R&C2's icon), on the same native card folder under a per-game
-   directory; R&C2's progression (what a save holds) is `rc-game2`'s.
+   directory; R&C2's progression (what a save holds) is `rc-game`'s.
 
 ### 6.3 Milestones (each one runs and is committed on its own)
 
@@ -199,8 +199,8 @@ branch is taken on `rc_formats::Game::Rac2` only, and R&C1's default paths stay 
 | C | Moby classes: mesh, skeleton, animation, textures; drawn and animated at their instances (done: 384 of 472 Aranos instances placed, 156 animated; not yet the loader's ground snap, the spawn rules, Ratchet's armour mesh) | moby renderer, anim eval | the R&C2 vertex table header |
 | D | Tie and moby lighting as R&C2 does it | light passes where equal | R&C2's tie colours |
 | E | Sound: the level's bank, sound instances, music, movie audio, the front end's sounds | `audio_out`, 989snd, VAG | R&C2's bank tables |
-| F | Ratchet: hero states for Aranos (walk, jump, swing, wrench, the tutorial's gadgets), follow camera, collision | collision queries | `rc-game2::hero` |
-| G | Aranos's mobys: the tutorial's objects, enemies, crates, bolts, doors, the ship; HUD and pause menu | moby scheduler services | `rc-game2` classes |
+| F | Ratchet: hero states for Aranos (walk, jump, swing, wrench, the tutorial's gadgets), follow camera, collision | collision queries | `rc-game::hero` |
+| G | Aranos's mobys: the tutorial's objects, enemies, crates, bolts, doors, the ship; HUD and pause menu | moby scheduler services | `rc-game` classes |
 | H | Cinematics: Aranos's scenes (SCENE0) and movies, subtitles | `scene_render`, movies | R&C2's scene format |
 | I | Saves and the level end (to Oozla, or the "not yet" screen) | `save_game`, card folder | R&C2's tables |
 
@@ -214,7 +214,7 @@ wall check `0x2b4560`, move `0x2b5c68`, probe `0x2b4a08`, snap `0x2b5358`) and t
 2, stop 3, crouch 4, fall 6, jump 7, run jump 9), with R&C2's constants (run speed 5.95, jump 1.28–2.3 / 1.0–2.7,
 gravity 0.00825) and additions (gravity frames, strafe, 0x93 states). From the velocity on, the hero block's fields
 sit at R&C1's address + 0x4aae0. The crossgame diff's 0.1–0.4 similarity came from those additions inside long
-functions. So the port follows R&C1's organisation (`rc_game2::hero`: registry, states, physics, ground, walk, air,
+functions. So the port follows R&C1's organisation (`rc_game::hero`: registry, states, physics, ground, walk, air,
 jump), each function read from R&C2's code, in native f32. Details that differ were found that way (the stick
 magnitude `(max(|x|, |y|) + |stick|) / 2`, the spring's pre-clamp, the snap constants).
 
@@ -223,7 +223,7 @@ Ratchet's animation player (SetAnim `0x2d2508` = R&C1's `0x247a90`). New in R&C2
 Ratchet's mesh is the armour's (`rac2::armor`), and his sequences are compressed (frame pointers with 0xf in the top
 nibble, decoded by `0x313fa8`: `moby_anim::decode_compressed_frame`).
 
-**Done (2026-10-21): every state SetState has a case for.** `rc_game2::hero::registry` lists them by module:
+**Done (2026-10-21): every state SetState has a case for.** `rc_game::hero::registry` lists them by module:
 ground (0, 1, 3, 4, 0x1d), walk (2, 0x2e ice, 0x70 wading), air (6, 0x2c tumble), jump (7, 9, 10, 0xb..0x12, 0x1b, 0x38,
 0x45, 0x48, 0x5b, 0x66, 0x6e, 0x81, 0x89, 0x92), pack (8 glide), melee (0x13..0x15, 0x1f, 0x22, 0x6d, 0x83, 0x93),
 ledge (0x17..0x1a), damage (0x16, 0x39, 0x65, 0x67, 0x74, 0x78..0x7d, 0x7f, 0x8c), water (0x32..0x36, 0x72, 0x73), swing
@@ -258,7 +258,7 @@ the sphere chain and end sphere, placement, rows, spring back), each a function 
 * the snap behind Ratchet at the init only pulls in on the line from the look point, 0.5 short of the wall.
 
 The hero tells the camera about jumps through `0x18c2c0` (0x50 in the jump states; the smoothed hero height holds
-while it is set). The port is `rc_game2::camera` (one function per step, the L00 address on each), in native f32.
+while it is set). The port is `rc_game::camera` (one function per step, the L00 address on each), in native f32.
 **Not ported** (none is in use on Aranos's opening): the camera-tweak requests `0x2d7568`, the camera-collision grid,
 the moby collision of the camera's queries, the avoidance's moby nudges, the focus mobys, the stick auto-centre, the
 Clank and Giant Clank cameras, water, the knock-down view, the other camera types, the blends and the shakes.
@@ -267,7 +267,7 @@ Clank and Giant Clank cameras, water, the knock-down view, the other camera type
 
 The level's update table (`lvl.vtbl` at `0x2a2e80`, 233 records `{o_class, update, 0x2a3978}`) covers the level's
 own classes and every weapon and gadget; a class not in it (or with a null update) has none. Of the 76 classes with
-instances on Aranos, 50 have an update. Ported (`rc_game2::moby::classes`): the wrench 0x47, the crates 500 / 501 /
+instances on Aranos, 50 have an update. Ported (`rc_game::moby::classes`): the wrench 0x47, the crates 500 / 501 /
 511, the bolts 13..19, the spawn points 0x0325, the chute 0x02a7, the gate 0x0ac7; in `props`: 0x0919 (a camera
 volume), 0x0ac0 (a mover), 0x0ac1 / 0x0ac2 / 0x0aca (the lifts, carrying Ratchet), 0x0ac3, 0x0ac4 (a gate), 0x0ac5 /
 0x0ac6, 0x0ac8, 0x0adb (a hovering craft), the wrecks 0x0ac9 / 0x0c0a..0x0c0d / 0x0e01 / 0x0e02, 0x0c22 (the
@@ -275,7 +275,7 @@ tutorial's help), 0x0c4c (the sky ships), 0x0c63 (a mission area), 0x0c8b (the d
 swap), 0x0d1e (searchlights), 0x0ddf (a view volume), 0x0f13 (a scene's props), 0x1143 / 0x12fa (breakables),
 0x12f5, 0x12f9 (a barrier held by two objects), 0x132d (the sun flare's object), 0x1330 (the arrival); in
 `carriers`: 0x0a38, 0x0c66, 0x09c7 (a floating rock with a mount). Shared services: the volumes, areas and paths
-(`rc_game2::level`), moby states `0x31b8d0`, the sound hooks of the moby host, the camera tweaks, the spawn rules
+(`rc_game::level`), moby states `0x31b8d0`, the sound hooks of the moby host, the camera tweaks, the spawn rules
 and the checkpoint, the help requests, the hero's carry on movers (`0x322668`, `moby::carry_hero`), the eased move
 `0x31ed78` (`physics::ease`), the group attach (`moby::attach`: mobys, ties and shrubs).
 
@@ -283,7 +283,7 @@ and the checkpoint, the help requests, the hero's carry on movers (`0x322668`, `
 0x0ce9 (a tie group's colours pulsing, `0x3701d0`). 0x0340 acts only with Ratchet in the ship (`0x18c0b4` = 0x1c,
 the class 0xac), never on Aranos.
 
-**The help panel** (`rc_game2::help`, drawn with the HUD): the requests the objects make (`0x2f5270`), the
+**The help panel** (`rc_game::help`, drawn with the HUD): the requests the objects make (`0x2f5270`), the
 panel's states `0x2f5680` (open, grow, fade in, show for 7 ticks a character, △ dismisses and counts in the slot,
 fade out, shrink), the word wrap `0x2ea908` and the rounded box `0x2e9548`, over the level's English help texts.
 The border is the GUI sprites 0x57 / 0x58 (`0x42f3b0`). Not yet: the help voice, the prompt slot it holds
@@ -299,7 +299,7 @@ arrival scene of 0x1330 and the scene parts of 0x0f13 wait for the scene system 
 .. `0x41b170`, `0x3dead0`: state 1, mode |= 0x800) and the scene trigger 0x0f6e (`0x40ffa0`: its scenes, level 0's
 lists 0x21 / 0x23 / 0x22 / 0x16 at `0x1b1000`, end at once; then the item, the mission and the checkpoint).
 
-**The enemies** (`rc_game2::moby::classes::enemies`, on R&C2's enemy framework `rc_game2::moby::ai`): 0x099c (a
+**The enemies** (`rc_game::moby::classes::enemies`, on R&C2's enemy framework `rc_game::moby::ai`): 0x099c (a
 flyer, `0x3bb120` / `0x3bbab0` / `0x3bbf38`), 0x0b0a (a burrower with its mound 0x0ab7, `0x3d6900` / `0x3d7a48` /
 `0x3d81e0`, its bite `0x3d89f0`) and 0x0b0b (`0x3d9020` / `0x3dac08` / `0x3db4b8`: its two spinning parts 0x0aa2 at
 its joints 0 and 2, `0x3dbed0` / `0x3dbfb0` / `0x3dc090`; its wander; its path walk). Each module's docs list its
@@ -320,7 +320,7 @@ R&C2 numbers its scenes and movies together (`0x369fe8`): ids 0x20..=0xb0 are in
 level's base (`$gp − 0x1c00`: Aranos 0x21..0x25 are its records 0..4); the others are movies (row = the id, or the
 id less 0x91, in `RC2.HDR`'s movie table). `G/SCENEn.WAD` (`rc_formats::rac2::scene`) holds 15 records of 0x14c bytes
 (`{speech sectors[12], chunk sectors[71]}`), the chunks in R&C1's format (`rc_formats::scene` parses them as they
-are). The game side is `rc_game2::scene`: the queue `0x1bef40` (5 entries, a chain plays back to back, a skip drops
+are). The game side is `rc_game::scene`: the queue `0x1bef40` (5 entries, a chain plays back to back, a skip drops
 the rest), the modes `0x1a8f00` with their stack (`0x32c5f0` / `0x32c780`, the switch `0x32c858` at the top of each
 frame with the blackout into a scene), the scene start `0x370e08`, tick `0x3716f8` (the world still runs: the moby
 loop; Ratchet's update does nothing in mode 2) and end `0x3711e8`. The engine (`crate::rac2_play`) loads the scene,
@@ -334,7 +334,7 @@ Users: the scene trigger 0x0f6e (queues its list: Aranos's triggers play 0x22, 0
 first visit, then Ratchet's ship 0x0d54 with its nine parts flown along its path under the fly-by camera 2, then
 Ratchet walked out).
 
-**The level cameras** (`rc_game2::cameras`, R&C1's level camera system evolved): the records of the gameplay's
+**The level cameras** (`rc_game::cameras`, R&C1's level camera system evolved): the records of the gameplay's
 cameras section with their pvar blocks (in the moby pvar table) as slots, the choice `0x2d8618` / `0x2d8408` (hooks,
 activation kinds, priorities), the switch `0x2d8168` (cuts only: Aranos's cameras have blend kind 0), and the fly-by
 (class 0x13: `0x42b0d8` / `0x42a660` / `0x42aa28`, armed by the gate 0x0ac7 and the arrival; the fade, the letterbox
@@ -421,7 +421,7 @@ sounds and its movies' audio, the help voice.
   instead posed from Ratchet's joints by `0x2aa278(table, buffer, class, 0, ratchet)`: a keyframe of their own,
   joint 0 at rest, joint i the quaternion of Ratchet's `table[i]` (from `0x3181c0`, his decoded joint data), its
   scale where it is not 1 and its translation where it differs from the item's rest. Helmet: table `0x1a7d08`
-  (+4: joints 8, 10), attachment 4 (joints 0..7). Ported: the helmet (`rc_game2::hero::items::head_pass`,
+  (+4: joints 8, 10), attachment 4 (joints 0..7). Ported: the helmet (`rc_game::hero::items::head_pass`,
   `Rac2Mobys::skin_head`); his joint modifiers' scale (the head's 0.875, `0x2d51f8` / `0x2ab498`) reaches it, the
   head look's rotation not yet. Not ported: slots 1 and 3, `0x18b134`, the optional slots, the gloves.
 * **The GS stash.** The classes on the core's `moby_gs_stash_list` (s16 list, negative end: Clank 601, the packs
@@ -429,7 +429,7 @@ sounds and its movies' audio, the help voice.
   from the stash address (the gs_ram table's entry past `gs_ram.count`; word 0x84 is the stash's entry count) into
   the gs_ram lump. `LevelCore::moby_stash` / `moby_stash_addr`, `texture::parse_textures`.
 * **The ship's screen** (`0x2fd3d8` + `0x2e6350`): crate::world_screen (an offscreen camera onto a world quad).
-* **The canopy** (`0x367b68`): a draw callback, not a moby: `rc_game2::canopy`, drawn through crate::fx_draw like
+* **The canopy** (`0x367b68`): a draw callback, not a moby: `rc_game::canopy`, drawn through crate::fx_draw like
   R&C1's ship glass (display-byte blend). The ship's parts ride the scene's ship actor at itself.
 * **Occlusion mode** `0x1b19d0` (`0x2e54a0`): 0 all visible, 2 the grid (`0x2e4d88`), else kept; `0x3012a0` sets 0
   at every level load, the arrival 2 when its fly-by ends (`GameState::occlusion`). Nothing in level 0 sets 2 when
