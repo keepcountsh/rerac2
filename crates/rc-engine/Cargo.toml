@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Faithful reimplementation runtime for Ratchet & Clank (PS2) on Bevy."
+description = "Faithful reimplementation runtime for Ratchet & Clank: Going Commando (PS2) on Bevy."
 
-# The runtime executable is `rerac` (launcher contract); the crate stays `rc-engine` (`cargo dev`, `-p rc-engine`).
+# The runtime executable is `rerac2` (named in the version manifest); the crate stays `rc-engine` (`cargo dev`, `-p rc-engine`).
 [[bin]]
-name = "rerac"
+name = "rerac2"
 path = "src/main.rs"
 
 [features]

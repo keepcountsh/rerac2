@@ -19,7 +19,7 @@ timers, effects on other mobys, second-hit and timeout branches, level-specific 
 3. Put tests in the right integration binary and module (docs/workflows/testing.md). Run them ONLY through
    `cargo xtask test-job <area…>` / `--test <binary> --filter <module>::` / `cargo xtask test-quick [crate]`
    (wrap runs in `timeout 900`). Never `cargo test` directly, never the full suite. Before any cargo command:
-   `pgrep -x cargo; pgrep -x rustc; pgrep -x cargo-nextest; pgrep -x xtask; pgrep -x rerac` must be empty.
+   `pgrep -x cargo; pgrep -x rustc; pgrep -x cargo-nextest; pgrep -x xtask; pgrep -x rerac2` must be empty.
 4. Tests must never read personal files (the ISO, ~/PS2, savestates, recordings), not even "skip if missing".
 5. **Don't fix product code.** When a test fails because the port is wrong, record the bug (what, where, evidence,
    the decomp address) in the request's Results section and leave the failing test marked `#[ignore = "BUG: <id>"]`

@@ -43,7 +43,7 @@ The engine never reads the disc image; it reads only a data folder that `rerac2-
 
 ```
 cargo dev -- --data-dir <data folder>     # or RC_DATA_DIR=<data folder> cargo dev
-cargo dev -- --version-json               # {"name":"rerac2","version":"0.1.0","game":"rac2","data_format":1}
+cargo dev -- --version-json               # {"name":"rerac","version":"0.1.0","game":"rac2","data_format":1}
 ```
 
 The data folder is chosen in this order:

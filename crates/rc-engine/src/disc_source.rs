@@ -28,9 +28,10 @@ pub const EXIT_NO_DATA: i32 = 3;
 /// Exit code: the data folder was written for another `data_format` (or its `extract-info.json` is unreadable).
 pub const EXIT_DATA_FORMAT: i32 = 4;
 
-/// The launcher contract's `--version-json` line.
+/// The launcher contract's `--version-json` line. `name` is the contract's project identifier (`rerac` for every
+/// ReRAC game; the launcher refuses another), `game` says which game this runtime is.
 pub fn version_json() -> String {
-    format!(r#"{{"name":"rerac2","version":"{}","game":"rac2","data_format":{DATA_FORMAT}}}"#, env!("CARGO_PKG_VERSION"))
+    format!(r#"{{"name":"rerac","version":"{}","game":"rac2","data_format":{DATA_FORMAT}}}"#, env!("CARGO_PKG_VERSION"))
 }
 
 /// Which rule chose the data root.
@@ -193,7 +194,7 @@ mod tests {
     #[test]
     fn version_json_is_the_contract_line() {
         let v = version_json();
-        assert_eq!(v, format!(r#"{{"name":"rerac2","version":"{}","game":"rac2","data_format":1}}"#, env!("CARGO_PKG_VERSION")));
+        assert_eq!(v, format!(r#"{{"name":"rerac","version":"{}","game":"rac2","data_format":1}}"#, env!("CARGO_PKG_VERSION")));
         assert_eq!(json_uint(&v, "data_format"), Some(1));
         assert_eq!(json_str(&v, "game"), Some("rac2"));
     }

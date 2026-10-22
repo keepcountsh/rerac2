@@ -8,7 +8,7 @@ All of them work the same under `cargo dev` (`cargo dev -- <options>`) and on a 
 | Option | Effect |
 |---|---|
 | `--data-dir <folder>` (also `--data-dir=<folder>`) | The game data folder; how the launcher starts the game. Selection order and exit codes: `docs/workflows/game-data.md` "How the engine finds its data" |
-| `--version-json` | Prints the launcher contract line (`{"name":"rerac2","version":"0.1.0","game":"rac2","data_format":1}`) and exits without touching any data |
+| `--version-json` | Prints the launcher contract line (`{"name":"rerac","version":"0.1.0","game":"rac2","data_format":1}`) and exits without touching any data |
 
 ## Settings file
 

@@ -6,7 +6,7 @@
 //! target folder, and ranks each unit (one `.fingerprint/<name>-<hash>` folder with its `deps/`, `build/` and profile
 //! files) by the newest access time (atime) of its fingerprint files, which cargo reads on every build that uses the
 //! unit. It never removes `incremental/` (not tracked by fingerprints) or files without a unit hash (the final
-//! `target/debug/rerac`, `libbevy_dylib.dylib`); `cargo clean` is the full reset.
+//! `target/debug/rerac2`, `libbevy_dylib.dylib`); `cargo clean` is the full reset.
 //!
 //! Safety: it refuses while any other `cargo`, `rustc` or `cargo-nextest` process runs (it must never delete files
 //! under a running build); the `cargo` that runs this xtask (an ancestor process) does not count. Without cargo-sweep

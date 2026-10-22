@@ -63,7 +63,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Release build of rerac + rerac-extract, then the allow-listed folder and its zip in dist/ (tools/package).
+      # Release build of rerac2 + rerac2-extract, then the allow-listed folder and its zip in dist/ (tools/package).
       # The script directly, not `cargo xtask package`: on Windows a bare `bash` can resolve to WSL's.
       - name: Package
         run: bash tools/package/package.sh
@@ -71,7 +71,7 @@ jobs:
       - name: Find the package
         id: pkg
         run: |
-          zip="$(ls dist/rerac-*.zip)"
+          zip="$(ls dist/rerac2-*.zip)"
           dir="${zip%.zip}"
           version="$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$dir/rerac-manifest.json")"
           ls -l "$zip" "$dir" "$dir/assets/shaders"
@@ -88,7 +88,7 @@ jobs:
       - name: Upload the package (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: rerac-package-${{ matrix.platform }}
+          name: rerac2-package-${{ matrix.platform }}
           path: |
             ${{ steps.pkg.outputs.zip }}
             ${{ steps.pkg.outputs.manifest }}
@@ -111,15 +111,15 @@ jobs:
       - name: Collect the packages
         id: assets
         run: |
-          mac="$(ls packages/rerac-package-macos-14/*macos-arm64.zip 2>/dev/null || true)"
+          mac="$(ls packages/rerac2-package-macos-14/*macos-arm64.zip 2>/dev/null || true)"
           if [ -z "$mac" ]; then
             echo "::error::The macOS package is missing; nothing is released."
             exit 1
           fi
-          files="$mac $(ls packages/rerac-package-macos-14/*/rerac-manifest.json)"
-          win="$(ls packages/rerac-package-windows-latest/*windows-x86_64.zip 2>/dev/null || true)"
+          files="$mac $(ls packages/rerac2-package-macos-14/*/rerac-manifest.json)"
+          win="$(ls packages/rerac2-package-windows-latest/*windows-x86_64.zip 2>/dev/null || true)"
           if [ -n "$win" ]; then files="$files $win"; else echo "::warning::No Windows package in this release."; fi
-          linux="$(ls packages/rerac-package-ubuntu-22.04/*linux-x86_64.zip 2>/dev/null || true)"
+          linux="$(ls packages/rerac2-package-ubuntu-22.04/*linux-x86_64.zip 2>/dev/null || true)"
           if [ -n "$linux" ]; then files="$files $linux"; else echo "::warning::No Linux package in this release."; fi
           echo "files=$files" >> "$GITHUB_OUTPUT"
 
@@ -144,11 +144,12 @@ jobs:
             gh release upload "$TAG" $FILES --clobber
             gh release edit "$TAG" --notes-file notes.md $pre
           else
-            gh release create "$TAG" $FILES --verify-tag --title "ReRAC $TAG" --notes-file notes.md $pre
+            gh release create "$TAG" $FILES --verify-tag --title "ReRAC2 $TAG" --notes-file notes.md $pre
           fi
 
-      # Optional: tell the site (re-rac/re-rac.github.io) to rebuild. Runs only when the repository secret
-      # SITE_DISPATCH_TOKEN exists (a token allowed to create repository_dispatch events on the site repo).
+      # Optional: tell the site (re-rac/re-rac.github.io) to rebuild. Runs only when this repository has the secret
+      # SITE_DISPATCH_TOKEN (a token allowed to create repository_dispatch events on the site repo); the payload names
+      # this repository, so the site can tell the games apart.
       - name: Notify the site
         if: env.SITE_DISPATCH_TOKEN != ''
         run: |

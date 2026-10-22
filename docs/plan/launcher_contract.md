@@ -7,6 +7,20 @@ something, the addition is optional for the launcher to use.
 
 Background and the decisions behind it: `docs/plan/launcher_extractor.md`, `docs/plan/decisions.md`.
 
+## This game's values
+
+The contract was written with R&C1's values as its examples. Going Commando fills it in like this:
+
+- **Manifest:** `{"schema":1,"name":"rerac","version":"<version>","game":"rac2","runtime":"rerac2","extractor":"rerac2-extract","supported_discs":["SCUS_972.68"],"data_format":1}`
+  (on Windows `rerac2.exe` and `rerac2-extract.exe`). The file name
+  `rerac-manifest.json` and `"name":"rerac"` are the contract's identifiers for every ReRAC game; the launcher refuses
+  another name.
+- **`--version-json`:** `{"name":"rerac","version":"<version>","game":"rac2","data_format":1}`.
+- **Extractor:** `rerac2-extract` with `identify`, `extract`, `verify` (and the developer's `table`); `extract` copies
+  the disc's files as they are (`RC2.HDR`, `G/*.WAD`, the boot ELF). No `--ntsc-only`, no `prepare` / `export` (the
+  clarifications below that describe them are R&C1's). The game data folder is `games/rac2/data/`.
+- **Launcher side, not done yet:** it installs only `rac1` builds and reads official releases from `re-rac/rerac`.
+
 ## Contract (verbatim)
 
 ## Launcher ↔ game contract v0 (the orchestrator's spec; the launcher and the game repo both implement exactly this)

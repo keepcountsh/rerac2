@@ -191,7 +191,7 @@ fn ms(d: Duration) -> f64 { d.as_secs_f64() * 1e3 }
 
 /// The shader folder: `assets/` next to the executable (a packaged version, `tools/package`), or
 /// `../Resources/assets` inside a macOS `.app`; otherwise the repo's `crates/rc-engine/assets` (`cargo dev`,
-/// `target/*/rerac`). The executable path is resolved through symlinks first, so a symlinked binary finds the
+/// `target/*/rerac2`). The executable path is resolved through symlinks first, so a symlinked binary finds the
 /// folder beside its real file.
 pub(crate) fn asset_dir() -> String {
     let exe = std::env::current_exe().and_then(std::fs::canonicalize).ok();
