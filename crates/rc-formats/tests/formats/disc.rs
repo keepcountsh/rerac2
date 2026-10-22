@@ -115,3 +115,21 @@ fn menu_tables_relocate_across_levels() {
     assert_eq!((lancer.icon, lancer.max_ammo, lancer.uses_ammo), (0xea64, 200, true));
     assert_eq!(m1.items[0x1e], lancer);
 }
+
+#[test]
+fn item_pictures_decode() {
+    let (Some(hdr), Some(hud)) = (read("RC2.HDR"), read("G/HUD.WAD")) else { eprintln!("skipped: no disc data"); return };
+    let toc = Toc::parse(&hdr).unwrap();
+    let mut n = 0;
+    use rc_formats::disc::toc::PictureTable;
+    for (t, i) in PictureTable::ALL.into_iter().flat_map(|t| (0..t.rows()).map(move |i| (t, i))) {
+        let Some(part) = toc.item_picture(t, i).unwrap() else { continue };
+        let r = part.bytes();
+        let p = rc_formats::disc::item_picture::parse(&hud[r.start..r.end.min(hud.len())]).unwrap();
+        if let Ok(dir) = std::env::var("RC_DUMP_DIR") {
+            std::fs::write(format!("{dir}/item_picture_{t:?}_{i}_{}x{}.rgba", p.width, p.height), &p.rgba).unwrap();
+        }
+        n += 1;
+    }
+    assert_eq!(n, 74);
+}

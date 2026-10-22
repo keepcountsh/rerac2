@@ -486,7 +486,7 @@ fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut me
     let icon = |id: u16, f: u16| icons.get(&(id, f)).map(|&(i, s)| (gui::Tex::Slot(i), s));
     // A loaded save's level loading: black.
     let quads = if r.level.is_some() { let mut q = Vec::new(); gui::fill(&mut q, [0, 0, 0, 0x80]); q } else { {
-        let view = card.as_deref().map(|c| menus::View { card: &c.mc, save: &c.save, port: &r.port, option_rows: &r.data.option_rows, tables: &rc_formats::disc::menu_tables::EMPTY });
+        let view = card.as_deref().map(|c| menus::View { card: &c.mc, save: &c.save, port: &r.port, option_rows: &r.data.option_rows, tables: &rc_formats::disc::menu_tables::EMPTY, picture: None });
         r.front.draw(&r.data.assets, view.as_ref(), &icon)
     } };
     for q in quads {
@@ -496,6 +496,7 @@ fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut me
             gui::Tex::Picture(gui::Picture::Splash(i)) => (Tex::Frame(SPLASH0 + i), true),
             gui::Tex::Picture(gui::Picture::Backdrop) => (Tex::Frame(BACKDROP), true),
             gui::Tex::Picture(gui::Picture::Movie) => (Tex::Frame(MOVIE), true),
+            gui::Tex::Picture(gui::Picture::Item) => (Tex::None, false),
         };
         d.screen_prim(tex, q.pos, q.uv, u32::from_le_bytes(q.rgba), false);
         if nearest { if let Some(p) = d.prims.last_mut() { p.nearest = true; } }

@@ -38,6 +38,7 @@ use crate::memcard::{status, MemCard, Preview, TYPE_PS2};
 use crate::save::{self, SaveData, Scope};
 use port::{PortValues, Setting, ENTRIES};
 use rc_formats::disc::menu_tables::{Grid, MenuTables};
+use rc_formats::disc::toc::PictureTable;
 use rc_formats::disc::boot::MenuRow;
 
 /// Pad bits (`0x138344`).
@@ -200,6 +201,8 @@ mod gadgets {
     pub const SELECTION: u32 = 0x5e;
     /// "Gadgets" and the labels (centred).
     pub const TITLE: (u32, [f32; 2]) = (0x2be8, [-156.0, -182.0]);
+    /// The picture's box (the page's rect 4).
+    pub const PICTURE: [f32; 4] = [243.0, 53.0, 234.0, 173.0];
     pub const LABELS: [(u32, [f32; 2]); 5] = [(0x2be5, [30.0, 52.0]), (0x2bf1, [170.0, 52.0]), (0x2bed, [-117.0, -142.0]), (0x2bee, [-117.0, -8.0]), (0x2bf0, [-117.0, 82.0])];
     const STEP: [f32; 2] = [54.0, 46.0];
     const NAME: [f32; 2] = [105.0, 25.0];
@@ -248,6 +251,12 @@ mod items {
     /// By counter: its description / title, its lines' labels. 0 the platinum bolts (found, spent, left).
     pub const COUNTER_TEXT: [u32; 4] = [0x333e, 0x333c, 0x333b, 0x333a];
     pub const LABELS: [u32; 3] = [0x2c51, 0x2c52, 0x2c53];
+    /// The description panel's box (the page's rect 3, its corner and size) and the counters' texts (`0x1ae578`).
+    pub const DESCRIPTION: [i32; 4] = [32, 231, 200, 150];
+    pub const COUNTER_DESCRIPTIONS: [u32; 4] = [0x2f48, 0x2f49, 0x2f4a, 0x2f4b];
+    /// The counters' pictures (`0x1ae588`).
+    pub const COUNTER_PICTURES: [u16; 4] = [0x13, 0x14, 0x12, 0x11];
+    pub const PICTURE: [f32; 4] = [244.0, 53.0, 235.0, 174.0];
 }
 
 /// The Weapons page's layout (`0x1ae810`.., `0x1aea40`..): the page's sprites at (250, 207), a cell's sprite, frame
@@ -286,6 +295,8 @@ mod weapons {
     pub const TITLE: u32 = 0x2be7;
     pub const AMMO: u32 = 0x2c5f;
     pub const NO_AMMO: u32 = 0x2c4f;
+    /// The picture's box (the page's rect 10).
+    pub const PICTURE: [f32; 4] = [247.0, 23.0, 230.0, 176.0];
     pub const COLS: usize = 4;
     pub const ROWS: usize = 6;
 }
@@ -595,6 +606,10 @@ pub struct Menus {
     /// The Items page's section (`+0x4b8`, the counters first) and cell (`+0x4ac` column, `+0x4b0` row).
     items_section: usize,
     items_cell: [usize; 2],
+    /// The Items page's description (`0x43b2b0`'s text) and its scroll (`+0x3c`, 1/16 pixels; it starts half the box
+    /// low when a new text has to scroll).
+    description: u32,
+    description_scroll: i32,
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -651,6 +666,8 @@ impl Menus {
             gadget_cell: [0, 0],
             items_section: 3,
             items_cell: [0, 0],
+            description: 0,
+            description_scroll: 0,
         }
     }
 
@@ -759,7 +776,10 @@ impl Menus {
             Page::Sound | Page::Camera | Page::Controls => self.setting_tick(pressed, cx, &mut out),
             Page::Weapons => self.weapons_tick(pressed, cx, &mut out),
             Page::Gadgets => self.gadgets_tick(pressed, cx, &mut out),
-            Page::Items => self.items_tick(pressed, &mut out),
+            Page::Items => {
+                self.items_tick(pressed, &mut out);
+                self.description_tick(cx);
+            }
         }
         out
     }
@@ -1092,6 +1112,90 @@ impl Menus {
             }
             (3, pad::RIGHT) => *c ^= 1,
             _ => {}
+        }
+    }
+
+    /// The item picture the page shows (`0x347aa0`: the picture panel's row `gp−0x11c0`, set by the page's update): the
+    /// selected item's when had (its record's `−0x0a`), on the Items page's counters the counter's (`0x1ae588`).
+    pub fn picture(&self, v: &View) -> Option<(PictureTable, u16)> {
+        let of = |item: i32| (0 < item && had(v.save, item)).then(|| record(v.tables, v.save, item)).flatten().and_then(|r| u16::try_from(r.picture).ok());
+        let cell = |g: Grid, k: usize| v.tables.grid(g).get(k).map_or(0, |c| c.item as i32);
+        match self.page {
+            Page::Weapons => {
+                let [c, r] = self.weapon_cell;
+                Some((PictureTable::Weapons, of(cell(Grid::Weapons, c + r * weapons::COLS))?))
+            }
+            Page::Gadgets => {
+                let [c, r] = self.gadget_cell;
+                let s = gadgets::spec(self.gadget_section);
+                Some((PictureTable::Gadgets, of(cell(s.grid, c + r * s.cols))?))
+            }
+            Page::Items => {
+                let [c, r] = self.items_cell;
+                let s = items::SPECS[self.items_section];
+                let row = if self.items_section == 3 { items::COUNTER_PICTURES[c + r * 2] } else { of(cell(s.grid, c + r * s.cols))? };
+                Some((PictureTable::Items, row))
+            }
+            _ => None,
+        }
+    }
+
+    /// The picture panel's box on the page (`0x354f70`, the page's rect: Weapons 10, Gadgets and Items 4), drawn
+    /// when the engine has the page's picture (`0x347aa0` keeps the panel hidden until it is loaded).
+    fn draw_picture(&self, out: &mut Vec<Quad>, v: &View, [x, y, w, h]: [f32; 4]) {
+        let Some(p) = self.picture(v) else { return };
+        if v.picture != Some(p) { return; }
+        out.push(Quad { pos: [[x, y], [x + w, y], [x, y + h], [x + w, y + h]], uv: [[0.0, 0.0], [256.0, 0.0], [0.0, 256.0], [256.0, 256.0]], tex: Tex::Picture(gui::Picture::Item), rgba: [0x80; 4] });
+    }
+
+    /// The Items page's selected cell's item (`+0x4b4`); in the counters, the counter.
+    fn items_current(&self, tables: &MenuTables) -> i32 {
+        let [c, r] = self.items_cell;
+        let s = items::SPECS[self.items_section];
+        if self.items_section == 3 { (c + r * 2) as i32 } else { tables.grid(s.grid).get(c + r * s.cols).map_or(0, |g| g.item as i32) }
+    }
+
+    /// `0x43b2b0`: the description's text: the item's record's `+0x32` when had (item 7 not had: item 0x31's when
+    /// that is), a counter's (`0x1ae578`).
+    fn items_description(&self, tables: &MenuTables, save: &SaveData) -> u32 {
+        let current = self.items_current(tables);
+        if self.items_section == 3 { return items::COUNTER_DESCRIPTIONS[current as usize & 3]; }
+        let item = if self.items_section == 2 && current == 7 && had(save, 0x31) && !had(save, 7) { 0x31 } else { current };
+        if 0 < item && had(save, item) { record(tables, save, item).map_or(0, |r| r.description.max(0) as u32) } else { 0 }
+    }
+
+    /// The description's scroll (`0x346ee0`): 3/16 of a pixel a frame (10 with L1 L2 R1 R2 held); a new text starts
+    /// over ([`Menus::draw_description`] keeps it at 0 for a text that fits).
+    fn description_tick(&mut self, cx: &Ctx) {
+        let d = self.items_description(cx.tables, cx.save);
+        if d != self.description {
+            self.description = d;
+            self.description_scroll = -(items::DESCRIPTION[3] as i32) * 8;
+        } else {
+            self.description_scroll += if cx.held & 0xf == 0xf { 10 } else { 3 };
+        }
+    }
+
+    /// The Items page's description panel (`0x346ee0`, flags 0x114: the text id the page gives, font 2): the text
+    /// wrapped in the box, scrolling up (and again 0x30 below its end) when it does not fit.
+    fn draw_description(&self, out: &mut Vec<Quad>, a: &Assets) {
+        if self.description == 0 { return; }
+        let [x, y, w, h] = items::DESCRIPTION;
+        let t = a.strings.get(self.description);
+        let mut b = gui::TextBox { top: y, bottom: y + h, left: x, right: x + w - 4, x, y, line: 16, flags: gui::text_box::MEASURE, ..Default::default() };
+        gui::text_in_box(out, &a.glyphs_2, 2, &mut b, t, [0; 4]);
+        let height = b.height;
+        b.flags = 0;
+        let colour = gui::rgba(0x80f0_f0f0);
+        if height + 4 < h {
+            gui::text_in_box(out, &a.glyphs_2, 2, &mut b, t, colour);
+            return;
+        }
+        let period = (height + 0x30) * 16;
+        let s = if self.description_scroll < 0 { self.description_scroll } else { self.description_scroll % period };
+        for y0 in [y - (s >> 4), y - (s >> 4) + height + 0x30] {
+            b.y = y0;
+            gui::text_in_box(out, &a.glyphs_2, 2, &mut b, t, colour);
         }
     }
 
@@ -1670,7 +1774,7 @@ impl Menus {
         for r in 0..ROWS {
             for c in 0..COLS {
                 let item = v.tables.grid(Grid::Weapons).get(c + r * COLS).map_or(0, |g| g.item as i32);
-                let rec = record(v, item);
+                let rec = record(v.tables, v.save, item);
                 let (cf, rf) = (c as f32, r as f32);
                 let cell = at([CELL_AT[0] + STEP[0] * cf, CELL_AT[1] + STEP[1] * rf]);
                 let have = 0 < item && had(v.save, item);
@@ -1713,7 +1817,7 @@ impl Menus {
         };
         centred(out, a.strings.get(TITLE), at(TITLE_AT));
         let item = v.tables.grid(Grid::Weapons).get(c + r * COLS).map_or(0, |g| g.item as i32);
-        let rec = record(v, item);
+        let rec = record(v.tables, v.save, item);
         if let (true, Some(rec)) = (0 < item && had(v.save, item), rec) {
             centred(out, a.strings.get(rec.name), at(NAME_AT));
             let line = if rec.uses_ammo {
@@ -1723,6 +1827,7 @@ impl Menus {
             };
             centred(out, &line, at(AMMO_AT));
         }
+        self.draw_picture(out, v, PICTURE);
     }
 
     /// The Gadgets page (`0x43d568`): the page's sprites, the title, the three grids, the selection in the section
@@ -1745,6 +1850,7 @@ impl Menus {
         }
         if let Some(s) = a.sprites.get(&SELECTION) { gui::sprite(out, s, spec.frame(AT, c, r), 0.0, [1.0, 1.0], self.pulse_colour()); }
         for (id, o) in LABELS { centred(out, a.strings.get(id), o); }
+        self.draw_picture(out, v, PICTURE);
     }
 
     /// The Items page (`0x43c2d8`): the page's sprites, the title and "Exit", the four grids, the counters' panel
@@ -1765,8 +1871,7 @@ impl Menus {
         let s = self.items_section;
         let [c, r] = self.items_cell;
         let spec = SPECS[s];
-        // `+0x4b4`: the selected cell's item; in the counters, the counter.
-        let current = if s == 3 { (c + r * 2) as i32 } else { v.tables.grid(spec.grid).get(c + r * spec.cols).map_or(0, |g| g.item as i32) };
+        let current = self.items_current(v.tables);
         for g in SPECS {
             self.draw_grid(out, a, v, icon, g, AT, FRAME, current);
         }
@@ -1794,6 +1899,8 @@ impl Menus {
             gui::rect(out, by + y0, by + y1, bx + x0, bx + x1, gui::rgba(0x55f0_c070));
         }
         if let Some(sp) = a.sprites.get(&SELECTION) { gui::sprite(out, sp, spec.frame(AT, c, r), 0.0, [1.0, 1.0], self.pulse_colour()); }
+        self.draw_description(out, a);
+        self.draw_picture(out, v, PICTURE);
     }
 
     /// The grid drawer (`0x42e0c8`) for the pages without upgrade bars: per cell not left out, a plain icon (kind 2)
@@ -1822,14 +1929,14 @@ impl Menus {
                     let shown = if cell.icon == 0xea85 {
                         Some(0xea85)
                     } else if item == 7 {
-                        if had(v.save, 7) { Some(0xea9a) } else { record(v, 0x31).map(|r| r.icon) }
+                        if had(v.save, 7) { Some(0xea9a) } else { record(v.tables, v.save, 0x31).map(|r| r.icon) }
                     } else {
-                        record(v, item).map(|r| r.icon)
+                        record(v.tables, v.save, item).map(|r| r.icon)
                     };
                     if let Some(id) = shown { put(id, 0); }
                     if spec.slot != 2 && self.equipped(v.save, spec.slot) == item { colour = 0x80ff_de8d; }
                     if item == current && shown.is_some() {
-                        if let Some(rec) = record(v, item) {
+                        if let Some(rec) = record(v.tables, v.save, item) {
                             let t = a.strings.get(rec.name);
                             let w = gui::text_width(&a.glyphs, t, 1.0);
                             gui::text(out, &a.glyphs, 1, t, base[0] + spec.name_at[0] - (w >> 1) as f32, base[1] + spec.name_at[1], 1.0, gui::rgba(0x80f0_f0f0));
@@ -2095,10 +2202,10 @@ fn had(save: &SaveData, item: i32) -> bool { save.u8(Scope::Global, 0x1a7b00 + i
 fn ammo(save: &SaveData, item: i32) -> i32 { save.i32(Scope::Global, 0x139688 + 4 * item as u32) }
 
 /// Item `item`'s record: its row `0x139568[item]` (an upgrade moves it; a save without the table: the item's own).
-fn record<'a>(v: &View<'a>, item: i32) -> Option<&'a rc_formats::disc::menu_tables::ItemRecord> {
+fn record<'a>(tables: &'a MenuTables, save: &SaveData, item: i32) -> Option<&'a rc_formats::disc::menu_tables::ItemRecord> {
     let i = u32::try_from(item).ok()?;
-    let row = v.save.bytes(Scope::Global, 0x139568 + i, 1).map_or(0, |b| b[0]);
-    v.tables.items.get(if row == 0 { i as usize } else { row as usize })
+    let row = save.bytes(Scope::Global, 0x139568 + i, 1).map_or(0, |b| b[0]);
+    tables.items.get(if row == 0 { i as usize } else { row as usize })
 }
 
 /// `0x327c68`: the platinum bolts found, 4 a level (`0x19b278 + 4·level`, one byte each; level 2 another 4 at
@@ -2125,6 +2232,8 @@ pub struct View<'a> {
     pub port: &'a PortValues,
     pub option_rows: &'a [OptionRow],
     pub tables: &'a MenuTables,
+    /// The item picture in [`gui::Picture::Item`] now ([`Menus::picture`]'s, once the engine has it).
+    pub picture: Option<(PictureTable, u16)>,
 }
 
 /// A toggle page's state: 16:9 is the port's aspect being wide; the others their option byte.

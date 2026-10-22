@@ -62,8 +62,12 @@ pub struct ItemRecord {
     pub class: u8,
     /// `−0x08`: its name (text id).
     pub name: u32,
+    /// `−0x0a`: its picture on the pause pages (the page's [`crate::disc::toc::PictureTable`] row; < 0: none).
+    pub picture: i16,
     /// `+0x2c`: its icon (GUI image id; 0xea7e: none).
     pub icon: u16,
+    /// `+0x32`: its description on the Items page (text id; 0: none).
+    pub description: i16,
     /// `+0x3a`: the next upgrade's row (0: none).
     pub next: i16,
     /// `+0x5c`: the experience the upgrade takes (< 1: none).
@@ -97,7 +101,9 @@ impl MenuTables {
                 out.items.push(ItemRecord {
                     class: t.read(b - 0x0c, 1).map_or(0, |x| x[0]),
                     name: i32_at(b - 0x08).unwrap_or(0) as u32,
+                    picture: i16_at(b - 0x0a).unwrap_or(-1),
                     icon: icon as u16,
+                    description: i16_at(b + 0x32).unwrap_or(0),
                     next: i16_at(b + 0x3a).unwrap_or(0),
                     xp_max: i32_at(b + 0x5c).unwrap_or(0),
                     uses_ammo: i16_at(b + 0x78).unwrap_or(0) != 0,

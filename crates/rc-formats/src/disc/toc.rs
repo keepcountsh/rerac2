@@ -15,6 +15,32 @@ pub const MISC_FRONT_END: usize = 4;
 /// The GUI sprite block's `{sector, sectors}` pair: `HUD` header + 0x1350 (`FUN_0034f308`: `0x14cbf8` / `0x14cbfc`).
 const HUD_GUI_BLOCK: usize = 0x1350;
 
+/// The pause pages' item pictures (the picture panel `0x3548f0`'s tables, `{sector, sectors}` pairs, sectors from
+/// `HUD.WAD`'s start `0x14b8ac`): per page, its table in the `HUD` header and its rows. An unused row has no sectors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PictureTable {
+    /// `0x14cea8`.
+    Gadgets,
+    /// `0x14cf08`.
+    Weapons,
+    /// `0x14d070`.
+    Items,
+}
+
+impl PictureTable {
+    pub const ALL: [PictureTable; 3] = [PictureTable::Gadgets, PictureTable::Weapons, PictureTable::Items];
+
+    fn table(self) -> (usize, usize) {
+        match self {
+            PictureTable::Gadgets => (0x1600, 12),
+            PictureTable::Weapons => (0x1660, 45),
+            PictureTable::Items => (0x17c8, 21),
+        }
+    }
+
+    pub fn rows(self) -> usize { self.table().1 }
+}
+
 /// The disc's movie files, back to back on the disc: a movie's sector counts from the first one's start.
 pub const MOVIE_FILES: [&str; 3] = ["G/MPEG.WAD", "G/MPEG1.WAD", "G/MPEG2.WAD"];
 
@@ -73,6 +99,17 @@ impl<'a> Toc<'a> {
     pub fn gui_block(&self) -> Result<Part> {
         let h = self.header(Global::Hud)?;
         Ok(Part { sector: h.u32(HUD_GUI_BLOCK)?, sectors: h.u32(HUD_GUI_BLOCK + 4)? })
+    }
+
+    /// Row `i` of item picture table `t` in `HUD.WAD` (a WAD stream of an [`crate::disc::item_picture`]); `None` past
+    /// the table or for an unused row.
+    pub fn item_picture(&self, t: PictureTable, i: usize) -> Result<Option<Part>> {
+        let h = self.header(Global::Hud)?;
+        let (at, rows) = t.table();
+        if rows <= i { return Ok(None); }
+        let o = at + i * 8;
+        let p = Part { sector: h.u32(o)?, sectors: h.u32(o + 4)? };
+        Ok((p.sectors > 0).then_some(p))
     }
 
     /// Movie row `row` (`FUN_002f6e10`: `0x14b550 + 16·row` = `{sector, bytes}`); `None` for an empty row.

@@ -185,6 +185,17 @@ pub fn read(root: &Path, rel: &str) -> Result<Vec<u8>> {
     std::fs::read(&p).with_context(|| format!("reading {}", p.display()))
 }
 
+/// Bytes `range` of `rel` (cut at the file's end).
+pub fn read_range(root: &Path, rel: &str, range: std::ops::Range<usize>) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let p = root.join(rel);
+    let mut f = std::fs::File::open(&p).with_context(|| format!("opening {}", p.display()))?;
+    f.seek(SeekFrom::Start(range.start as u64))?;
+    let mut out = Vec::with_capacity(range.len());
+    f.take(range.len() as u64).read_to_end(&mut out).with_context(|| format!("reading {}", p.display()))?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,6 +6,7 @@
 //! - [`front_end`]: the front-end blob (`MISC.WAD` part 4): splash screens, the menu backdrop, the texture set
 //!   (the font), the text tables.
 //! - [`gui_sprite`]: the GUI sprite block (`BE_H`, `HUD.WAD`): the menus' vector sprites.
+//! - [`item_picture`]: the pause pages' item pictures (`HUD.WAD`).
 //! - [`level`]: a level file `G/LEVELn.WAD` and its lumps; [`gameplay`]: its gameplay file.
 //! - [`armor`]: `ARMOR.WAD`, Ratchet's mesh and textures for level class 0.
 //! - [`scene`]: `SCENEn.WAD`, a level's in-engine scenes.
@@ -18,6 +19,7 @@ pub mod front_end;
 pub mod gadget;
 pub mod gameplay;
 pub mod gui_sprite;
+pub mod item_picture;
 pub mod level;
 pub mod menu_tables;
 pub mod save_game;

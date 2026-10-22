@@ -972,6 +972,63 @@ struct GameHud {
     fx: std::collections::HashMap<u16, (usize, [f32; 2])>,
     /// The level's pause tables (its item records, the Weapons grid).
     tables: rc_formats::disc::menu_tables::MenuTables,
+    pictures: ItemPictures,
+}
+
+/// The pause pages' item picture: one 256 × 256 texture of the layer the page's picture is read into when it changes
+/// (the picture panel `0x3548f0` streams it from `HUD.WAD` the same way).
+struct ItemPictures {
+    slot: usize,
+    shown: Option<(PictureTable, u16)>,
+    /// What the slot was last asked for (a failed read is not retried).
+    asked: Option<(PictureTable, u16)>,
+    parts: std::collections::HashMap<(PictureTable, u16), rc_formats::disc::toc::Part>,
+}
+
+use rc_formats::disc::toc::PictureTable;
+
+impl ItemPictures {
+    fn new(root: &std::path::Path, slot: usize) -> ItemPictures {
+        let mut parts = std::collections::HashMap::new();
+        match crate::disc_source::read(root, "RC2.HDR").map_err(anyhow::Error::from).and_then(|h| {
+            let t = rc_formats::disc::toc::Toc::parse(&h)?;
+            for p in PictureTable::ALL {
+                for i in 0..p.rows() {
+                    if let Some(part) = t.item_picture(p, i)? { parts.insert((p, i as u16), part); }
+                }
+            }
+            Ok(())
+        }) {
+            Ok(()) => {}
+            Err(e) => eprintln!("play: no item pictures ({e:#})"),
+        }
+        ItemPictures { slot, shown: None, asked: None, parts }
+    }
+
+    /// Picture `want` into the slot when it is not there yet.
+    fn show(&mut self, want: Option<(PictureTable, u16)>, layer: &crate::hud_render::Layer, images: &mut Assets<Image>) {
+        if want.is_none() || want == self.asked { return; }
+        self.asked = want;
+        let Some(&part) = want.and_then(|w| self.parts.get(&w)) else { return };
+        let read = || -> anyhow::Result<_> {
+            let raw = crate::disc_source::read_range(&crate::level_load::extracted_root(), "G/HUD.WAD", part.bytes())?;
+            Ok(rc_formats::disc::item_picture::parse(&raw)?)
+        };
+        match read() {
+            // A smaller picture (row 0's 128 × 128) fills the slot's corner.
+            Ok(p) if p.width <= 256 && p.height <= 256 => {
+                let mut rgba = vec![0u8; 256 * 256 * 4];
+                for y in 0..p.height as usize {
+                    let w = p.width as usize * 4;
+                    rgba[y * 1024..y * 1024 + w].copy_from_slice(&p.rgba[y * w..(y + 1) * w]);
+                }
+                layer.write(images, self.slot, &rgba);
+                self.shown = want;
+            }
+            Ok(p) => eprintln!("play: item picture {want:?} is {}×{}", p.width, p.height),
+            Err(e) => eprintln!("play: item picture {want:?} ({e:#})"),
+        }
+    }
 }
 
 /// Level `index`'s pause tables, found from Aranos's (rc_formats::disc::menu_tables); none on a failure.
@@ -993,7 +1050,7 @@ fn menu_tables(root: &std::path::Path, index: u32) -> rc_formats::disc::menu_tab
 fn draw_hud(
     mut commands: Commands,
     mut play: Option<ResMut<Play>>,
-    hud: Option<Res<GameHud>>,
+    hud: Option<ResMut<GameHud>>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<crate::hud_render::HudMaterial>>,
@@ -1005,7 +1062,7 @@ fn draw_hud(
     display: Res<crate::display::DisplaySettings>,
 ) {
     let Some(p) = play.as_mut() else { return };
-    let Some(hud) = hud else {
+    let Some(mut hud) = hud else {
         let root = crate::level_load::extracted_root();
         let data = match crate::front_end::Data::load(&root) {
             Ok(d) => d,
@@ -1046,11 +1103,14 @@ fn draw_hud(
             fx.insert(0x26u16, (textures.len(), [t.width as f32, t.height as f32]));
             textures.push(t.clone());
         }
+        // The pause pages' item picture.
+        let pictures = ItemPictures::new(&root, textures.len());
+        textures.push(rc_formats::texture::Texture { width: 256, height: 256, rgba: vec![0; 256 * 256 * 4] });
         // On the main camera's UI, as crate::hud_render's HUD is.
         let Some(cam) = flycams.iter().next() else { return };
         let scaling = crate::hud_render::scaling(crate::graphics::Hud::High);
         let layer = crate::hud_render::Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &textures, scaling, cam);
-        commands.insert_resource(GameHud { layer, data, icons, fx, tables });
+        commands.insert_resource(GameHud { layer, data, icons, fx, tables, pictures });
         return;
     };
     let p: &mut Play = p;
@@ -1060,7 +1120,10 @@ fn draw_hud(
         // The page loop's picture (`0x2ccc18`): the stopped game darkened, then the pages.
         rc_game::gui::fill(&mut quads, [0, 0, 0, 0x38]);
         let port = crate::port_options::values(&gfx, &display);
-        let view = rc_game::menus::View { card: &c.mc, save: &c.save, port: &port, option_rows: &[], tables: &hud.tables };
+        let want = m.picture(&rc_game::menus::View { card: &c.mc, save: &c.save, port: &port, option_rows: &[], tables: &hud.tables, picture: None });
+        let h = &mut *hud;
+        h.pictures.show(want, &h.layer, &mut images);
+        let view = rc_game::menus::View { card: &c.mc, save: &c.save, port: &port, option_rows: &[], tables: &hud.tables, picture: hud.pictures.shown };
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
         quads.extend(m.draw(hud.data.assets(), &view, &icon));
     } else if p.game.scenes.mode == rc_game::scene::MOVIE {
@@ -1099,6 +1162,7 @@ fn draw_hud(
         let (tex, nearest) = match q.tex {
             rc_game::gui::Tex::Slot(i) => (crate::hud_render::Tex::Frame(i), false),
             rc_game::gui::Tex::Picture(rc_game::gui::Picture::Movie) => (crate::hud_render::Tex::Frame(crate::front_end::MOVIE), true),
+            rc_game::gui::Tex::Picture(rc_game::gui::Picture::Item) => (crate::hud_render::Tex::Frame(hud.pictures.slot), false),
             _ => (crate::hud_render::Tex::None, false),
         };
         d.screen_prim(tex, q.pos, q.uv, u32::from_le_bytes(q.rgba), false);
