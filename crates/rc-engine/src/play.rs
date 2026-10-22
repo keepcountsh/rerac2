@@ -61,7 +61,6 @@ pub(crate) struct ReturnToFrontEnd;
 /// pages, Port Options, Quit Game).
 #[allow(clippy::too_many_arguments)]
 fn pause_tick(
-    mut commands: Commands,
     play: Option<ResMut<Play>>,
     card: Option<ResMut<crate::card::Card>>,
     mut gfx: ResMut<crate::graphics::GraphicsSettings>,
@@ -95,10 +94,9 @@ fn pause_tick(
                 p.pause = None;
             }
             Out::Quit => {
-                println!("play: Quit Game: back to the front end");
-                commands.insert_resource(ReturnToFrontEnd);
-                commands.remove_resource::<Play>();
-                commands.remove_resource::<Carry>();
+                // The Quit page's `0x2f50f8(−1, 0)`.
+                println!("play: Quit Game");
+                p.game.go_to_level(-1, false);
                 p.pause = None;
             }
             Out::NewGame | Out::Sound(_) => {}
@@ -166,6 +164,8 @@ pub(crate) struct Play {
     /// into the card's save data then, for the save page).
     pause: Option<rc_game::menus::Menus>,
     pause_opened: bool,
+    /// The death's fade to black, its frame (the game stopped; [`DEATH_FADE`] frames, then [`death_reset`]).
+    death_fade: Option<u32>,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -190,6 +190,7 @@ fn tick(
     mut change: ResMut<crate::level_switch::LevelChange>,
     mut audio: Option<ResMut<crate::audio_out::AudioOut>>,
     mut parts: Option<ResMut<crate::particle_render::ParticleSim>>,
+    mut card: Option<ResMut<crate::card::Card>>,
 ) {
     // The game drives the particles (crate::particles of rc_game on the shared pool; R&C1's own tick stays off).
 
@@ -252,8 +253,27 @@ fn tick(
     }
     // `0x2f50f8`: the level's main loop ends; the next level loads (crate::level_switch) and replaces this one.
     if let Some(to) = p.game.next_level.take() {
+        // `0x2f50f8(level, 1)`: the autosave `0x30d658(0, level)` (the card's active slot, auto-save on), the game
+        // stored with the next level standing in as its level.
+        if std::mem::take(&mut p.game.next_level_save) && 0 <= to {
+            if let Some(c) = card.as_deref_mut() {
+                p.game.store(&mut c.save);
+                let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
+                if c.mc.memcard_save(&mut c.save, false, to, clock) { println!("play: autosave for level {to}"); }
+            }
+        }
         if to < 0 {
-            eprintln!("play: the game asks for the front end (level {to}): not ported, the level goes on");
+            // The front end (Quit Game's request): the card's slot dropped, the game over.
+            println!("play: back to the front end");
+            if let Some(c) = card.as_deref_mut() {
+                c.mc.cards[0].slot = -1;
+                c.mc.checked = false;
+                c.mc.flags &= !0x200;
+            }
+            commands.insert_resource(ReturnToFrontEnd);
+            commands.remove_resource::<Play>();
+            commands.remove_resource::<Carry>();
+            return;
         } else if p.leaving.is_none() {
             println!("play: leaving level {} for level {to}", p.game.level);
             change.start_load(to as u32);
@@ -279,6 +299,18 @@ fn tick(
     // The pause: the game stops while its pages run ([`pause_tick`]); the frame count goes on (the pad script reads it).
     if p.pause.is_some() {
         p.ticks += 1;
+        return;
+    }
+    // The death (`0x2b31f0`): `0x2e7c90(16)` fades to black over 16 frames with the game stopped, then the level
+    // restarts from the checkpoint ([`death_reset`]).
+    if let Some(k) = p.death_fade {
+        p.ticks += 1;
+        if k + 1 < DEATH_FADE {
+            p.death_fade = Some(k + 1);
+        } else {
+            p.death_fade = None;
+            death_reset(p, &level.0);
+        }
         return;
     }
     p.game.frame += 1;
@@ -586,19 +618,27 @@ fn tick(
     // `0x2b31f0`'s respawn request: the level restarts from the checkpoint (the spawn points', else Ratchet's start):
     // the objects spawn again by their rules (the ones gone for good stay out), Ratchet there with full health. The
     // fade is not ported.
-    if p.hero.damage.dead {
-        let inst = &lv.mobys.instances[p.instance];
-        let armour = p.hero.damage.armour;
-        let (at, rot) = p.game.checkpoint.unwrap_or((inst.position, inst.rotation));
-        p.game.restart();
-        p.mobys = None;
-        p.hero = Hero::spawn(at, rot[2]);
-        p.hero.hp = p.game.max_health;
-        p.hero.damage.armour = armour;
-        p.anim = RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&lv.mobys.anim[p.class]) };
-        p.camera = FollowCamera::new(&cam_input(&p.hero, lv.collision.as_ref(), [0.0; 2]));
-        p.game.show_health = Some(0x168);
-    }
+    if p.hero.damage.dead && p.death_fade.is_none() { p.death_fade = Some(0); }
+}
+
+/// `0x2e7c90(0x10)`'s frames.
+const DEATH_FADE: u32 = 16;
+
+/// The death's restart (mode 0 with `0x18c0e1` set: `0x304660(0, 1)`, `0x32eb88`): the objects spawn again by their
+/// rules (the ones gone for good stay out), Ratchet at the checkpoint (the spawn points', else his start) with full
+/// health; the game keeps the rest (bolts, items, ammo).
+fn death_reset(p: &mut Play, lv: &crate::level_load::LoadedLevel) {
+    let inst = &lv.mobys.instances[p.instance];
+    let armour = p.hero.damage.armour;
+    let (at, rot) = p.game.checkpoint.unwrap_or((inst.position, inst.rotation));
+    p.game.restart();
+    p.mobys = None;
+    p.hero = Hero::spawn(at, rot[2]);
+    p.hero.hp = p.game.max_health;
+    p.hero.damage.armour = armour;
+    p.anim = RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&lv.mobys.anim[p.class]) };
+    p.camera = FollowCamera::new(&cam_input(&p.hero, lv.collision.as_ref(), [0.0; 2]));
+    p.game.show_health = Some(0x168);
 }
 
 /// `0x32c858`'s changes (rc_game::scene): a scene's end and start, a movie's start.
@@ -992,6 +1032,10 @@ fn draw_hud(
             quads.push(rc_game::gui::Quad { pos: [[0.0, y0], [w, y0], [0.0, y1], [w, y1]], uv: [[0.0; 2]; 4], tex: rc_game::gui::Tex::None, rgba: [0, 0, 0, 0x80] });
         }
     }
+    // The death's fade (`0x2e7c90(16)`: frame i of 16 drawn black at alpha `0x80 − (15 − i)·0x80/16`).
+    if let Some(k) = p.death_fade {
+        rc_game::gui::fill(&mut quads, [0, 0, 0, (0x80 - (DEATH_FADE - 1 - k) * 0x80 / DEATH_FADE) as u8]);
+    }
     // The fade into and out of a scene (`0x1b1860`, 1 black).
     let fade = p.game.scenes.fade.clamp(0.0, 1.0);
     if 0.0 < fade { rc_game::gui::fill(&mut quads, [0, 0, 0, (fade * 128.0) as u8]); }
@@ -1247,7 +1291,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
-        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false,
+        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None,
         help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
