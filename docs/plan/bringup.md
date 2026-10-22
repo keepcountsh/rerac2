@@ -440,3 +440,58 @@ sounds and its movies' audio, the help voice.
   = 0x18).
 * Open from the user's list: the moby / tie lighting (the hull's sheen; milestone D), the background mountains
   in the arrival (not looked at yet).
+
+## 7. Saves, the menus' pages (milestone I, started 2026-10-22)
+
+**The save format** (`rc_formats::disc::save_game`, R&C1's with Going Commando's tables): descriptor tables at boot
+`0x2560b8` (global, 34 chunks, section 0x1cf8 bytes) and `0x2562e8` (per level, 10 chunks, 0xcd0); a `save%d.bin` is
+the 8-byte header, the global section and 28 level sections (0x183c0 bytes); R&C1's CRC-16 with the global section's
+size as its limit (`0x29bca0`). The save blob is `MISC.WAD` part 2 (`[0]` icon.sys 0x3c4 bytes, `[2]`/`[3]`
+static.ico, `[4]` the blank save). Chunk addresses: crate::save (rc-game) lists the typed ones.
+
+**The card** (`rc_game::memcard`): machine `0x299cf0` (state `0x13953c`, substate `0x139540`, request
+`0x139544`/`0x139548`, error `0x13954c`/`0x139550`, busy `0x139534`, checked `0x13955c`, save card `0x139528`;
+the card record `0x1393e0`, 0xa0 per port, 2 ports polled); monitor `0x298f20` (status `0x1a7420`, flags
+`0x1a7424`, handlers `0x256050`, defined in Ghidra as `mc_status_NN`; status 22 = the check after a create, 25 = an
+auto-save `0x2997c8`); `memcard_Save` `0x29c1d0` (clock `0x1a7360`, map pack `0x297fa0`, previews, PrepData
+`0x29bd88`, request 0xf). The card folder `BASCUS-97268RATCHET` (`0x299998`): icon.sys, static.ico, save0..3 and the
+reservation (0xd804 bytes from RAM 0x1a79f8); the check wants exactly these 9 entries and 0x1da..0x1db KB. States
+0x18..0x1b scan R&C1's saves (`BASCUS-97199RATCHET` etc., 5 slots) and set the bonus bits `0x1a7a28` from R&C1's
+chunk 10. Front-end flags: `0x1a8c88` (the front end is up), `0x1a8c8c` (its card check page is running).
+
+**The menus' pages** (mode 3, `0x2cac28(kind)`, the page from the kind in `0x2cb038`): kind 1 `0x259308`, 2
+`0x25a170`, 4 `0x25e468`, 5 `0x261218` (sets `0x1a8c8c`), 6 the main menu `0x259438`, 8 `0x258ff8`, 10
+`0x25a718`, 0xb = 5 with `0x2d6b00(0x1aa4d0)`. The current page `0x1f27d4`, the next `0x1f27d8`; `0x2d67a0(4, page)`
+pushes a page. The New Game slot page `0x260ec8` (in the front end; `0x25da18` in a level) has the panel update
+`0x2dd888`: slots 0..3 (`0x1a7c10`, Up / Down, sounds 3 / 4), an empty slot (preview level −1) is taken at once
+(`0x2df668`), a used one asks first (page `0x25e850`, the slot in `0x25e9c0`); the card status picks the dialog
+(`0x2b58f8(4, …)`). Pad bits: `0x138344` pressed, `0x138334` repeat.
+
+**The page loop** (mode 3 sub-state `0x1f27c0`: 1 set up `0x2cb038`, 3 fade (darken 0x38) into the next page, 4 run
+`0x2cbab8`, 5 leave `0x2cbd68`). A page: 14 panel rectangles `{x, y, w, h}` (0xe0 bytes), `+0xe0` the parent page
+(△), `+0xe8` the focused panel, `+0xec` 14 panel pointers, `+0x128` a pending focus. A panel (0x50 bytes):
+`{update, draw, open, close, flags (+0x30), …, +0x40 the selection, +0x48 its buffer, +0x4c its state}`. Running a
+page: on entry every panel's open(p, 0); each frame every panel's update (non-zero ends the menu: exit code
+`0x1f27dc` = 1, or 2 for kind 4); a pending focus closes the old focused panel (p, 1) and opens the new; a next page
+(`0x1f27d8`) plays sound 0x11 (the same page) or 0x12, closes every panel and fades. Leaving picks the next mode by
+the exit code (`0x2b58f8(mode, …)`: 4 the card dialog, 6 a level load).
+
+**Pages of the front end**: New Game `0x260ec8` (panels: title `0x1ab098`, slots `0x260ff8`, `0x25dc78`, `0x261048`,
+footer `0x25dd70`), Load `0x260d98` (title `0x1ab068`, slots `0x25dd20`, `0x25dc78`, footer). The slot panels share
+draw `0x2de768`, open `0x2dd7e8` (`0x2df368(0)` its buffer, state 0), close `0x2dd858`; the in-level save page's
+slot panel is `0x2dd888` (page `0x25e468`, kind 4). Pad bits (`0x138344` pressed, `0x138334` repeat when the panel's
+flag 1): 0x10 △, 0x20 ○, 0x40 ✕, 0x80 □, 0x100 select, 0x800 start, 0x1000 up, 0x4000 down.
+* **New Game** `0x2de168`: the selected slot `0x1a7c10` (0..3, shared by the slot pages); when the card is idle
+  (state < 3, no request, 11 idle frames `0x1f2924`, a PS2 card): Up / Down (sound `0x2dffa0(1, 0x11)`); ✕ on an empty
+  slot (preview level −1) → state 1; on a used one → the confirm page `0x2610e8` (`0x1f28a4` = 1, the slot in
+  `0x25e9c0`), whose yes brings the panel back with state 1; ○ → continue without saving (`0x299bf8`, flags ~6 | 0x20,
+  `0x2f7328`); △ → the parent page; Start / Select → leave (not in the front end's card check). State 1: the new game's
+  whole save into the slot (`0x2df710(buffer, slot)`), waiting (`0x1f28f8`), checked, the message 0x2c92; done: no
+  error → the slot's preview, `0x2f7328` (start the game), `0x1a8c88` = 0; an error → flags 0x80 and the card dialog
+  (`0x2b58f8(4, 1, 1 or 5, page)`). The card status 9 (present, not checked) pushes the card check page (`0x2d67a0(4,
+  0x261218 / 0x260ec8 / 0x25da18)`); a status other than 1 / 0x10 opens the card dialog or goes back. Flag 0x2000 =
+  the challenge-mode variant (`0x2df7a0`, the confirm page `0x261398`).
+* **Load** `0x2ddd30`: ✕ on a used slot: sound 4, save card 0, the slot, `0x29bb90(0x1f29f0)`, request 0xd, waiting,
+  the message 0x2c93; done: no error → checked, `0x2e5698`, then the level in the save (`0x2b58f8(6, 2, 5, level)`), or
+  `0x2f7328` (a new game) when the level is below 1 and level 0 not visited; an error → flags 0x100, the dialog. ✕ on an
+  empty slot: sound 5. The card status 9 pushes `0x2d67a0(5, 0x260d98 / 0x25db48)`.
