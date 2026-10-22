@@ -104,8 +104,20 @@ fn pause_tick(
                 p.game.go_to_level(-1, false);
                 p.pause = None;
             }
-            // `0x344dd0`: leaving the menu asks for the weapon the page took (`0x18c0e8`) when it is not the one held.
-            Out::Equip(item) => p.hero.items.request = if item == p.game.held { 0 } else { item },
+            // `0x344dd0`: leaving the menu asks for the hand item the pages took (`0x18c0e8`) when it is not the one held
+            // (0: none, 0x77). Only the items the hero can hold (rc_game::hero::items::ROWS); the feet and back slots
+            // (the boots, the packs) are not ported.
+            Out::Equip { slot: 0, item } => {
+                let item = if item == 0 { 0x77 } else { item };
+                if item == p.game.held {
+                    p.hero.items.request = 0;
+                } else if item == 0x77 || rc_game::hero::items::row(item).is_some() {
+                    p.hero.items.request = item;
+                } else {
+                    eprintln!("play: item {item:#x} cannot be held yet");
+                }
+            }
+            Out::Equip { .. } => {}
             Out::Sound(_) => {}
         }
     }
@@ -1016,6 +1028,8 @@ fn draw_hud(
                 let menu = (0..8).map(|f| (0xea9eu16, f)).chain([(rc_game::menus::ICON_SLOT, 2), (rc_game::menus::ICON_SLOT, 3), (rc_game::menus::ICON_SLOT, 4), (rc_game::menus::ICON_PICTURE, 0)]);
                 // The item records' icons (the Weapons page's cells, every upgrade's).
                 let menu = menu.chain(tables.items.iter().map(|r| (r.icon, 0)).filter(|&(i, _)| i != 0));
+                // The grids' own icons (the plain cells, `0xea85`, item 7's `0xea9a`).
+                let menu = menu.chain(tables.grids.iter().flatten().filter(|c| c.icon != 0).map(|c| (c.icon, c.frame))).chain([(0xea9a, 0)]);
                 for (id, f) in menu {
                     if !h.has_icon(id) || icons.contains_key(&(id, f)) { continue; }
                     if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {

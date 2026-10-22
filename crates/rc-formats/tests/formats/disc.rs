@@ -100,8 +100,17 @@ fn menu_tables_relocate_across_levels() {
     };
     let (Some(a), Some(o)) = (overlay(0), overlay(1)) else { eprintln!("skipped: no disc data"); return };
     let (m0, m1) = (MenuTables::read(&a, &a).unwrap(), MenuTables::read(&o, &a).unwrap());
-    assert_eq!(m0.weapon_grid.len(), 24);
-    assert_eq!(m0.weapon_grid, m1.weapon_grid);
+    use rc_formats::disc::menu_tables::Grid;
+    let items = |m: &MenuTables, g| m.grid(g).iter().map(|c| c.item).collect::<Vec<_>>();
+    assert_eq!(items(&m0, Grid::Weapons).len(), 24);
+    assert_eq!(items(&m0, Grid::Hand), [0xd, 0x24, 0x27, 0, 0x2e, 0x37]);
+    assert_eq!(items(&m0, Grid::Packs), [2, 3]);
+    assert_eq!(items(&m0, Grid::Boots), [0x14, 0x13, 0x36]);
+    assert_eq!(items(&m0, Grid::ItemsMain), [0x15, 7, 0x32, 5, 0x26, 0x33, 4, 8]);
+    assert_eq!(m0.grid(Grid::ItemsCounters)[3], rc_formats::disc::menu_tables::GridCell { icon: 0xeaa2, frame: 3, kind: 2, item: 0 });
+    for g in Grid::ALL {
+        assert_eq!(m0.grid(g), m1.grid(g), "{g:?}");
+    }
     let lancer = m0.items[0x1e];
     assert_eq!((lancer.icon, lancer.max_ammo, lancer.uses_ammo), (0xea64, 200, true));
     assert_eq!(m1.items[0x1e], lancer);

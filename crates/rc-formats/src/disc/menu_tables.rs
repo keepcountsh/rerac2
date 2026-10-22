@@ -1,19 +1,59 @@
 //! The pause pages' data in a level's overlay: the item records (`0x262500` on Aranos, `0xe0` a row, an item's row
-//! `0x139568[item]`) and the Weapons page's grid (`0x282978`: 24 cells of 10 bytes, the item at `+6`). Each level's
-//! overlay has them at its own addresses: found from Aranos's through [`crate::level_overlay::Relocation`] (the
+//! `0x139568[item]`) and the pages' grids ([`Grid`]: cells of 10 bytes, [`GridCell`]). Each level's overlay has them
+//! at its own addresses: found from Aranos's through [`crate::level_overlay::Relocation`] (the
 //! code that forms the address, matched in the level's copy).
 
 use crate::level_overlay::{LevelOverlay, Relocation};
 
-/// Aranos's (level 0, the reference) addresses the code forms: the item records' anchor (the records' base
-/// − 0x10) and the Weapons grid.
+/// Aranos's (level 0, the reference) address the code forms for the item records (their base − 0x10).
 const ITEM_ANCHOR: u32 = 0x2624f0;
 const ITEM_BASE_FROM_ANCHOR: u32 = 0x10;
-const WEAPON_GRID: u32 = 0x282978;
 /// The records read (the 0x38 items, then the upgrades' rows).
 pub const ITEM_ROWS: usize = 0x60;
 pub const ITEM_STRIDE: u32 = 0xe0;
-pub const WEAPON_CELLS: usize = 24;
+
+/// A pause page's grid (the grid drawer `0x42e0c8`'s table).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Grid {
+    /// The Weapons page's 4 × 6.
+    Weapons,
+    /// The Gadgets page's hand items (3 × 2), packs (2) and boots (3).
+    Hand,
+    Packs,
+    Boots,
+    /// The Items page's four: 2 × 1, 1 × 1, 4 × 2 and the 2 × 2 counters.
+    ItemsTop,
+    ItemsSingle,
+    ItemsMain,
+    ItemsCounters,
+}
+
+impl Grid {
+    pub const ALL: [Grid; 8] = [Grid::Weapons, Grid::Hand, Grid::Packs, Grid::Boots, Grid::ItemsTop, Grid::ItemsSingle, Grid::ItemsMain, Grid::ItemsCounters];
+
+    /// Aranos's address of the table and its cells.
+    fn table(self) -> (u32, usize) {
+        match self {
+            Grid::Weapons => (0x282978, 24),
+            Grid::Hand => (0x282700, 6),
+            Grid::Packs => (0x1aab38, 2),
+            Grid::Boots => (0x1aabf8, 3),
+            Grid::ItemsTop => (0x1aab70, 2),
+            Grid::ItemsSingle => (0x1aab90, 1),
+            Grid::ItemsMain => (0x286d48, 8),
+            Grid::ItemsCounters => (0x1aabd0, 4),
+        }
+    }
+}
+
+/// A grid cell: an icon and its frame (drawn as is when `kind` is 2), the item (0: none).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GridCell {
+    pub icon: u16,
+    pub frame: u16,
+    pub kind: u16,
+    pub item: i16,
+}
 
 /// What the pause pages read of an item record (offsets from the row's base `0x262500 + 0xe0·row`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,8 +78,8 @@ pub struct ItemRecord {
 pub struct MenuTables {
     /// By row.
     pub items: Vec<ItemRecord>,
-    /// The Weapons page's cells (row-major, 4 a row): the item, 0 empty.
-    pub weapon_grid: Vec<i16>,
+    /// The grids' cells (row-major), by [`Grid::ALL`]'s order.
+    pub grids: Vec<Vec<GridCell>>,
 }
 
 impl MenuTables {
@@ -65,12 +105,23 @@ impl MenuTables {
                 });
             }
         }
-        if let Some(g) = rel.data(WEAPON_GRID) {
-            out.weapon_grid = (0..WEAPON_CELLS as u32).map(|k| i16_at(g + 10 * k + 6).unwrap_or(0)).collect();
-        }
+        out.grids = Grid::ALL
+            .iter()
+            .map(|g| {
+                let (at, n) = g.table();
+                let Some(at) = rel.data(at) else { return Vec::new() };
+                let u = |a: u32| i16_at(a).unwrap_or(0) as u16;
+                (0..n as u32).map(|k| at + 10 * k).map(|c| GridCell { icon: u(c), frame: u(c + 2), kind: u(c + 4), item: u(c + 6) as i16 }).collect()
+            })
+            .collect();
         Ok(out)
+    }
+
+    /// Grid `g`'s cells (none when not found).
+    pub fn grid(&self, g: Grid) -> &[GridCell] {
+        Grid::ALL.iter().position(|&x| x == g).and_then(|i| self.grids.get(i)).map_or(&[], Vec::as_slice)
     }
 }
 
 /// No tables (the front end's pages).
-pub static EMPTY: MenuTables = MenuTables { items: Vec::new(), weapon_grid: Vec::new() };
+pub static EMPTY: MenuTables = MenuTables { items: Vec::new(), grids: Vec::new() };

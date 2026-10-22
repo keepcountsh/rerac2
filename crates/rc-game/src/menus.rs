@@ -37,7 +37,7 @@ use crate::gui::{self, text_box, Quad, Tex, TextBox};
 use crate::memcard::{status, MemCard, Preview, TYPE_PS2};
 use crate::save::{self, SaveData, Scope};
 use port::{PortValues, Setting, ENTRIES};
-use rc_formats::disc::menu_tables::MenuTables;
+use rc_formats::disc::menu_tables::{Grid, MenuTables};
 use rc_formats::disc::boot::MenuRow;
 
 /// Pad bits (`0x138344`).
@@ -161,6 +161,58 @@ pub enum Page {
     Controls,
     /// The pause's Weapons page (level 00 `0x43d698` / `0x43dba0` / `0x43e640`): the 4 × 6 grid of the weapons.
     Weapons,
+    /// The pause's Gadgets page (`0x43c410` / `0x43cf08` / `0x43d568`): the hand items, the packs and the boots.
+    Gadgets,
+}
+
+/// A grid of the grid drawer (`0x42e0c8`, its argument block): the table, its size, the icons' and frames' step and
+/// origin and the name's place (from the page's base), the cells left out, the body slot whose item gets the light
+/// frame (2: none).
+struct GridSpec {
+    grid: Grid,
+    cols: usize,
+    rows: usize,
+    icon_step: [f32; 2],
+    icon_at: [f32; 2],
+    frame_step: [f32; 2],
+    frame_at: [f32; 2],
+    name_at: [f32; 2],
+    skip: &'static [usize],
+    slot: usize,
+}
+
+impl GridSpec {
+    fn frame(&self, base: [f32; 2], c: usize, r: usize) -> [f32; 2] {
+        [base[0] + self.frame_at[0] + self.frame_step[0] * c as f32, base[1] + self.frame_at[1] + self.frame_step[1] * r as f32]
+    }
+}
+
+/// The Gadgets page (`0x43c410`'s elements, `0x1ae718`.. / `0x1ae768`..): its sprites, title and labels at
+/// (250, 207); its sections' grids (`0x43d240` hand items, `0x43d360` packs, `0x43d468` boots).
+mod gadgets {
+    use super::GridSpec;
+    use rc_formats::disc::menu_tables::Grid;
+    pub const AT: [f32; 2] = [250.0, 207.0];
+    pub const SPRITES: [(u32, u32); 4] = [(0x59, 0x6044_2d00), (0x5a, 0x6024_1700), (0x5b, 0x55f0_c070), (0x5c, 0x55f0_c070)];
+    pub const FRAME: u32 = 0x5d;
+    pub const SELECTION: u32 = 0x5e;
+    /// "Gadgets" and the labels (centred).
+    pub const TITLE: (u32, [f32; 2]) = (0x2be8, [-156.0, -182.0]);
+    pub const LABELS: [(u32, [f32; 2]); 5] = [(0x2be5, [30.0, 52.0]), (0x2bf1, [170.0, 52.0]), (0x2bed, [-117.0, -142.0]), (0x2bee, [-117.0, -8.0]), (0x2bf0, [-117.0, 82.0])];
+    const STEP: [f32; 2] = [54.0, 46.0];
+    const NAME: [f32; 2] = [105.0, 25.0];
+    /// By section (`+0x508`): 0 the hand items (3 × 2, cell 3 left out: `0x1ae3c8`), 1 the boots, 3 the packs.
+    pub const HAND: GridSpec = GridSpec { grid: Grid::Hand, cols: 3, rows: 2, icon_step: STEP, icon_at: [-173.0, -113.0], frame_step: STEP, frame_at: [-158.0, -95.0], name_at: NAME, skip: &[3], slot: 0 };
+    pub const BOOTS: GridSpec = GridSpec { grid: Grid::Boots, cols: 3, rows: 1, icon_step: STEP, icon_at: [-174.0, 113.0], frame_step: STEP, frame_at: [-158.0, 130.0], name_at: NAME, skip: &[], slot: 1 };
+    pub const PACKS: GridSpec = GridSpec { grid: Grid::Packs, cols: 2, rows: 1, icon_step: STEP, icon_at: [-120.0, 22.0], frame_step: STEP, frame_at: [-105.0, 40.0], name_at: NAME, skip: &[], slot: 3 };
+
+    pub fn spec(section: usize) -> &'static GridSpec {
+        match section {
+            1 => &BOOTS,
+            3 => &PACKS,
+            _ => &HAND,
+        }
+    }
 }
 
 /// The Weapons page's layout (`0x1ae810`.., `0x1aea40`..): the page's sprites at (250, 207), a cell's sprite, frame
@@ -442,8 +494,9 @@ pub enum Out {
     Loaded { level: i32 },
     /// A Port Options row (or the 16:9 toggle) changed its setting.
     Port(Setting, u8),
-    /// The Weapons page's ✕: the weapon to hold (`0x1fec00`).
-    Equip(i32),
+    /// The Weapons or Gadgets page's ✕: the item for body slot `slot` (`0x1fec00 + 4·slot`: 0 the hand, 1 the feet,
+    /// 3 the back; 0 none), asked for when the menu closes (`0x344dd0`).
+    Equip { slot: usize, item: i32 },
     /// In the game: the pause closes (the game goes on).
     Resume,
     /// In the game: Quit Game was answered yes (back to the front end).
@@ -498,7 +551,12 @@ pub struct Menus {
     setting_row: usize,
     /// The Weapons page's cell (`+0x4c4` column, `+0x4c8` row) and the weapon taken there.
     weapon_cell: [usize; 2],
-    equipped: Option<i32>,
+    /// The items the pages took per body slot (`0x1fec00..`; none yet: the save's `0x1a7398..`).
+    equipped: [Option<i32>; 4],
+    /// The Gadgets page's section (`+0x508`: 0 the hand items, 3 the packs, 1 the boots) and cell (`+0x4fc` column,
+    /// `+0x500` row).
+    gadget_section: usize,
+    gadget_cell: [usize; 2],
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -550,7 +608,9 @@ impl Menus {
             options_row: 0,
             setting_row: 0,
             weapon_cell: [0, 0],
-            equipped: None,
+            equipped: [None; 4],
+            gadget_section: 0,
+            gadget_cell: [0, 0],
         }
     }
 
@@ -658,6 +718,7 @@ impl Menus {
             Page::Quit => self.quit_tick(pressed, &mut out),
             Page::Sound | Page::Camera | Page::Controls => self.setting_tick(pressed, cx, &mut out),
             Page::Weapons => self.weapons_tick(pressed, cx, &mut out),
+            Page::Gadgets => self.gadgets_tick(pressed, cx, &mut out),
         }
         out
     }
@@ -681,6 +742,7 @@ impl Menus {
             match rows[self.pause_row] {
                 PauseRow::Options => self.go(Page::PauseOptions, out),
                 PauseRow::Weapons => self.go(Page::Weapons, out),
+                PauseRow::Gadgets => self.go(Page::Gadgets, out),
                 PauseRow::Port => {
                     self.port_row = 0;
                     self.port_top = 0;
@@ -843,15 +905,84 @@ impl Menus {
             self.pulse = 0;
         }
         if keys & pad::CROSS != 0 {
-            let item = cx.tables.weapon_grid.get(*c + *r * COLS).copied().unwrap_or(0) as i32;
+            let item = cx.tables.grid(Grid::Weapons).get(*c + *r * COLS).map_or(0, |g| g.item as i32);
             if 0 < item && had(cx.save, item) {
                 out.push(Out::Sound(4));
-                out.push(Out::Equip(item));
-                self.equipped = Some(item);
+                out.push(Out::Equip { slot: 0, item });
+                self.equipped[0] = Some(item);
             } else {
                 out.push(Out::Sound(5));
             }
         }
+    }
+
+    /// The Gadgets page (`0x43cf08`), by section: the hand items (`0x43c890`: ← / → through the row's cells, ↑ from
+    /// the top row to the boots, ↓ from the bottom row to the packs; ✕ takes it for the hand), the packs (`0x43cb10`:
+    /// for the back) and the boots (`0x43ccf0`: for the feet, ✕ on the boots worn takes them off). Each move sound 3;
+    /// ✕ on an item had sound 4, else 5. △ back to the pause list.
+    fn gadgets_tick(&mut self, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
+        if keys & pad::TRIANGLE != 0 {
+            return self.back(out);
+        }
+        if keys & (pad::START | pad::SELECT) != 0 {
+            return self.close(out);
+        }
+        let [c, r] = &mut self.gadget_cell;
+        let section = &mut self.gadget_section;
+        let dir = [pad::UP, pad::DOWN, pad::LEFT, pad::RIGHT].into_iter().find(|&k| keys & k != 0);
+        if let Some(k) = dir {
+            out.push(Out::Sound(3));
+            self.pulse = 0;
+            match (*section, k) {
+                (0, pad::UP) => {
+                    if *r == 0 {
+                        *section = 1;
+                    } else {
+                        *r -= 1;
+                    }
+                }
+                (0, pad::DOWN) => {
+                    if *r == 1 {
+                        *section = 3;
+                        *r = 0;
+                        *c = c.saturating_sub(1);
+                    } else {
+                        *r = 1;
+                        *c = (*c).max(1);
+                    }
+                }
+                // The bottom row has the two right cells.
+                (0, pad::LEFT) => *c = if *c == 0 || (*r == 1 && *c == 1) { 2 } else { *c - 1 },
+                (0, pad::RIGHT) => *c = if *c == 2 { *r } else { *c + 1 },
+                (3, pad::UP) => (*section, *r, *c) = (0, 1, *c + 1),
+                (3, pad::DOWN) => (*section, *r, *c) = (1, 0, *c + 1),
+                (3, pad::LEFT | pad::RIGHT) => *c ^= 1,
+                (1, pad::UP) => (*section, *r, *c) = (3, 0, c.saturating_sub(1)),
+                (1, pad::DOWN) => (*section, *r) = (0, 0),
+                (1, pad::LEFT) => *c = (*c + 2) % 3,
+                (1, pad::RIGHT) => *c = (*c + 1) % 3,
+                _ => {}
+            }
+        }
+        if dir.is_none() && keys & pad::CROSS != 0 {
+            let spec = gadgets::spec(self.gadget_section);
+            let [c, r] = self.gadget_cell;
+            let item = cx.tables.grid(spec.grid).get(c + r * spec.cols).map_or(0, |g| g.item as i32);
+            if 0 < item && had(cx.save, item) {
+                out.push(Out::Sound(4));
+                let slot = spec.slot;
+                let item = if slot == 1 && self.equipped(cx.save, 1) == item { 0 } else { item };
+                out.push(Out::Equip { slot, item });
+                self.equipped[slot] = Some(item);
+            } else {
+                out.push(Out::Sound(5));
+            }
+        }
+    }
+
+    /// Body slot `slot`'s item as the pages show it: the one taken, else the save's (`0x1a7398 + 4·slot`).
+    fn equipped(&self, save: &SaveData, slot: usize) -> i32 {
+        self.equipped[slot].unwrap_or_else(|| save.i32(Scope::Global, 0x1a7398 + 4 * slot as u32))
     }
 
     /// Mode 4 kind 9 (`0x287140`): ✕ yes, △ no.
@@ -1315,6 +1446,7 @@ impl Menus {
             Page::PauseOptions => return self.draw_pause_options(out, a, icon),
             Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
             Page::Weapons => return self.draw_weapons(out, a, v, icon),
+            Page::Gadgets => return self.draw_gadgets(out, a, v, icon),
             Page::Quit => {
                 self.draw_pause_options(out, a, icon);
                 gui::fill(out, [0, 0, 0, 0x30]);
@@ -1345,7 +1477,7 @@ impl Menus {
                 self.draw_planet(out, a, card);
                 self.draw_message(out, a, card);
             }
-            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons => {}
+            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons | Page::Gadgets => {}
         }
     }
 
@@ -1418,10 +1550,10 @@ impl Menus {
             if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, p, 0.0, [1.0, 1.0], c); }
         };
         for (id, c) in SPRITES { sprite(out, id, AT, gui::rgba(c)); }
-        let held = self.equipped.unwrap_or_else(|| v.save.i32(Scope::Global, 0x1a7398));
+        let held = self.equipped(v.save, 0);
         for r in 0..ROWS {
             for c in 0..COLS {
-                let item = v.tables.weapon_grid.get(c + r * COLS).copied().unwrap_or(0) as i32;
+                let item = v.tables.grid(Grid::Weapons).get(c + r * COLS).map_or(0, |g| g.item as i32);
                 let rec = record(v, item);
                 let (cf, rf) = (c as f32, r as f32);
                 let cell = at([CELL_AT[0] + STEP[0] * cf, CELL_AT[1] + STEP[1] * rf]);
@@ -1464,7 +1596,7 @@ impl Menus {
             gui::text(out, &a.glyphs, 1, t, p[0] - (w >> 1) as f32, p[1], 1.0, gui::rgba(0x80f0_f0f0));
         };
         centred(out, a.strings.get(TITLE), at(TITLE_AT));
-        let item = v.tables.weapon_grid.get(c + r * COLS).copied().unwrap_or(0) as i32;
+        let item = v.tables.grid(Grid::Weapons).get(c + r * COLS).map_or(0, |g| g.item as i32);
         let rec = record(v, item);
         if let (true, Some(rec)) = (0 < item && had(v.save, item), rec) {
             centred(out, a.strings.get(rec.name), at(NAME_AT));
@@ -1474,6 +1606,73 @@ impl Menus {
                 a.strings.get(NO_AMMO).to_vec()
             };
             centred(out, &line, at(AMMO_AT));
+        }
+    }
+
+    /// The Gadgets page (`0x43d568`): the page's sprites, the title, the three grids, the selection in the section
+    /// it is in, the labels. Not drawn yet: the selected item's model (`0x3f9ec`).
+    fn draw_gadgets(&self, out: &mut Vec<Quad>, a: &Assets, v: &View, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) {
+        use gadgets::*;
+        for (id, c) in SPRITES {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, AT, 0.0, [1.0, 1.0], gui::rgba(c)); }
+        }
+        let centred = |out: &mut Vec<Quad>, t: &[u8], o: [f32; 2]| {
+            let w = gui::text_width(&a.glyphs, t, 1.0);
+            gui::text(out, &a.glyphs, 1, t, AT[0] + o[0] - (w >> 1) as f32, AT[1] + o[1], 1.0, gui::rgba(0x80f0_f0f0));
+        };
+        centred(out, a.strings.get(TITLE.0), TITLE.1);
+        let [c, r] = self.gadget_cell;
+        let spec = spec(self.gadget_section);
+        let current = v.tables.grid(spec.grid).get(c + r * spec.cols).map_or(0, |g| g.item as i32);
+        for s in [&HAND, &PACKS, &BOOTS] {
+            self.draw_grid(out, a, v, icon, s, AT, FRAME, current);
+        }
+        if let Some(s) = a.sprites.get(&SELECTION) { gui::sprite(out, s, spec.frame(AT, c, r), 0.0, [1.0, 1.0], self.pulse_colour()); }
+        for (id, o) in LABELS { centred(out, a.strings.get(id), o); }
+    }
+
+    /// The grid drawer (`0x42e0c8`) for the pages without upgrade bars: per cell not left out, a plain icon (kind 2)
+    /// or the item's icon when had (`0x60f0f0b0`; `0xea85` cells keep theirs), the frame sprite (light when the item is
+    /// in the spec's body slot), and the selected item's name. Item 7 shows `0xea9a`, or item 0x31's icon when only
+    /// that is had. Not drawn: item 0x37's pieces before it is had (`0x13963c`..).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_grid(&self, out: &mut Vec<Quad>, a: &Assets, v: &View, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>, spec: &GridSpec, base: [f32; 2], frame: u32, current: i32) {
+        let cells = v.tables.grid(spec.grid);
+        for r in 0..spec.rows {
+            for c in 0..spec.cols {
+                let k = c + r * spec.cols;
+                if spec.skip.contains(&k) { continue; }
+                let Some(cell) = cells.get(k) else { continue };
+                let item = cell.item as i32;
+                let [x, y] = [base[0] + spec.icon_at[0] + spec.icon_step[0] * c as f32, base[1] + spec.icon_at[1] + spec.icon_step[1] * r as f32];
+                let mut put = |id: u16, f: u16| {
+                    if let Some((tex, [tw, th])) = icon(id, f) {
+                        out.push(Quad { pos: [[x, y], [x + 32.0, y], [x, y + 32.0], [x + 32.0, y + 32.0]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex, rgba: gui::rgba(0x60f0_f0b0) });
+                    }
+                };
+                let mut colour = 0x30f0_c070;
+                if cell.kind == 2 {
+                    put(cell.icon, cell.frame);
+                } else if 0 < item && (had(v.save, item) || (item == 7 && had(v.save, 0x31))) {
+                    let shown = if cell.icon == 0xea85 {
+                        Some(0xea85)
+                    } else if item == 7 {
+                        if had(v.save, 7) { Some(0xea9a) } else { record(v, 0x31).map(|r| r.icon) }
+                    } else {
+                        record(v, item).map(|r| r.icon)
+                    };
+                    if let Some(id) = shown { put(id, 0); }
+                    if spec.slot != 2 && self.equipped(v.save, spec.slot) == item { colour = 0x80ff_de8d; }
+                    if item == current && shown.is_some() {
+                        if let Some(rec) = record(v, item) {
+                            let t = a.strings.get(rec.name);
+                            let w = gui::text_width(&a.glyphs, t, 1.0);
+                            gui::text(out, &a.glyphs, 1, t, base[0] + spec.name_at[0] - (w >> 1) as f32, base[1] + spec.name_at[1], 1.0, gui::rgba(0x80f0_f0f0));
+                        }
+                    }
+                }
+                if let Some(s) = a.sprites.get(&frame) { gui::sprite(out, s, spec.frame(base, c, r), 0.0, [1.0, 1.0], gui::rgba(colour)); }
+            }
         }
     }
 
