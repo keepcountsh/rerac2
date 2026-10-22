@@ -570,6 +570,10 @@ fn tick(
             let w = |a: u32| c.save.i32(rc_game::save::Scope::Global, a);
             (inp.pitch_normal, inp.yaw_normal, inp.speed) = (w(opt::PITCH_NORMAL) != 0, w(opt::YAW_NORMAL) != 0, w(opt::CAM_SPEED).clamp(0, 2) as usize);
         }
+        // The placed views' hooks (`0x2d8618`'s choice, before the current camera's update).
+        let l1 = p.pad.held & rc_game::pad::button::L1 != 0;
+        let (frame, mode) = (p.game.frame, p.game.scenes.mode);
+        p.game.cameras.placed_views(&mut p.camera, &p.hero, &mobys.level, frame, mode, l1);
         p.camera.update(&inp, &mut p.game.cam_tweaks);
     }
     // The rest of the camera update `0x2d9f38`: the fade back in (`0x2d9d98`), the level cameras' choice and the

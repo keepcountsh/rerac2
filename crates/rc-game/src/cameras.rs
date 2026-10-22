@@ -28,19 +28,32 @@
 //! share flown; rows toward it about up. Phase 2 the fade up to black → phase 3: the FOV back, done, the fade back in
 //! over 15 ticks (`0x2d9d68`), the release (4), the letterbox off, Ratchet idle.
 //!
-//! Not ported: the classes 4 (first person: Ratchet's camera mode 4 / 0x51), 5, 6, 7 (no Swingshot on Aranos), 0x17
-//! (the placed view `0x42b950` / `0x42b428`: in its cuboid with Ratchet still it frames him from the record's place
-//! through the follow camera's setters `0x425e50..0x426110`), 0x1b (its hook says no); the blends (`0x2d8ab0`,
+//! **The placed view** (class 0x17; hook `0x42b950`, worker `0x42b428`, the still test `0x42b1a8`): never current
+//! (its activation kind 3), it works from its hook each tick ([`Cameras::placed_views`]): from the level's 4th frame,
+//! with Ratchet still (no stick turn when `+0x34`, at most 1/60 a tick unless in the scripted walk 0x62 / 0x63) in its
+//! region and the follow camera current and not held by a higher priority (`0x425e88`), L1 not held, it drives the
+//! follow camera: its first two ticks snap the camera to the record's place (`FollowCamera::placed_snap`: the
+//! distance across `+0x38`, height `+0x3c`, look height `+0x40` = height − distance·tan(pitch `+0x2c`), the yaw
+//! offset `+0x44` = yaw `+0x30` − the yaw to Ratchet when they differ by over 2°), then every tick it holds them
+//! (distance at 0.003 with the toward-lock, height at 0.003, look height at 0.005, the pitch `+0x28`° when set, the
+//! leash off unless `+0x24`, the yaw target at 60″ a tick). Moving or leaving turns it off (`+0x26`) until its
+//! reset (`0x42b9f0`, the arrival 0x1330's after the fly-by).
+//!
+//! Not ported: the classes 4 (first person: Ratchet's camera mode 4 / 0x51), 5, 6, 7 (no Swingshot on Aranos), the
+//! placed view's record angles (`+0x14` / `+0x18`, used when its pvars' are both 0: not on Aranos), 0x1b (its hook
+//! says no); the blends (`0x2d8ab0`,
 //! `0x2d9488`: none between Aranos's cameras); the fly-by's look at a moby (+0x28 with the offset +0x2c: none on
 //! Aranos); the pre hooks; the camera-moby list `0x2d80c0`.
 
 use crate::hero::physics::*;
+use crate::camera::FollowCamera;
 use crate::hero::Hero;
 use crate::level::LevelData;
 use crate::spline::{advance, Cursor};
 
 pub const CLASS_FOLLOW: i16 = 0;
 pub const CLASS_FLYBY: i16 = 0x13;
+pub const CLASS_PLACED: i16 = 0x17;
 
 /// The pvar header every class has.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -76,6 +89,8 @@ impl Slot {
     fn s(&self, o: usize) -> i16 { self.rec.get(o..o + 2).map_or(0, |b| i16::from_le_bytes(b.try_into().unwrap())) }
     fn set_b(&mut self, o: usize, v: u8) { if let Some(b) = self.rec.get_mut(o) { *b = v; } }
     fn set_f(&mut self, o: usize, v: f32) { if let Some(b) = self.rec.get_mut(o..o + 4) { b.copy_from_slice(&v.to_le_bytes()); } }
+    fn set_i(&mut self, o: usize, v: i32) { if let Some(b) = self.rec.get_mut(o..o + 4) { b.copy_from_slice(&v.to_le_bytes()); } }
+    fn set_s(&mut self, o: usize, v: i16) { if let Some(b) = self.rec.get_mut(o..o + 2) { b.copy_from_slice(&v.to_le_bytes()); } }
 }
 
 /// The fly-by's D block.
@@ -170,6 +185,93 @@ impl Cameras {
         let Some(s) = usize::try_from(i).ok().and_then(|i| self.slots.get_mut(i)) else { return };
         s.set_b(0x38, 1);
         s.set_b(0x39, 0);
+    }
+
+    /// `0x42b9f0`: record `i`'s placed view on again (its tick count and off flag cleared).
+    pub fn reset_placed(&mut self, i: i32) {
+        let Some(s) = usize::try_from(i).ok().and_then(|i| self.slots.get_mut(i)) else { return };
+        s.set_i(0x20, 0);
+        s.set_s(0x26, 0);
+    }
+
+    /// The placed views' hooks (`0x42b950`, run by the choice `0x2d8618` before the follow camera's update): see the
+    /// module docs. `frame` is the level's (`0x1b1948`), `mode` the game's (`0x1a8f00`), `l1` L1 held.
+    pub fn placed_views(&mut self, cam: &mut FollowCamera, hero: &Hero, level: &LevelData, frame: i32, mode: i32, l1: bool) {
+        for i in 0..self.slots.len() {
+            let s = &self.slots[i];
+            if s.class != CLASS_PLACED || s.header.priority == 0 || Some(i) == self.current || s.s(0x26) != 0 { continue; }
+            if mode != crate::scene::PLAY && self.placed_still(i, cam, hero, level) {
+                self.slots[i].set_i(0x20, 0);
+                self.slots[i].set_s(0x26, 0);
+            } else {
+                self.placed_view(i, cam, hero, level, frame, l1);
+            }
+        }
+    }
+
+    /// `0x42b1a8`: the placed view may hold — the follow camera current, Ratchet's body as its `+0x48` / `+0x4a`
+    /// allow, no stick turn (with `+0x34`), still (unless walked by a script), in its region (the scripted walk:
+    /// within 3 of its centre too); else it is turned off (`+0x26`).
+    fn placed_still(&mut self, i: usize, cam: &FollowCamera, hero: &Hero, level: &LevelData) -> bool {
+        if self.current_class() != CLASS_FOLLOW { return false; }
+        let s = &self.slots[i];
+        let clank = matches!(hero.mode, 1 | 2);
+        if (s.s(0x4a) != 0 && !clank) || (s.s(0x48) != 0 && clank) { return false; }
+        if s.i(0x34) != 0 && !cam.stick_still() { return false; }
+        let walked = matches!(hero.state, 0x62 | 0x63);
+        if !walked && 0.016_666_668 < hero.eff_len_xy { return false; }
+        let h = s.header;
+        let near = |l: &[crate::level::Volume], i: i32| {
+            hero.state == 0x62 && usize::try_from(i).ok().and_then(|i| l.get(i)).is_some_and(|v| dist(hero.pos, [v.matrix[3][0], v.matrix[3][1], v.matrix[3][2]]) < 3.0)
+        };
+        if 0 <= h.cuboid && (near(&level.cuboids, h.cuboid) || level.in_cuboid(h.cuboid, hero.pos)) { return true; }
+        if 0 <= h.cylinder && (near(&level.cylinders, h.cylinder) || level.in_cylinder(h.cylinder, hero.pos)) { return true; }
+        if 0 <= h.sphere && (near(&level.spheres, h.sphere) || level.in_sphere(h.sphere, hero.pos)) { return true; }
+        self.slots[i].set_s(0x26, 1);
+        false
+    }
+
+    /// `0x42b428`.
+    fn placed_view(&mut self, i: usize, cam: &mut FollowCamera, hero: &Hero, level: &LevelData, frame: i32, l1: bool) {
+        let off = |s: &mut Slot| {
+            if s.i(0x20) != 0 { s.set_s(0x26, 1); }
+            s.set_i(0x20, 0);
+        };
+        if 3 < frame && self.placed_still(i, cam, hero, level) {
+            let prio: Vec<u8> = self.slots.iter().map(|s| s.header.priority).collect();
+            if !cam.take(i, |k| prio.get(k).copied().unwrap_or(0)) { return off(&mut self.slots[i]); }
+            if !l1 || hero.mode == 2 {
+                let s = &mut self.slots[i];
+                if s.i(0x20) < 2 {
+                    let p = s.pos;
+                    let to_hero = (hero.pos[1] - p[1]).atan2(hero.pos[0] - p[0]);
+                    let yaw = s.f(0x30);
+                    let gap = { let d = (yaw - to_hero).abs(); if std::f32::consts::PI <= d { std::f32::consts::TAU - d } else { d } };
+                    if 0.034_906_59 < gap { s.set_f(0x44, sub_rot(yaw, to_hero)); }
+                    let a = sub(p, hero.pos);
+                    let height = a[2];
+                    let dist = len([a[0], a[1], 0.0]);
+                    let pitch = s.f(0x2c);
+                    let look_h = if pitch.abs() == 1.570_796_5 { 0.0 } else { height - dist * pitch.tan() };
+                    (s.set_f(0x38, dist), s.set_f(0x3c, height), s.set_f(0x40, look_h));
+                    cam.placed_snap(p, hero.pos, dist, height, s.f(0x44), look_h);
+                }
+                s.set_i(0x20, (s.i(0x20) + 1).min(200));
+                let (dist, height, look_h, pitch, leash, yaw) = (s.f(0x38), s.f(0x3c), s.f(0x40), s.f(0x28), s.s(0x24), s.f(0x44));
+                if dist != 0.0 {
+                    cam.set_dist(dist, 0.003, false);
+                    cam.lock_toward();
+                }
+                if height != 0.0 { cam.set_pivot_h(height, 0.003); }
+                if look_h != 0.0 { cam.set_look_h(look_h, 0.005, false); }
+                if pitch != 0.0 { cam.set_script_pitch(pitch * 0.017_453_294); }
+                if leash == 0 { cam.set_leash(false); }
+                if yaw != 0.0 { cam.set_yaw_target(yaw, 60.0, 60.0); }
+                return;
+            }
+        }
+        off(&mut self.slots[i]);
+        cam.release(i);
     }
 
     /// `0x42a508`: the fly-by is over (no fly-by current, or record `i`'s in its phase 3; phase 1 still black counts).

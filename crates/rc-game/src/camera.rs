@@ -289,6 +289,15 @@ pub struct FollowCamera {
     look_h_v: f32,
     pivot_h_s: f32,
     pivot_h_v: f32,
+    /// D+0x48: the view's yaw off the look direction (the rows turn by it), sprung toward the yaw target D+0x4c at the
+    /// rates D+0x54 / +0x58 (velocity D+0x50; [`FollowCamera::set_yaw_target`], the spring back).
+    yaw_off: f32,
+    yaw_tgt: f32,
+    yaw_off_v: f32,
+    yaw_accel: f32,
+    yaw_brake: f32,
+    /// D+0x240: the level camera driving this one through its setters (the slot; `0x425e88` / `0x425e50`).
+    owner: Option<usize>,
     /// D+0x34 / +0x38 / +0x3c / +0x40: the pitch bias, its velocity and spring.
     bias: f32,
     bias_v: f32,
@@ -660,6 +669,53 @@ impl FollowCamera {
         (self.look_h_ovr, self.look_h_rate) = (1, rate);
         self.look_h_tgt = if add { self.d0_look_h + h } else { h };
     }
+    /// `0x425fe8(yaw, a, b)`: the yaw target, its rates in arc seconds a tick.
+    pub fn set_yaw_target(&mut self, yaw: f32, a: f32, b: f32) {
+        self.yaw_tgt = yaw;
+        (self.yaw_accel, self.yaw_brake) = (a * 4.848_137_5e-6, b * 4.848_137_5e-6);
+    }
+    /// `0x426110`: running toward the camera does not pull it in this tick.
+    pub fn lock_toward(&mut self) { self.toward_lock = 1; }
+    /// `0x426058`: the leash on or off for the tick.
+    pub fn set_leash(&mut self, on: bool) { self.leash = on as i16; }
+    /// `0x426030`: the scripted pitch for the tick.
+    pub fn set_script_pitch(&mut self, p: f32) { self.script_pitch = p; }
+    /// `0x425e88(slot, priority)`: taken by level camera `slot` when free, already its, or held by one of a lower
+    /// priority (`priority_of`).
+    pub fn take(&mut self, slot: usize, priority_of: impl Fn(usize) -> u8) -> bool {
+        match self.owner {
+            None => self.owner = Some(slot),
+            Some(o) if o == slot => {}
+            Some(o) if priority_of(o) < priority_of(slot) => self.owner = Some(slot),
+            Some(_) => return false,
+        }
+        true
+    }
+    /// `0x425e50(slot)`: given back by `slot`.
+    pub fn release(&mut self, slot: usize) { if self.owner == Some(slot) { self.owner = None; } }
+    /// No stick turn this tick (D+0x194 and D+0x1c8 within 0.01; the placed view's test).
+    pub fn stick_still(&self) -> bool { self.yaw_step.abs() <= 0.01 && self.pitch_n.abs() <= 0.01 }
+
+    /// The placed view's snap (`0x42b428`'s first two ticks): the camera at `at`, `dist` from Ratchet across and
+    /// `height` above him, its yaw offset `yaw` and look height `look_h`; the pivot, offset, look point, targets and
+    /// the rows' smoothed heights set from them, the motion's springs at rest.
+    pub fn placed_snap(&mut self, at: V3, hero: V3, dist: f32, height: f32, yaw: f32, look_h: f32) {
+        let up = self.up2;
+        self.pos = at;
+        self.desired = at;
+        (self.dist, self.pivot_h, self.yaw_off, self.look_h) = (dist, height, yaw, look_h);
+        self.pivot = add(hero, scale(up, height));
+        self.off = sub(at, self.pivot);
+        self.placed = self.off;
+        self.look = add(hero, scale(up, look_h));
+        self.look_s = self.look;
+        (self.target, self.smooth) = (hero, hero);
+        self.red = 0.0;
+        (self.bias, self.bias_v) = (0.0, 0.0);
+        (self.look_h_s, self.look_h_v, self.pivot_h_s, self.pivot_h_v) = (look_h, 0.0, height, 0.0);
+        self.pitch_neg = 0;
+    }
+
     /// `0x426080` / `0x4260c8`: the horizontal / vertical springs (0 keeps a value).
     pub fn set_h_spring(&mut self, k: f32, d: f32) {
         if k != 0.0 { self.kh = k; }
@@ -1221,7 +1277,8 @@ impl FollowCamera {
         let mut fwd = self.rows[0];
         let lh = sub(self.look, scale(up_s, dot(self.look, up_s)));
         let ph = sub(self.pos, scale(up_s, dot(self.pos, up_s)));
-        let hv = sub(lh, ph);
+        let mut hv = sub(lh, ph);
+        if self.yaw_off != 0.0 { hv = rot(hv, self.yaw_off, up_s); }
         let l = len(hv);
         if 0.05 <= l { fwd = scale(hv, 1.0 / l); }
         let left = norm(cross(fwd, up_s), 1.0);
@@ -1272,6 +1329,11 @@ impl FollowCamera {
         let t = if self.look_h_ovr != 0 { self.look_h_tgt } else { self.d0_look_h };
         self.look_h = interp(self.look_h, t, self.look_h_rate, 0.2, 0.0, &mut self.look_h_vel);
         (self.dist_ovr, self.ph_ovr, self.look_h_ovr) = (0, 0, 0);
+        // The yaw offset toward its target, else back to 0 (`0x31ed78`, capped at 1); the target is the tick's.
+        if self.yaw_tgt != 0.0 || self.yaw_off != 0.0 {
+            approach(self.yaw_tgt, self.yaw_accel, self.yaw_brake, 1.0, &mut self.yaw_off, &mut self.yaw_off_v);
+        }
+        self.yaw_tgt = 0.0;
         (self.dist_tgt, self.ph_tgt, self.look_h_tgt) = (0.0, 0.0, 0.0);
         self.base_dist = self.d0_dist;
         self.leash = 1;
@@ -1284,6 +1346,28 @@ impl FollowCamera {
         self.pull_max = 6.0;
         (self.toward_lock, self.no_chain) = (0, 0);
     }
+}
+
+/// `0x31ed78(target, a, b, max, x, v)`: `x` toward `target` at a speed `v` that brakes by `b` a tick against the way
+/// to go, eases off by `b` (1.1·`b` when it would overshoot less) within its stopping distance `v²/2b`, else heads for
+/// √(2b·|d|) (at most `max`) by `a` a tick (`0x31eb18`); `x` lands on the target once the step reaches it.
+fn approach(target: f32, a: f32, b: f32, max: f32, x: &mut f32, v: &mut f32) {
+    let d = target - *x;
+    if *v == 0.0 && d == 0.0 { return; }
+    let toward = |v: &mut f32, goal: f32, step: f32| *v += (goal - *v).clamp(-step, step);
+    if *v * d < 0.0 {
+        *v += if 0.0 <= *v { -b } else { b };
+        *x += *v;
+        return;
+    }
+    let stop = if b == 0.0 { f32::INFINITY } else { *v * *v / b * 0.5 };
+    if d.abs() < stop {
+        toward(v, 0.0, if stop < d.abs() + v.abs() { b } else { b * 1.1 });
+    } else {
+        let s = (2.0 * b * d).abs().sqrt().min(max);
+        toward(v, if d < 0.0 { -s } else { s }, a);
+    }
+    if d.abs() <= v.abs() { *x = target } else { *x += *v }
 }
 
 /// The distance from `p` to the segment a → b and the closest point.

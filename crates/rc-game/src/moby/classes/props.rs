@@ -627,7 +627,8 @@ pub fn update_0f13(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// within 0.75), its parts on it (`0x384d28`), until after 10 ticks the fly-by is over (`0x42a508`): the ship hidden,
 /// Ratchet walked 2 out of [1] along its yaw (state 4); once he is not walking, state 5. Else state 4 at once. In
 /// the states 4 and 5 the parts are hidden. Not ported: the item 0x18 (`0x2f51a0`), the ship's engine glow and
-/// draw callback, the music (`0x3607e8(0x17)`), the placed view's timer [4] (`0x42b9f0`), the level name (`0x30d658`).
+/// draw callback, the music (`0x3607e8(0x17)`), the level name (`0x30d658`). The placed view [4] is reset (`0x42b9f0`)
+/// at the fly-by's end and on state 4's first tick.
 pub fn update_1330(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let ship = |w: &MobyWorld| ai_link(w, id, 0x18);
     let state = w.mobys[id].state;
@@ -699,6 +700,7 @@ pub fn update_1330(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 }
                 // The occlusion's grid on again (`0x1b19d0` = 2; off since the level's load).
                 ctx.game.occlusion = 2;
+                ctx.game.cameras.reset_placed(w.mobys[id].pv_i(0x10));
                 w.mobys[id].set_state(4, -1);
             }
             // The ship along the path.
@@ -718,8 +720,8 @@ pub fn update_1330(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             }
         }
         4 => {
+            if w.mobys[id].first() { ctx.game.cameras.reset_placed(w.mobys[id].pv_i(0x10)); }
             let m = &mut w.mobys[id];
-            m.first();
             if !(0x62..=0x64).contains(&ctx.hero.state) { m.set_state(5, -1); }
         }
         _ => {}
