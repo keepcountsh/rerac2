@@ -93,6 +93,22 @@ pub trait MobySource {
     fn joints(&self, id: usize, count: usize) -> Vec<[F; 4]>;
 }
 
+/// A moby source with some mobys' collision off (R&C2's `moby+0x98` cleared for a while: the camera's avoidance,
+/// `0x4258d0`).
+pub struct Without<'a> {
+    pub inner: &'a dyn MobySource,
+    pub off: &'a [usize],
+}
+
+impl MobySource for Without<'_> {
+    fn moby(&self, id: usize) -> Option<CollMoby> {
+        let mut m = self.inner.moby(id)?;
+        if self.off.contains(&id) { m.collision = false; }
+        Some(m)
+    }
+    fn joints(&self, id: usize, count: usize) -> Vec<[F; 4]> { self.inner.joints(id, count) }
+}
+
 /// `0x267fc0`'s joint positions from the animation state: the translation rows `P_j.r3` of joints
 /// `0..count` through `rc_formats::moby_anim::joint_translations` (the partial evaluator `fun_002109b8`,
 /// all joints below `count` marked). **Not instruction-compared** with 0x267fc0 (a third evaluator variant

@@ -113,6 +113,7 @@ fn dec_timer(t: &mut i16) -> i32 {
 pub fn target_point(hero: &Hero) -> V3 { add(hero.pos, scale(hero.rows[2], 1.6)) }
 
 /// What the camera reads each tick besides the hero.
+#[derive(Clone, Copy)]
 pub struct CamInput<'a> {
     pub hero: &'a Hero,
     pub coll: Option<&'a Collision>,
@@ -1069,6 +1070,22 @@ impl FollowCamera {
     /// from the distance); the reduction restores over 2000 ticks once nothing blocks and the right stick is still; a
     /// line pivot → camera blocked for 30 ticks resets the camera (`0x2da160`; returns true then).
     fn avoidance(&mut self, inp: &CamInput) -> bool {
+        // The mobys about the camera's line (`0x2e14b0`, a sphere midway between the pivot and the camera): the five
+        // classes it steers around turn it 1° away when within 25° of its offset; the others without a mesh (only
+        // primitives, `0x31d100`) and 0xb6b are left out of the avoidance's tests.
+        let off = self.near_mobys(inp);
+        let without;
+        let scene;
+        let filtered;
+        let inp = match (inp.scene, off.is_empty()) {
+            (Some(sc), false) => {
+                without = crate::collision::mobys::Without { inner: sc.mobys, off: &off };
+                scene = MobyScene { mobys: &without, grid: sc.grid, classes: sc.classes, cache: sc.cache };
+                filtered = CamInput { scene: Some(&scene), ..*inp };
+                &filtered
+            }
+            _ => inp,
+        };
         let mut blocked = false;
         if self.no_chain == 0 && self.sphere_chain(inp) { blocked = true; }
         if self.end_sphere(inp) { blocked = true; }
@@ -1109,6 +1126,33 @@ impl FollowCamera {
             self.blocked = 0;
         }
         false
+    }
+
+    /// `0x4258d0`'s first pass: the mobys the camera leaves out this tick, after the yaw nudges.
+    fn near_mobys(&mut self, inp: &CamInput) -> Vec<usize> {
+        let Some(sc) = inp.scene else { return Vec::new() };
+        let mid = lerp(self.pivot, self.pos, 0.5);
+        let r = (self.dist - self.red + 1.5) * 0.5;
+        let mut off = Vec::new();
+        for id in crate::collision::mobys::coll_sphere_mobys(sc, mid, r, QueryFlags(1), inp.hero_moby) {
+            let Some(m) = sc.mobys.moby(id) else { continue };
+            if !m.collision { continue; }
+            let mesh = sc.classes.get(&m.o_class).is_some_and(|c| !c.faces.is_empty());
+            if mesh && m.o_class != 0xb6b { continue; }
+            if matches!(m.o_class, 0x8ba | 0xd07 | 0x10d0 | 0x477 | 0xb) {
+                let c = sub(m.position.map(f32::from_bits), self.pivot);
+                let flat = norm(sub(c, scale(self.up2, dot(self.up2, c))), 1.0);
+                let ang = (HALF_PI - asin(dot(flat, self.off) / (self.dist - self.red))).abs();
+                if ang < 0.436_332_35 {
+                    let side = norm(cross(self.off, self.up2), 1.0);
+                    let d = if 0.0 < dot(side, c) { -0.017_453_29 } else { 0.017_453_29 };
+                    self.off = rot(self.off, d, self.up_s);
+                }
+            } else {
+                off.push(id);
+            }
+        }
+        off
     }
 
     /// `0x4255e8`: spheres along pivot → offset (radius growing by step · scale from 0.25); a hit that is not behind the
