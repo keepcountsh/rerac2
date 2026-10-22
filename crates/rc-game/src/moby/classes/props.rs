@@ -564,7 +564,7 @@ pub fn update_0f13(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         }
     };
     let player = ctx.game.scenes.player.as_ref().filter(|_| in_scene);
-    let record = player.map_or(-1, |p| rc_formats::rac2::scene::record_of(p.id));
+    let record = player.map_or(-1, |p| rc_formats::disc::scene::record_of(p.id));
     let tick = player.map_or(0, |p| p.tick);
     let actor = |k: usize| player.and_then(|p| p.actors.get(k)).map(|a| a.0).filter(|&a| a < w.mobys.len());
     let (a2, a3) = (actor(2), actor(3));

@@ -28,7 +28,7 @@ struct Last {
 #[allow(clippy::too_many_arguments)]
 fn log(
     mut clock: Local<Option<std::time::Instant>>,
-    play: Option<Res<crate::rac2_play::Play>>,
+    play: Option<Res<crate::play::Play>>,
     entities: Query<Entity>,
     meshes: Res<Assets<Mesh>>,
     mats: Res<Assets<crate::moby_render::MobyMaterial>>,

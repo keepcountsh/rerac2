@@ -449,7 +449,7 @@ impl SoundInstance {
 }
 
 /// The sound instance records at `p` in `gameplay` (`s32 count, pad[3]`, then the records): R&C1's section 0x0c,
-/// or Going Commando's `sound_instances` section (`crate::rac2::gameplay`, offset 0 of its bytes).
+/// or Going Commando's `sound_instances` section (`crate::disc::gameplay`, offset 0 of its bytes).
 pub fn parse_sound_instances_at(gameplay: &[u8], p: usize) -> Result<Vec<SoundInstance>> {
     let g = Buf(gameplay);
     let n = g.i32(p)?;

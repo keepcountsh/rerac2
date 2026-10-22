@@ -15,8 +15,14 @@ the map, the way the hero, the camera and the particles were done. This page say
 
 Doc comments in this repository cite R&C1 code as `rerac:rc_game::<path>` (`crates/rc-game/src/<path>.rs` in R&C1).
 
+**R&C1's specs that stayed.** The format specs in `docs/formats/` and the system specs in `docs/plan/` that this
+port's code cites (audio, particles, collision queries, lighting, the moby renderer, cutscenes, …) were written for
+R&C1 and stay here because the shared code implements them; their addresses are R&C1's (`level01.elf`, boot
+`SCUS_971.99`) unless they say otherwise, and links in them to R&C1's other pages (the planets, the roadmap, the
+test requests) lead to R&C1's repository.
+
 **When one comes back**: port it under R&C2's crates (no R&C1 runtime types), strike or update its gap row in
-[the gap register](rac2_gaps.md), and drop its line here.
+[the gap register](gaps.md), and drop its line here.
 
 ## Systems not in this repository
 
@@ -52,9 +58,9 @@ the system belongs to.
 ## R&C1-only code (not coming back)
 
 - **R&C1's class behaviours** (`moby_update/classes/`): R&C2's classes are ported from R&C2's own code
-  ([`rac2_class_census.md`](rac2_class_census.md), G-CLS-001).
+  ([`class_census.md`](class_census.md), G-CLS-001).
 - **R&C1's game loop and boot**: `tick.rs`, `moby_runtime.rs`, `frontend.rs`, engine `gameplay.rs`, `title_world.rs`.
-  R&C2's are `rc-game` (`game`, `moby`, `front_end`) and the engine's `rac2*.rs`.
+  R&C2's are `rc-game` (`game`, `moby`, `front_end`) and the engine's `front_end.rs`, `level_wad.rs`, `mobys.rs` and `play.rs`.
 - **R&C1's versions of systems R&C2 has its own port of**: hero, follow camera, HUD, help, audio, particles' pool
   (R&C2's ports took what applied; R&C1's stay the map for the rest, cited as `rerac:rc_game::…`).
 - **R&C1's data plumbing**: its disc tables (`SCUS_971.99`), the Tier 1 export, the `rc-data` crate, the golden
@@ -62,4 +68,5 @@ the system belongs to.
 - **R&C1's Ghidra tooling**: its name tables (`tools/ghidra/names/`: Lombyte's boot names, the overlay clusters, the
   names from the docs) and the scripts that apply them to R&C1's project. They are the source for naming Going
   Commando's functions by Version Tracking; `tools/ghidra/scripts/crossgame_diff.py` reads R&C1's overlay and
-  decompiler export from R&C1's own folder.
+  decompiler export from R&C1's own folder. R&C1's per-level overlay diff (`rc-trace overlay-diff`) and its other
+  trace commands for R&C1's files stay there too.

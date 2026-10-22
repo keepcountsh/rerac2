@@ -1,6 +1,6 @@
 //! Ratchet in Going Commando: the hero block (L00 `0x189e20..0x18c330`), the per-tick update `0x2a6dd0` and its
 //! sub-steps. Organised like R&C1's port (`rerac:rc_game::hero`), because R&C2's hero code is R&C1's evolved: the same
-//! driver, dispatchers and helpers, with R&C2's constants and additions (docs/plan/rac2_bringup.md §6.4).
+//! driver, dispatchers and helpers, with R&C2's constants and additions (docs/plan/bringup.md §6.4).
 //! Native `f32` (docs/plan/decisions.md "native-first"); the shared pad (`crate::pad`: R&C2's `0x3306b0` is R&C1's
 //! `ProcessPadInput`), collision queries (`crate::collision`) and Ratchet's animation player
 //! (`crate::hero::anim`: R&C2's SetAnim `0x2d2508` is R&C1's `0x247a90`).

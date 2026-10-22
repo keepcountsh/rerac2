@@ -1,6 +1,6 @@
 //! Render-to-texture onto a quad in the world: a 3D view of some entities rendered into an offscreen image and drawn
 //! on four world corners (a screen inside the level that moves with what carries it). Going Commando's ship screen in
-//! Aranos's arrival uses it (crate::rac2_play, `rc_game::scene::Scenes::ship_screen`).
+//! Aranos's arrival uses it (crate::play, `rc_game::scene::Scenes::ship_screen`).
 //!
 //! **What it reproduces.** The game hides the moby from the frame, draws it alone into a VRAM render target with a
 //! view of its own and the frame's projection (centred in the target, so the target shows the middle of what the

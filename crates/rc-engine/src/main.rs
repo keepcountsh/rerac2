@@ -6,14 +6,14 @@
 //!
 //! Environment:
 //! - `RC_DATA_DIR`   the game data folder when `--data-dir` is absent; else `RC_EXTRACTED`, else `<workspace>/extracted`
-//! - `RC_LEVEL`      start straight in this level (skips the front end unless `RC_FRONTEND=1`), crate::rac2
+//! - `RC_LEVEL`      start straight in this level (skips the front end unless `RC_FRONTEND=1`), crate::front_end
 //! - `RC_SCREENSHOT` if set, save a PNG of the window there after the scene has rendered, then exit
 //! - `RC_SCREENSHOT_DELAY` seconds to wait before that capture (default 3); with `RC_SCREENSHOT_FRAME`
 //!   the capture is frame-exact instead (crate::determinism) and this wall-clock one is not scheduled
 //! - `RC_CAM`        optional camera override in game coordinates: `eye_x,eye_y,eye_z,target_x,target_y,target_z`
 //! - `RC_GS_ALPHA=0` the previous alpha mapping (one blended draw without Z for any As != 0x80), crate::gs_state
 //! - `RC_PLAY=0`, `RC_PLAY_FLY=1`, `RC_PLAY_SCRIPT`, `RC_PLAY_TRACE=1`, `RC_SCENES=0`, `RC_HERO_AT`, `RC_MOBY_TRACE` the
-//!   game tick and its dev switches, crate::rac2_play
+//!   game tick and its dev switches, crate::play
 //! - `RC_MSAA=0|2|4|8` the Anti-aliasing option at start: Off or that multisampling (default: Original, the game's own
 //!   softening passes), crate::graphics
 //! - `RC_SETTINGS_FILE=<path>` the port-settings file (`0` or empty: none), crate::render_settings
@@ -47,10 +47,10 @@ mod particle_render;
 mod play_camera;
 mod render_settings;
 mod gs_post;
-mod rac2;
-mod rac2_level;
-mod rac2_mobys;
-mod rac2_play;
+mod front_end;
+mod level_wad;
+mod mobys;
+mod play;
 mod clock;
 
 mod world_screen;
@@ -164,9 +164,9 @@ fn main() -> anyhow::Result<()> {
     .add_systems(Startup, setup_camera)
     .add_systems(level_switch::LevelStartup, setup)
     .add_systems(Update, report_fps);
-    // The front end over the loaded level (crate::rac2), then the game tick (crate::rac2_play).
-    if rac2::requested() { app.add_plugins(rac2::FrontEndPlugin::new(&root)?); }
-    app.add_plugins(rac2_play::Rac2PlayPlugin);
+    // The front end over the loaded level (crate::front_end), then the game tick (crate::play).
+    if front_end::requested() { app.add_plugins(front_end::FrontEndPlugin::new(&root)?); }
+    app.add_plugins(play::PlayPlugin);
     // RC_RENDER_DIAG=1: Bevy's per-pass render timings (CPU only on Metal) and the views rendered, logged every 5 s.
     if std::env::var("RC_RENDER_DIAG").is_ok_and(|v| v.trim() == "1") {
         app.add_plugins((

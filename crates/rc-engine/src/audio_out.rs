@@ -1,7 +1,7 @@
 //! Audio output: the game's audio (`rc_game::audio`: sound slots, 989snd, music, software SPU2) run once per
 //! 60 Hz game tick and played through Bevy's audio as one endless rodio source.
 //!
-//! * **With the game tick** (crate::rac2_play): the tick runs the EE frame (`sound_update`) and its 800 samples
+//! * **With the game tick** (crate::play): the tick runs the EE frame (`sound_update`) and its 800 samples
 //!   ([`AudioOut::push_frame`]) itself ([`AudioOut::external`]). A rendered frame whose game ticks did not run gets
 //!   IOP-only frames here (989snd and the SPU keep playing; no EE update).
 //! * **Without it** (`RC_PLAY=0`): each 60 Hz tick ([`GameTicks`]) runs the EE part of the frame on the audio
@@ -159,7 +159,7 @@ pub struct AudioOut {
     /// `RC_AUDIO_TRACE`.
     trace: bool,
     /// `RC_AUDIO_SFX` / `RC_AUDIO_MUSIC` given: they win over the saved game's options ([`sync_options`]).
-    /// A game other than R&C1's tick runs the EE frames and pushes them (Going Commando's, crate::rac2_play): the
+    /// A game other than R&C1's tick runs the EE frames and pushes them (Going Commando's, crate::play): the
     /// frames it did not run get IOP-only ones here.
     pub external: bool,
 }

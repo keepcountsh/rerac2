@@ -3,7 +3,7 @@
 //!
 //! 1. No product crate (`crates/*/Cargo.toml`) depends on anything under `tools/`.
 //! 2. No test and no product file names personal material or dev output ([`PERSONAL_PATTERNS`]; test files also
-//!    [`TEST_ONLY_PATTERNS`]). No allow-list: tests never rely on the user's personal files (docs/workflows/testing.md §10).
+//!    [`TEST_ONLY_PATTERNS`]). No allow-list: tests never rely on the user's personal files (docs/workflows/testing.md §5).
 //! 3. The top level holds only the agreed folders ([`TOP_LEVEL_DIRS`]), dotfiles and the Cargo / README / CHANGELOG / LICENSE files.
 //! 4. Tests run only through `cargo xtask test-*` (docs/workflows/testing.md §1): no Cargo alias runs tests, and no doc
 //!    or source comment recommends the retired alias or a by-hand `cargo test` ([`stale_test_command_hits`]).

@@ -96,7 +96,7 @@ pub struct LevelTies {
 pub fn load_ties(core: &LevelCore, core_data: &[u8], gs_ram: &[u8], gameplay: &[u8], textures: &[LevelTexture]) -> Result<LevelTies> {
     let t0 = Instant::now();
     let classes = tie::parse_level_ties(core, core_data).context("parsing tie classes")?;
-    let instances = rc_formats::rac2::gameplay::tie_instances(gameplay)
+    let instances = rc_formats::disc::gameplay::tie_instances(gameplay)
     .context("parsing tie instances")?;
     let by_class: HashMap<i32, usize> = classes.iter().enumerate().map(|(i, c)| (c.o_class, i)).collect();
     let class_of: Vec<Option<usize>> = instances.iter().map(|i| by_class.get(&i.o_class).copied()).collect();
@@ -104,7 +104,7 @@ pub fn load_ties(core: &LevelCore, core_data: &[u8], gs_ram: &[u8], gameplay: &[
 
     let t0 = Instant::now();
     // Going Commando lights its ties another way (per-vertex colours in the gameplay file, not mapped yet): neutral
-    // colours (docs/plan/rac2_bringup.md §6.3 D).
+    // colours (docs/plan/bringup.md §6.3 D).
     let colors = vec![[[0x80; 4]; SLOTS]; instances.len()];
     let light_time = t0.elapsed();
 

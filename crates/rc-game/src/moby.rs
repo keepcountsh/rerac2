@@ -3,7 +3,7 @@
 //! `0x32e398` and the matrix rebuild `0x313dc0`. Native `f32` (docs/plan/decisions.md "native-first"); the record
 //! fields keep their L00 offsets in the docs. R&C2's moby system is R&C1's (crate::moby::runtime,
 //! rerac:rc_game::moby_update::scheduler) with the record reordered and 240 class slots (R&C1 224); each step here is read
-//! from R&C2's code (docs/plan/rac2_bringup.md §6.6).
+//! from R&C2's code (docs/plan/bringup.md §6.6).
 //!
 //! **Record** (the fields the port keeps):
 //!
@@ -45,7 +45,7 @@ use crate::hero::Hero;
 use rc_formats::collision::Collision;
 use rc_formats::moby_anim::AnimState;
 use crate::collision::mobys::{CollMoby, MobyGrid, MobyScene, GRID_NONE};
-use rc_formats::rac2::gameplay::Rac2MobyInstance;
+use rc_formats::disc::gameplay::PlacedMoby;
 
 /// Mode bits (`+0x34`).
 pub mod mode {
@@ -201,7 +201,7 @@ impl SpawnRules<'_> {
     /// never; bits 0 / 1 by the mission's table `0x1b1c60` (bit 1: the uid's bit 3 set, its count cleared, the
     /// alternative rewards); bit 2 (with 3 clear) once — not while the uid's count is set; bit 3 the count cleared on
     /// a respawn, not spawned on a first load with a count.
-    pub fn test(&mut self, r: &Rac2MobyInstance) -> (bool, bool) {
+    pub fn test(&mut self, r: &PlacedMoby) -> (bool, bool) {
         let b = &r.base;
         let g = &mut *self.game;
         let (mission, sub, flags, uid, rank) = (b.unknown_4, b.spawn_flags, b.spawn_id, r.extra[0] as i16, b.unknown_14);
@@ -458,7 +458,7 @@ impl MobyWorld {
     /// without spawn flags), the scale (class × instance), draw and update distances, position, Euler angles, group,
     /// the mode bits of the record (also OR'd into the class's), and the matrix rebuild when the class is loaded.
     /// `instance(i)` is the engine's placed-instance index of record `i`.
-    pub fn spawn_static(&mut self, records: &[Rac2MobyInstance], data: &SpawnData, host: &dyn MobyHost, rules: &mut SpawnRules) {
+    pub fn spawn_static(&mut self, records: &[PlacedMoby], data: &SpawnData, host: &dyn MobyHost, rules: &mut SpawnRules) {
         // Which records spawn (the rules of `0x3012a0`), and the record index → runtime moby (`0x1fb5e0`).
         let mut map = vec![-1i32; records.len()];
         let mut alt = vec![false; records.len()];

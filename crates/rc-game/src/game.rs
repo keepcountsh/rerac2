@@ -1,5 +1,5 @@
 //! The game-wide state the level code reads and writes (L00 / the boot's .bss; names from the addresses' readers):
-//! currency, health limits and the per-level tallies. What a save holds is milestone I (docs/plan/rac2_bringup.md).
+//! currency, health limits and the per-level tallies. What a save holds is milestone I (docs/plan/bringup.md).
 
 /// The player's progress fields the gameplay code touches.
 #[derive(Clone, Debug)]

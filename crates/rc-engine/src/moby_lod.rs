@@ -49,7 +49,7 @@ pub const DRAW_DISTANCE_CAP: i32 = 500;
 /// with Aranos's mountains), set each frame by its play ([`set_draw_cap`]).
 static DRAW_CAP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(DRAW_DISTANCE_CAP);
 
-/// Sets the mobys' draw-distance cap (crate::rac2_play).
+/// Sets the mobys' draw-distance cap (crate::play).
 pub fn set_draw_cap(cap: i32) { DRAW_CAP.store(cap, std::sync::atomic::Ordering::Relaxed); }
 /// moby+0x73 of a class with metal packets (`InitMobyInstance` 0x20c5f0: class byte 6 ≠ 0 → 0x18).
 pub const SHINE_DISTANCE: u8 = 0x18;
@@ -142,7 +142,7 @@ pub fn moby_proc(v: [f32; 3], r: f32, inp: &ProcInput) -> Result<ProcPick, Cull>
 /// MobyProc with the view's half-angle tangents `tans` (x, y; `UpdateViewContext` writes the frustum planes vf20 /
 /// vf22 from them: a flown ship's wider view, or the 16:9 frame, culls less at the sides).
 pub fn moby_proc_view(v: [f32; 3], r: f32, inp: &ProcInput, tans: (f32, f32)) -> Result<ProcPick, Cull> {
-    // The cap (`$gp` moby cap, the view's far − 64: crate::rac2_play).
+    // The cap (`$gp` moby cap, the view's far − 64: crate::play).
     let cap = DRAW_CAP.load(std::sync::atomic::Ordering::Relaxed);
     let dd = inp.draw_distance.min(cap);
     // vf19.y = itof0(dd << 10) − r; vf1.xy = (vz + r, vz − r); vf3 = vf19 − vf1 (vf19.x = n).

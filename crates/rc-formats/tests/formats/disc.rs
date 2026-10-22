@@ -1,11 +1,11 @@
-//! `rac2` on the Going Commando disc files (`SCUS_972.68` v2.00): the table of contents, the front-end blob, the GUI
-//! sprites and the boot ELF's tables, against the values read in Ghidra (docs/plan/rac2_bringup.md §5). Skipped
+//! `disc` on the disc files (`SCUS_972.68` v2.00): the table of contents, the front-end blob, the GUI
+//! sprites and the boot ELF's tables, against the values read in Ghidra (docs/plan/bringup.md §5). Skipped
 //! without the data folder (`extracted/`, or `RC_EXTRACTED`).
 
-use rc_formats::rac2::boot::{BootElf, GLYPHS, MAIN_MENU};
-use rc_formats::rac2::front_end::FrontEnd;
-use rc_formats::rac2::gui_sprite::{self, Prim};
-use rc_formats::rac2::toc::{movie_row, Toc, MISC_FRONT_END};
+use rc_formats::disc::boot::{BootElf, GLYPHS, MAIN_MENU};
+use rc_formats::disc::front_end::FrontEnd;
+use rc_formats::disc::gui_sprite::{self, Prim};
+use rc_formats::disc::toc::{movie_row, Toc, MISC_FRONT_END};
 
 fn read(rel: &str) -> Option<Vec<u8>> { std::fs::read(rc_formats::test_data::root().join(rel)).ok() }
 

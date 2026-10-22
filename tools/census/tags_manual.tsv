@@ -1,4 +1,4 @@
-# Going Commando census tags read by hand in the Aranos decomp (work/decomp/rc2/level00.elf); they win over the
+# Going Commando census tags read by hand in the Aranos decomp (work/decomp/level00.elf); they win over the
 # generated rows of tools/census/tags.py. conf L = read in the decomp (inferred); cite = a port line, system fixed.
 key	name	system	status	conf	note
 L00:00311688	delete_moby	moby	has	L	state 0xfd / 0xfe: the moby's removal

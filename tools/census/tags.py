@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Going Commando's census tag table (docs/plan/rac2_class_census.md, "Method" step 4).
+"""Going Commando's census tag table (docs/plan/class_census.md, "Method" step 4).
 
 Writes tools/ghidra/names/census_systems.tsv from:
   * work/census/shared.tsv (a census run without tags: every shared function and global the unported units use);
-  * the citations of each address in R&C2's port and docs (crates/rc-game, crates/rc-engine/src/rac2*,
-    crates/rc-formats/src/rac2, docs/plan/rac2*): each citing line is read; a line that says the thing is not ported
+  * the citations of each address in the port's Going Commando code and docs ([`CITES`]: crates/rc-game, the engine's
+    front_end / level_wad / mobys / play, crates/rc-formats/src/disc, the bring-up, census and gap docs): each citing line is read; a line that says the thing is not ported
     (not ported / not yet / later / not drawn / not modelled / waits / stub) counts against, any other line of code
     for. One line of code for: has (the port names it as its model); only lines against: missing; only doc mentions:
     left for the manual table. The citing file names the system;
@@ -15,7 +15,9 @@ places them. Run from the repo root:  python3 tools/census/tags.py [path/to/shar
 import os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-CITES = ["crates/rc-game/", "crates/rc-engine/src/rac2", "crates/rc-formats/src/rac2", "docs/plan/rac2"]
+CITES = ["crates/rc-game/", "crates/rc-engine/src/front_end.rs", "crates/rc-engine/src/level_wad.rs", "crates/rc-engine/src/mobys.rs",
+         "crates/rc-engine/src/play.rs", "crates/rc-formats/src/disc", "docs/plan/bringup.md", "docs/plan/class_census.md",
+         "docs/plan/gaps.md"]
 # Files that came from R&C1's port with its level01 / boot addresses (docs/plan/porting_from_rac1.md): their numbers
 # are not Going Commando's.
 RAC1_ADDRESSED = ["crates/rc-game/src/audio", "crates/rc-game/src/collision", "crates/rc-game/src/hero/anim.rs",
@@ -37,8 +39,8 @@ SYSTEMS = [
     ("rc-game/src/camera", "camera"), ("rc-game/src/cameras", "camera"), ("rc-game/src/hud", "ui"), ("rc-game/src/gui", "ui"),
     ("rc-game/src/help", "ui"), ("rc-game/src/front_end", "ui"), ("rc-game/src/scene", "scene"), ("rc-game/src/level", "level"),
     ("rc-game/src/paths", "path"), ("rc-game/src/rng", "rng"), ("rc-game/src/game", "game"), ("rc-game/src/light", "light"),
-    ("rc-game/src/sky", "sky"), ("rc-engine/src/rac2_mobys", "moby"), ("rc-engine/src/rac2_play", "game"),
-    ("rc-engine/src/rac2_level", "level"), ("rc-formats/src/rac2", "formats"), ("docs/plan/rac2", "docs"),
+    ("rc-game/src/sky", "sky"), ("rc-engine/src/mobys", "moby"), ("rc-engine/src/play", "game"),
+    ("rc-engine/src/level_wad", "level"), ("rc-formats/src/disc", "formats"), ("docs/plan/", "docs"),
 ]
 
 

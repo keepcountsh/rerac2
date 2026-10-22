@@ -1,5 +1,5 @@
 //! **The runtime level change**: the old level ends and the next one is loaded in this process, exactly as the boot
-//! loads the first one. The game asks for it when a level's main loop ends (`0x2f50f8`, crate::rac2_play: Aranos's
+//! loads the first one. The game asks for it when a level's main loop ends (`0x2f50f8`, crate::play: Aranos's
 //! last trigger sends Ratchet to Oozla).
 //!
 //! **API**: [`LevelChange::start_load`] / [`LevelChange::loaded`] / [`LevelChange::swap`] (the async loader, its

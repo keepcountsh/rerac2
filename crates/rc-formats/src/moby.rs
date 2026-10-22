@@ -670,7 +670,7 @@ pub fn parse_moby_class(blob: &[u8]) -> Result<MobyClass> {
 }
 
 /// Gives `class` the packets of a separate mesh blob: `u8 high, low, metal, metal_begin`, `+4` the packet table,
-/// offsets from the blob's start (Going Commando's armour, `crate::rac2::armor`; its level class 0 has none).
+/// offsets from the blob's start (Going Commando's armour, `crate::disc::armor`; its level class 0 has none).
 pub fn attach_packets(class: &mut MobyClass, mesh: &[u8]) -> Result<()> {
     let b = Buf(mesh);
     let (high, low, metal, metal_begin) = (b.u8(0)? as usize, b.u8(1)? as usize, b.u8(2)? as usize, b.u8(3)? as usize);

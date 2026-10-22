@@ -1,6 +1,6 @@
 //! Going Commando's (R&C2) front end in the engine: a data folder holding `RC2.HDR` (crate::disc_source::game) runs
-//! the shared app on its level (crate::rac2_level; Aranos, level 0, unless `RC_LEVEL`), and this plugin plays the
-//! boot's front end over it (docs/plan/rac2_bringup.md; logic in `rc_game`), as R&C1's front end runs over its
+//! the shared app on its level (crate::level_wad; Aranos, level 0, unless `RC_LEVEL`), and this plugin plays the
+//! boot's front end over it (docs/plan/bringup.md; logic in `rc_game`), as R&C1's front end runs over its
 //! loaded level: the splash screens, the Insomniac movie, the title (the couch movies with "Press START") and the main
 //! menu. Its layer covers the world (an opaque camera above the world cameras) until New Game is taken; then the layer
 //! goes and the level shows. The original's New Game opens the save-slot page first (boot 0x2dd888, page 0x260ec8:
@@ -19,16 +19,16 @@
 //!   `⌊k·fps/60⌋` at frame k). **No sound yet**: the movie audio, the front end's sounds and music are not played.
 //!
 //! Environment: `RC_PLAY_SCRIPT` (crate::input_map::Script) drives the pad by frame, `RC_SCREENSHOT` +
-//! `RC_SCREENSHOT_FRAME` capture a frame (crate::determinism), `RC_RAC2_TRACE=1` logs the front end's movies and rows.
+//! `RC_SCREENSHOT_FRAME` capture a frame (crate::determinism), `RC_FRONT_END_TRACE=1` logs the front end's movies and rows.
 
 use crate::hud_render::{self, Hud2d, HudComposite, HudMaterial, Layer, Tex};
 use anyhow::{Context, Result};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
-use rc_formats::rac2::boot::{BootElf, GLYPHS, GLYPHS_2, MAIN_MENU};
-use rc_formats::rac2::front_end::FrontEnd as Blob;
-use rc_formats::rac2::toc::{self, Toc, MISC_FRONT_END, MOVIE_FILES};
-use rc_formats::rac2::{gui_sprite, Picture};
+use rc_formats::disc::boot::{BootElf, GLYPHS, GLYPHS_2, MAIN_MENU};
+use rc_formats::disc::front_end::FrontEnd as Blob;
+use rc_formats::disc::toc::{self, Toc, MISC_FRONT_END, MOVIE_FILES};
+use rc_formats::disc::{gui_sprite, Picture};
 use rc_formats::texture::Texture;
 use rc_game::front_end::{clock_seed, Assets as FrontAssets, FrontEnd, Request};
 use rc_game::gui;
@@ -52,7 +52,7 @@ pub struct Data {
 }
 
 impl Data {
-    /// The GUI sprites, the glyphs and the texture set (the in-game HUD's too: crate::rac2_play).
+    /// The GUI sprites, the glyphs and the texture set (the in-game HUD's too: crate::play).
     pub(crate) fn assets(&self) -> &FrontAssets { &self.assets }
     pub(crate) fn textures(&self) -> &[Texture] { &self.textures }
 
@@ -80,7 +80,7 @@ impl Data {
         let movies = (0..64).map(|r| t.movie(r)).collect::<rc_formats::buf::Result<Vec<_>>>()?;
         let movie_files = MOVIE_FILES.iter().map(|f| std::fs::metadata(root.join(f)).map(|m| m.len()).with_context(|| format!("{f} in {}", root.display()))).collect::<Result<Vec<_>>>()?;
         println!(
-            "rac2: front end loaded: {} strings, {} GUI sprites, main menu {:?}",
+            "front end: front end loaded: {} strings, {} GUI sprites, main menu {:?}",
             assets.strings.0.len(), assets.sprites.len(),
             assets.main_menu.iter().map(|r| String::from_utf8_lossy(assets.strings.get(r.text)).into_owned()).collect::<Vec<_>>()
         );
@@ -157,7 +157,7 @@ impl Playing {
         Playing { id, rx: Mutex::new(rx), fps: None, frame: 0, received: 0, ended: false, audio: None }
     }
 
-    /// An in-level movie (`0x371bd8`): `RC2.HDR`'s movie row `row` (crate::rac2_play; the front end's rows by id
+    /// An in-level movie (`0x371bd8`): `RC2.HDR`'s movie row `row` (crate::play; the front end's rows by id
     /// are [`Playing::start`]'s).
     pub(crate) fn level(id: u32, row: usize) -> Playing {
         let (tx, rx) = sync_channel(4);
@@ -187,7 +187,7 @@ impl Playing {
                 Ok(Msg::Opened(f, a)) => (self.fps, self.audio) = (Some(f), a),
                 Ok(Msg::Picture(p)) => { self.received += 1; picture = Some(p); }
                 Ok(Msg::End) | Err(_) => self.ended = true,
-                Ok(Msg::Failed(e)) => { eprintln!("rac2: movie {:#x}: {e}; it ends here", self.id); self.ended = true; }
+                Ok(Msg::Failed(e)) => { eprintln!("front end: movie {:#x}: {e}; it ends here", self.id); self.ended = true; }
             }
         }
         self.frame += 1;
@@ -210,7 +210,7 @@ impl Playing {
 }
 
 #[derive(Resource)]
-pub(crate) struct Rac2 {
+pub(crate) struct FrontEndState {
     /// The opaque camera the layer's composite draws on (above the world, below the frame's present camera).
     camera: Option<Entity>,
     /// New Game was taken: the layer is gone and nothing ticks.
@@ -227,8 +227,8 @@ pub(crate) struct Rac2 {
     layer: Option<Layer>,
 }
 
-impl Rac2 {
-    /// New Game was taken (the game ticks from now on, crate::rac2_play).
+impl FrontEndState {
+    /// New Game was taken (the game ticks from now on, crate::play).
     pub(crate) fn done(&self) -> bool { self.done }
 }
 
@@ -258,7 +258,7 @@ impl Plugin for FrontEndPlugin {
     fn build(&self, app: &mut App) {
         let Some(data) = self.data.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
         let seed = clock_seed(if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() });
-        app.insert_resource(Rac2 {
+        app.insert_resource(FrontEndState {
             camera: None,
             done: false,
             data,
@@ -268,7 +268,7 @@ impl Plugin for FrontEndPlugin {
             movie_ended: false,
             script: self.script.clone(),
             ticks: 0,
-            trace: std::env::var("RC_RAC2_TRACE").is_ok_and(|v| v.trim() == "1"),
+            trace: std::env::var("RC_FRONT_END_TRACE").is_ok_and(|v| v.trim() == "1"),
             layer: None,
         })
         .add_systems(Startup, setup)
@@ -279,29 +279,29 @@ impl Plugin for FrontEndPlugin {
 
 fn setup(
     mut commands: Commands,
-    mut rac2: ResMut<Rac2>,
+    mut fe: ResMut<FrontEndState>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<HudMaterial>>,
     mut composites: ResMut<Assets<HudComposite>>,
 ) {
     // Above every world, HUD and menu camera of the shared app; the frame's present camera (order 1000) draws after it.
-    let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() }, Name::new("rac2 front end camera"))).id();
-    rac2.camera = Some(cam);
+    let cam = commands.spawn((Camera2d, Camera { order: 900, clear_color: ClearColorConfig::Custom(Color::BLACK), ..default() }, Name::new("front end camera"))).id();
+    fe.camera = Some(cam);
     let scaling = hud_render::scaling(crate::graphics::Hud::Original);
-    let layer = Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &rac2.data.textures, scaling, cam);
-    rac2.layer = Some(layer);
+    let layer = Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &fe.data.textures, scaling, cam);
+    fe.layer = Some(layer);
 }
 
 #[allow(clippy::too_many_arguments)]
 fn tick(
-    mut rac2: ResMut<Rac2>,
+    mut fe: ResMut<FrontEndState>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     gamepads: Query<&Gamepad>,
 ) {
-    let r = &mut *rac2;
+    let r = &mut *fe;
     if r.done { return; }
     let held = match &r.script {
         Some(s) => s.at(r.ticks).buttons,
@@ -310,20 +310,20 @@ fn tick(
     let ended = std::mem::take(&mut r.movie_ended);
     for req in r.front.tick(held, ended, &r.data.assets) {
         match req {
-            Request::Sound(n) => if r.trace { println!("rac2: frame {}: sound {n} (not played)", r.ticks) },
+            Request::Sound(n) => if r.trace { println!("front end: frame {}: sound {n} (not played)", r.ticks) },
             // New Game (kind 4): the level. The save-slot page in between is not ported (module docs).
             Request::Row { kind: 4, .. } => {
-                println!("rac2: New Game: level {:02}", crate::level_load::level_index());
+                println!("front end: New Game: level {:02}", crate::level_load::level_index());
                 r.done = true;
             }
-            Request::Row { kind, target } => println!("rac2: main menu row (kind {kind}, target {target:#x}): not in this version yet"),
+            Request::Row { kind, target } => println!("front end: main menu row (kind {kind}, target {target:#x}): not in this version yet"),
         }
     }
     // The movie the front end asks for: started, kept, or stopped.
     let want = r.front.movie();
     if r.movie.as_ref().map(|m| m.id) != want {
         r.movie = want.map(|id| {
-            if r.trace { println!("rac2: frame {}: movie {id:#x}", r.ticks) }
+            if r.trace { println!("front end: frame {}: movie {id:#x}", r.ticks) }
             Playing::start(&r.data, id)
         });
     }
@@ -337,8 +337,8 @@ fn tick(
     r.ticks += 1;
 }
 
-fn draw(mut rac2: ResMut<Rac2>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>) {
-    let r = &mut *rac2;
+fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>) {
+    let r = &mut *fe;
     if r.done { return; }
     let Some(layer) = r.layer.as_ref() else { return };
     if let Some(p) = r.picture.take() { layer.write(&mut images, MOVIE, &p); }
@@ -359,8 +359,8 @@ fn draw(mut rac2: ResMut<Rac2>, mut images: ResMut<Assets<Image>>, mut meshes: R
 }
 
 /// After New Game: the layer and its camera go, the movie stops; the level's cameras show.
-fn finish(mut commands: Commands, mut rac2: ResMut<Rac2>) {
-    let r = &mut *rac2;
+fn finish(mut commands: Commands, mut fe: ResMut<FrontEndState>) {
+    let r = &mut *fe;
     if !r.done { return; }
     if let Some(layer) = r.layer.take() { layer.despawn(&mut commands); }
     if let Some(cam) = r.camera.take() { commands.entity(cam).despawn(); }

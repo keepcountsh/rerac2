@@ -3,7 +3,7 @@
 //! light word and ambient of their record (`0x3012a0`); his items and a scene's actors copy his.
 
 use crate::hero::physics::V3;
-use rc_formats::rac2::gameplay::LightRegion;
+use rc_formats::disc::gameplay::LightRegion;
 
 /// `0x31a8e4(moby)` at `pos`: the first region whose sphere holds `pos` (`|pos − c|² < w`) decides; inside its box
 /// (the point through the inverse matrix within the unit cube) and when its flag bit 0 is set, the ambient and the

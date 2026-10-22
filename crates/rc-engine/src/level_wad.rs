@@ -1,6 +1,6 @@
-//! A Going Commando level for the shared renderers: `G/LEVELn.WAD`'s lumps (rc_formats::rac2::level) read into the
+//! A Going Commando level for the shared renderers: `G/LEVELn.WAD`'s lumps (rc_formats::disc::level) read into the
 //! same [`LoadedLevel`] R&C1's levels fill (crate::level_load), so tfrags, ties, shrubs, the sky, the occlusion grid,
-//! the collision and the textures draw through R&C1's renderers (docs/plan/rac2_bringup.md §6).
+//! the collision and the textures draw through R&C1's renderers (docs/plan/bringup.md §6).
 //!
 //! What a Going Commando level has so far (§6.3): A, the world; C, the moby classes at their instances (R&C1's moby
 //! reader with R&C2's vertex table header, `rc_formats::moby::parse_moby_class_for`). Left empty here, each for its
@@ -9,7 +9,7 @@
 
 use crate::level_load::{LoadTimings, LoadedLevel};
 use anyhow::{Context, Result};
-use rc_formats::rac2::level::{LevelWad, Lump, Part};
+use rc_formats::disc::level::{LevelWad, Lump, Part};
 use rc_formats::{level, texture, tfrag};
 use std::path::Path;
 use std::time::Instant;
@@ -17,16 +17,16 @@ use std::time::Instant;
 /// Level `index`'s file in the data folder.
 pub fn file_name(index: u32) -> String { format!("G/LEVEL{index}.WAD") }
 
-/// Ratchet's body (rc_formats::rac2::armor): level class 0's header and skeleton with armour `armor`'s packets, its
+/// Ratchet's body (rc_formats::disc::armor): level class 0's header and skeleton with armour `armor`'s packets, its
 /// textures appended to the level's moby texture table (slot `k` of the armour = entry `moby_textures.len() + k`).
-/// The wrench (class 0x47) is supplied the same way from its row ([`rc_formats::rac2::armor::WRENCH_ROW`]).
+/// The wrench (class 0x47) is supplied the same way from its row ([`rc_formats::disc::armor::WRENCH_ROW`]).
 fn attach_ratchet(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, armor: usize) -> Result<()> {
     attach_armour_row(root, core, mobys, textures, 0, armor)
 }
 
 /// Armour row `row`'s mesh and textures into class `o_class` ([`attach_ratchet`]).
 fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, o_class: i32, row: usize) -> Result<()> {
-    use rc_formats::rac2::{armor as ar, toc::Toc};
+    use rc_formats::disc::{armor as ar, toc::Toc};
     let hdr = crate::disc_source::read(root, "RC2.HDR")?;
     let parts = ar::armors(&Toc::parse(&hdr)?)?;
     let part = *parts.get(row).with_context(|| format!("no armour row {row}"))?;
@@ -43,7 +43,7 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
     Ok(())
 }
 
-/// The hand gadgets the port loads with every level (`G/GADGET.WAD`, rc_formats::rac2::gadget): the game streams the
+/// The hand gadgets the port loads with every level (`G/GADGET.WAD`, rc_formats::disc::gadget): the game streams the
 /// one in Ratchet's hand (`0x306018`) when he takes it; the port has them from the start.
 pub const GADGETS: [i32; 1] = [rc_game::hero::items::LANCER_CLASS as i32];
 
@@ -68,7 +68,7 @@ fn attach_gadget(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_r
 
 /// Gadget `o_class`'s class blob and textures from `GADGET.WAD`.
 fn gadget_blob(root: &Path, o_class: i32) -> Result<(Vec<u8>, Vec<rc_formats::texture::Texture>)> {
-    use rc_formats::rac2::{gadget, toc::Toc};
+    use rc_formats::disc::{gadget, toc::Toc};
     let hdr = crate::disc_source::read(root, "RC2.HDR")?;
     let toc = Toc::parse(&hdr)?;
     let e = *gadget::gadgets(&toc)?.iter().find(|e| e.o_class == o_class).with_context(|| format!("no gadget {o_class:#x}"))?;
@@ -76,11 +76,11 @@ fn gadget_blob(root: &Path, o_class: i32) -> Result<(Vec<u8>, Vec<rc_formats::te
     Ok((g.class, g.textures))
 }
 
-/// The ship's paint (rc_formats::rac2::space; `0x1a7af8 >> 16 & 0x1f`, 0 on a new game) appended to the level's moby
+/// The ship's paint (rc_formats::disc::space; `0x1a7af8 >> 16 & 0x1f`, 0 on a new game) appended to the level's moby
 /// texture table and given to every slot of the classes whose core entry has `+8 ≠ 0` (`0x304660`: the ship and its
 /// parts).
 fn attach_ship_paint(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, paint: usize) -> Result<()> {
-    use rc_formats::rac2::{space, toc::Toc};
+    use rc_formats::disc::{space, toc::Toc};
     let hdr = crate::disc_source::read(root, "RC2.HDR")?;
     let t = space::paint(&Toc::parse(&hdr)?, &crate::disc_source::read(root, "G/SPACE.WAD")?, paint)?;
     let index = core.moby_textures.len().max(textures.iter().filter(|t| t.table == texture::TextureTable::Moby).map(|t| t.index + 1).max().unwrap_or(0));
@@ -176,7 +176,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let fog = crate::game_camera::LevelFog::parse(&gameplay).context("parsing level settings")?;
     let background = crate::game_camera::level_background(&gameplay).context("parsing level settings")?;
     let collision = rc_formats::collision::parse_collision(&core, &core_data)
-        .map_err(|e| eprintln!("rac2 level {index}: collision not parsed ({e})"))
+        .map_err(|e| eprintln!("level {index}: collision not parsed ({e})"))
         .ok();
     let ties = crate::tie_render::load_ties(&core, &core_data, gs_ram, &gameplay, &textures).context("loading ties")?;
     let shrubs = crate::shrub_render::load_shrubs(&core, &core_data, gs_ram, &gameplay, &textures).context("loading shrubs")?;
@@ -184,21 +184,21 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?;
     let mut textures = textures;
     let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
-    if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("rac2: Ratchet's armour not attached ({e:#}); he has no mesh"); }
-    if let Err(e) = attach_armour_row(root, &core, &mut mobys, &mut textures, 0x47, rc_formats::rac2::armor::WRENCH_ROW) { eprintln!("rac2: the wrench's mesh not attached ({e:#})"); }
+    if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("level: Ratchet's armour not attached ({e:#}); he has no mesh"); }
+    if let Err(e) = attach_armour_row(root, &core, &mut mobys, &mut textures, 0x47, rc_formats::disc::armor::WRENCH_ROW) { eprintln!("level: the wrench's mesh not attached ({e:#})"); }
     for g in GADGETS {
-        if let Err(e) = attach_gadget(root, &core, &mut mobys, &mut textures, g) { eprintln!("rac2: gadget {g:#x} not loaded ({e:#})"); }
+        if let Err(e) = attach_gadget(root, &core, &mut mobys, &mut textures, g) { eprintln!("level: gadget {g:#x} not loaded ({e:#})"); }
     }
-    if let Err(e) = attach_ship_paint(root, &core, &mut mobys, &mut textures, 0) { eprintln!("rac2: the ship's paint not attached ({e:#})"); }
+    if let Err(e) = attach_ship_paint(root, &core, &mut mobys, &mut textures, 0) { eprintln!("level: the ship's paint not attached ({e:#})"); }
     let occlusion = crate::occlusion::load(&core, &core_data, &gameplay, &tfrags, &ties.instances, &mobys.instances).context("loading occlusion")?;
     let particles = crate::particle_render::LevelParticles {
-        textures: rc_formats::particle_tex::parse_particle_textures(&core, core_index, &core_data).map_err(|e| eprintln!("rac2: no particle textures ({e})")).ok(),
+        textures: rc_formats::particle_tex::parse_particle_textures(&core, core_index, &core_data).map_err(|e| eprintln!("level: no particle textures ({e})")).ok(),
     };
-    let death_z = rc_formats::rac2::gameplay::level_settings(&gameplay)?
+    let death_z = rc_formats::disc::gameplay::level_settings(&gameplay)?
         .and_then(|s| s.get(0x28..0x2c))
         .map_or(f32::NEG_INFINITY, |b| f32::from_le_bytes(b.try_into().unwrap()));
     println!(
-        "rac2: level {index} ({name}): {} tfrags, {} textures, {} tie classes / {} instances, {} shrub classes / {} instances, {} moby classes / {} instances, sky {}, collision {}",
+        "level: level {index} ({name}): {} tfrags, {} textures, {} tie classes / {} instances, {} shrub classes / {} instances, {} moby classes / {} instances, sky {}, collision {}",
         tfrags.len(), textures.len(), ties.classes.len(), ties.instances.len(), shrubs.classes.len(), shrubs.instances.len(),
         mobys.classes.len(), mobys.instances.len(),
         sky.is_some(), collision.is_some()
@@ -242,7 +242,7 @@ fn music(root: &Path, index: u32) -> Result<[Option<std::sync::Arc<rc_game::audi
 /// writes the bank handle). The port's audio has one bank, so each gadget's is appended to the level's and its defs
 /// point past the level's sounds.
 fn gadget_sounds(root: &Path, bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds) {
-    use rc_formats::rac2::{gadget, toc::Toc};
+    use rc_formats::disc::{gadget, toc::Toc};
     let run = |bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds| -> Result<()> {
         let hdr = crate::disc_source::read(root, "RC2.HDR")?;
         let toc = Toc::parse(&hdr)?;
@@ -290,11 +290,11 @@ fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &leve
         });
         // The sound instances (the gameplay's `sound_instances` section, R&C1's records) with their pvar blocks (in
         // the moby pvar table: `{def, min, max, timer, slot}`, the reverb boxes' `{type, depth}`).
-        let instances = match rc_formats::rac2::gameplay::section(gameplay, "sound_instances")? {
+        let instances = match rc_formats::disc::gameplay::section(gameplay, "sound_instances")? {
             Some(sec) => rc_formats::sound_bank::parse_sound_instances_at(sec, 0)?,
             None => Vec::new(),
         };
-        let pvars = rc_formats::rac2::gameplay::pvar_blocks(gameplay)?;
+        let pvars = rc_formats::disc::gameplay::pvar_blocks(gameplay)?;
         let instance_pvars = instances.iter().map(|i| usize::try_from(i.pvar_index).ok().and_then(|k| pvars.get(k)).cloned()).collect();
         Ok(rc_game::audio::LevelAudio {
             bank, sounds, instances, instance_pvars, music, env_points: Vec::new(), collision: collision.map(std::sync::Arc::new),

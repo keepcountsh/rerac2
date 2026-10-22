@@ -4,7 +4,7 @@
 //!
 //! * **Part A** (`0x305d50`): `{class offset, class size, texture offset, texture size}` (byte offsets in the file),
 //!   each a WAD stream: the moby class blob (Going Commando's format) and its texture list (as the armours',
-//!   [`crate::rac2::armor::read_textures`]; size 0: none).
+//!   [`crate::disc::armor::read_textures`]; size 0: none).
 //! * **Part B** (`0x305810`): the gadget's sound bank (an `SBlk` after a small header).
 
 use super::toc::{Global, Toc};

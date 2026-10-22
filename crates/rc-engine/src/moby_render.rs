@@ -170,7 +170,7 @@ pub fn load_mobys_with_gs(root: &Path, core: &LevelCore, core_data: &[u8], gamep
     let anim = moby_anim::load_anim_classes(core, core_data, &classes);
     let _ = mesh;
     // Not done: the loader's ground snap of the rooted records (G-CLS-004).
-    let instances = rc_formats::rac2::gameplay::moby_instances(gameplay_file).map(|v| v.into_iter().map(|m| m.base).collect::<Vec<_>>()).context("parsing moby instances")?;
+    let instances = rc_formats::disc::gameplay::moby_instances(gameplay_file).map(|v| v.into_iter().map(|m| m.base).collect::<Vec<_>>()).context("parsing moby instances")?;
     let env_maps = decode_env_maps(core, gs_ram);
     let parse_time = t0.elapsed();
 

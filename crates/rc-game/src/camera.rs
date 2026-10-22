@@ -1,7 +1,7 @@
 //! Going Commando's follow camera, type 0 (L00): the camera update `0x2d9f38` → the current camera's type update
 //! (table `0x2a3a0c`, 0x14 bytes a type: update, …, init) → type 0's update `0x4278c8`, init `0x428518` /
 //! `0x424908`. Native `f32` (docs/plan/decisions.md "native-first"). R&C2's type-0 camera is R&C1's evolved — the
-//! same steps in the same order with R&C2's constants and some additions (docs/plan/rac2_bringup.md §6.5) — so this
+//! same steps in the same order with R&C2's constants and some additions (docs/plan/bringup.md §6.5) — so this
 //! follows the R&C1 port's organisation (`crate::camera`), each step read from R&C2's code.
 //!
 //! | Step | L00 | Here |

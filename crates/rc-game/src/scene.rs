@@ -1,7 +1,7 @@
 //! The scenes and movies (L00): the queue they are asked through (`0x1bef40`), the game's modes with their stack
 //! (`0x1a8f00` the mode — 0 play, 1 a movie, 2 a scene — and the request `0x1a8f08`, `0x32c5f0` / `0x32c780` /
 //! `0x32c858`), and the in-engine scene player (`0x370e08` the start, `0x3716f8` the tick, `0x3711e8` the end) over a
-//! level's scenes ([`rc_formats::rac2::scene`], R&C1's chunk format). The engine loads the scene data, runs the world
+//! level's scenes ([`rc_formats::disc::scene`], R&C1's chunk format). The engine loads the scene data, runs the world
 //! in a scene's ticks, poses the actors and plays the movies.
 //!
 //! **The queue**: five `{id, is a scene}` entries in a ring. While a chain plays nothing more is taken; the chain
@@ -57,7 +57,7 @@ impl Queue {
     /// `0x2f4ee8`: `id` queued, unless the ring is full or a chain plays.
     pub fn push(&mut self, id: i32) -> bool {
         if self.count == 5 || self.busy { return false; }
-        self.ring[self.write] = (id, rc_formats::rac2::scene::is_scene(id));
+        self.ring[self.write] = (id, rc_formats::disc::scene::is_scene(id));
         self.write = (self.write + 1) % 5;
         self.count += 1;
         true
@@ -130,7 +130,7 @@ impl Player {
 pub enum Change {
     /// Load scene `id` (its level record) and call [`Scenes::start_scene`].
     StartScene(i32),
-    /// Play movie `id` (its row: [`rc_formats::rac2::scene::record_of`]); then [`Scenes::movie_done`].
+    /// Play movie `id` (its row: [`rc_formats::disc::scene::record_of`]); then [`Scenes::movie_done`].
     StartMovie(i32),
     /// The scene ended: [`Scenes::end_scene`] has run; the actors' class slots go back.
     EndedScene,
@@ -390,7 +390,7 @@ impl Scenes {
     /// on the screen's corners — the ship's frame through its matrix, then 0.15 of the way to the camera `camera`.
     pub fn ship_screen(&self, level: i32, world: &crate::moby::MobyWorld, camera: V3) -> Option<ShipScreen> {
         let p = self.player.as_ref().filter(|_| level == 0 && self.mode == SCENE)?;
-        if rc_formats::rac2::scene::record_of(p.id) != 0 || !(0xdc..=0x172).contains(&p.tick) { return None; }
+        if rc_formats::disc::scene::record_of(p.id) != 0 || !(0xdc..=0x172).contains(&p.tick) { return None; }
         let actor = p.actors.get(1).map(|a| a.0).filter(|&a| a < world.mobys.len())?;
         let mut corners = [[0.0; 3]; 4];
         if let Some(ship) = p.actors.iter().filter_map(|a| world.mobys.get(a.0)).find(|m| m.o_class == 0xd54) {

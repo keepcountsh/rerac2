@@ -2,7 +2,7 @@
 //! starts with its own table of `{offset, size}` byte ranges (0x80 bytes), the lumps the level overlay and
 //! `LoadLevelCoreData` read. The lumps that R&C1 kept as separate files (`levels/NN/core_index.bin`, `gs_ram.bin`,
 //! `core_data.bin`, `gameplay_ntsc.bin`, …) are slices of this one file, and where their layout matches R&C1's the
-//! shared readers take them as they are (docs/plan/rac2_bringup.md §6).
+//! shared readers take them as they are (docs/plan/bringup.md §6).
 
 use crate::buf::{invalid, Buf, Result};
 use std::ops::Range;

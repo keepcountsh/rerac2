@@ -2,8 +2,8 @@
 //! draw order: the GUI sprites (`FUN_003018a0`), the font (`FUN_0027fcb0`, `FUN_0027f920`) and full-screen pictures
 //! and fades. The engine draws the list as the GS would (alpha 0x80 = 1.0, `(Cs − Cd)·As/128 + Cd`).
 
-use rc_formats::rac2::boot::Glyph;
-use rc_formats::rac2::gui_sprite::{BoneKey, Prim, Sprite};
+use rc_formats::disc::boot::Glyph;
+use rc_formats::disc::gui_sprite::{BoneKey, Prim, Sprite};
 
 /// The screen (`FUN_0027baa0`, NTSC: `FUN_00284c18(0x200, 0x1a0, …)`).
 pub const SCREEN_W: f32 = 512.0;
@@ -27,7 +27,7 @@ pub enum Tex {
 /// The pictures the front end puts in the frame buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Picture {
-    /// `rc_formats::rac2::front_end::SPLASHES[i]`.
+    /// `rc_formats::disc::front_end::SPLASHES[i]`.
     Splash(usize),
     /// The menu backdrop.
     Backdrop,

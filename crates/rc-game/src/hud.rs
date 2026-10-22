@@ -34,8 +34,8 @@
 //! the other screens of the GUI object, PAL's sizes.
 
 use crate::gui::{self, Quad, Tex};
-use rc_formats::rac2::boot::Glyph;
-use rc_formats::rac2::gui_sprite::Sprite;
+use rc_formats::disc::boot::Glyph;
+use rc_formats::disc::gui_sprite::Sprite;
 use std::collections::HashMap;
 
 /// A screen marker (`0x1bb000 + 0x30·i`).

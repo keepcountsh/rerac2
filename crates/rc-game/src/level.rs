@@ -1,7 +1,7 @@
 //! The level's data the objects read besides their own: the volumes (L00 `0x1b1f0c` cuboids, `0x1b1f14` spheres,
 //! `0x1b1f1c` cylinders; the gameplay's sections 26..28) and the paths (`0x1fda00`, section 30).
 
-pub use rc_formats::rac2::gameplay::Volume;
+pub use rc_formats::disc::gameplay::Volume;
 
 type V3 = [f32; 3];
 
@@ -14,23 +14,23 @@ pub struct LevelData {
     /// The paths' points `{x, y, z, the length to the next}`.
     pub paths: Vec<Vec<[f32; 4]>>,
     /// The trigger areas (`0x1b1a80`).
-    pub areas: Vec<rc_formats::rac2::gameplay::Area>,
+    pub areas: Vec<rc_formats::disc::gameplay::Area>,
     /// The light regions (`0x1c58c0`, crate::light).
-    pub light_regions: Vec<rc_formats::rac2::gameplay::LightRegion>,
+    pub light_regions: Vec<rc_formats::disc::gameplay::LightRegion>,
 }
 
 impl LevelData {
     /// From the gameplay file (missing sections: empty).
     pub fn load(gameplay: &[u8]) -> LevelData {
-        use rc_formats::rac2::gameplay as g;
-        let v = |n: &str| g::volumes(gameplay, n).map_err(|e| eprintln!("rac2: {n}: {e}")).unwrap_or_default();
+        use rc_formats::disc::gameplay as g;
+        let v = |n: &str| g::volumes(gameplay, n).map_err(|e| eprintln!("level: {n}: {e}")).unwrap_or_default();
         LevelData {
             cuboids: v("cuboids"),
             spheres: v("spheres"),
             cylinders: v("cylinders"),
             paths: g::paths(gameplay).unwrap_or_default(),
-            areas: g::areas(gameplay).map_err(|e| eprintln!("rac2: areas: {e}")).unwrap_or_default(),
-            light_regions: g::light_regions(gameplay).map_err(|e| eprintln!("rac2: light regions: {e}")).unwrap_or_default(),
+            areas: g::areas(gameplay).map_err(|e| eprintln!("level: areas: {e}")).unwrap_or_default(),
+            light_regions: g::light_regions(gameplay).map_err(|e| eprintln!("level: light regions: {e}")).unwrap_or_default(),
         }
     }
 

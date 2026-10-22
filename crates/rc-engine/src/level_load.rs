@@ -1,5 +1,5 @@
 //! The loaded level: what the renderers and the game read from one level of the game data folder (`G/LEVELn.WAD`,
-//! read by crate::rac2_level).
+//! read by crate::level_wad).
 
 use anyhow::Result;
 use rc_formats::{texture, tfrag};
@@ -82,4 +82,4 @@ pub fn set_level_index(index: u32) { CURRENT_LEVEL.store(index, std::sync::atomi
 
 static CURRENT_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
 
-pub fn load_level(root: &Path, index: u32) -> Result<LoadedLevel> { crate::rac2_level::load(root, index) }
+pub fn load_level(root: &Path, index: u32) -> Result<LoadedLevel> { crate::level_wad::load(root, index) }

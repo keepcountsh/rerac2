@@ -448,7 +448,7 @@ fn read_packet(blob: Buf, lod_table: usize, ph: TiePacketHeader) -> Result<TiePa
     pk.colors_b = blob.sub(color_start + color_qw * 0x10, color_bytes, "tie colour indices B")?.bytes().to_vec();
     pk.slot_table = blob.sub(base + ph.slot_table_ofs as usize * 0x10, ph.slot_table_size as usize * 0x10, "tie slot table")?.bytes().to_vec();
     // Going Commando's packets carry no colour indices (`color_count` 0): its tie colours are per instance in the
-    // gameplay file (`rac2::gameplay`, section `tie_colors`). Index 0 stands in until they are mapped.
+    // gameplay file (`disc::gameplay`, section `tie_colors`). Index 0 stands in until they are mapped.
     let need = d.div_ceil(4) * 4 + 4 * f;
     pk.colors.resize(need.max(pk.colors.len()), 0);
     pk.colors_b.resize(need.max(pk.colors_b.len()), 0);
@@ -475,7 +475,7 @@ fn read_packet(blob: Buf, lod_table: usize, ph: TiePacketHeader) -> Result<TiePa
 ///
 /// Not mapped (kept in `header_ext`'s place, raw, in the blob): 0x24..0x30, 0x38..0x3c, 0x4c (0x80787878 on most
 /// classes), 0x60..0x80, and the region between the normals and the ad-gifs.
-fn rac2_tie_header(b: Buf) -> Result<TieClassHeader> {
+fn read_tie_header(b: Buf) -> Result<TieClassHeader> {
     let f = |o: usize| b.f32(o);
     Ok(TieClassHeader {
         packets: [b.i32(0)?, b.i32(4)?, b.i32(8)?],
@@ -499,7 +499,7 @@ fn rac2_tie_header(b: Buf) -> Result<TieClassHeader> {
 /// Parses a tie class blob.
 pub(crate) fn parse_tie_class(blob: &[u8]) -> Result<TieClass> {
     let b = Buf(blob);
-    let h = rac2_tie_header(b)?;
+    let h = read_tie_header(b)?;
     let first = (0..3).filter(|&l| h.packet_count[l] != 0 && h.packets[l] > 0).map(|l| h.packets[l] as usize).min().unwrap_or(blob.len());
     if first < 0x80 { return invalid("tie packet table overlaps the class header"); }
     let mut tc = TieClass {

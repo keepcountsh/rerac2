@@ -1,5 +1,5 @@
 //! The boot's front end (`FUN_0026ede8`, the first code `main` runs): the splash screens, the Insomniac movie, the
-//! title (the couch movies with "Press START") and the main menu. Spec: docs/plan/rac2_bringup.md §5.
+//! title (the couch movies with "Press START") and the main menu. Spec: docs/plan/bringup.md §5.
 //!
 //! One [`FrontEnd::tick`] per 60 Hz frame. The engine plays the movies it asks for ([`FrontEnd::movie`]) and tells it
 //! when one has ended; the front end decides the skip itself, as the PSS player's loop does (`FUN_0034fd90`).
@@ -20,9 +20,9 @@
 //! title.
 
 use crate::gui::{self, Picture, Quad};
-use rc_formats::rac2::boot::{Glyph, MenuRow};
-use rc_formats::rac2::gui_sprite::Sprite;
-use rc_formats::rac2::front_end::Strings;
+use rc_formats::disc::boot::{Glyph, MenuRow};
+use rc_formats::disc::gui_sprite::Sprite;
+use rc_formats::disc::front_end::Strings;
 use std::collections::HashMap;
 
 /// PS2 pad bits (libpad, active high here).

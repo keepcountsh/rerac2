@@ -1,5 +1,5 @@
-//! Readers for Ratchet & Clank: Going Commando (R&C2, NTSC-U `SCUS_972.68` v2.00). The disc keeps its assets as
-//! ISO files (`RC2.HDR`, `G/*.WAD`), which the extractor copies as they are (docs/plan/rac2_bringup.md §2). The
+//! Readers for the disc's own files (NTSC-U `SCUS_972.68` v2.00), the ones R&C1 did not have. The disc keeps its
+//! assets as ISO files (`RC2.HDR`, `G/*.WAD`), which the extractor copies as they are (docs/plan/bringup.md §2). The
 //! layouts here are the ones the boot ELF reads (§5 of that plan, addresses of `SCUS_972.68`).
 //!
 //! - [`toc`]: `RC2.HDR`, the table of contents (global WAD headers: the movies, `MISC.WAD`'s parts, the GUI block).

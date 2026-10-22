@@ -34,7 +34,7 @@ fn manifest_scan_catches_a_tool_path() {
     assert_eq!(tool_dependencies(Path::new("crates/rc-game"), toml), ["../../tools/trace"]);
 }
 
-/// Rule: no test relies on the user's personal files, and no product file names them (docs/workflows/testing.md §10):
+/// Rule: no test relies on the user's personal files, and no product file names them (docs/workflows/testing.md §5):
 /// every file under `crates/` and every tool's `tests/` folder is free of [`PERSONAL_PATTERNS`], and test files also
 /// of [`TEST_ONLY_PATTERNS`] (reading the disc image or the home folder). No exceptions.
 #[test]
@@ -56,7 +56,7 @@ fn no_test_or_product_file_references_personal_paths() {
         }
     }
     assert!(scanned > 100, "scanned only {scanned} files");
-    assert!(hits.is_empty(), "test / product files reference personal paths (docs/workflows/testing.md §10):\n{}", hits.join("\n"));
+    assert!(hits.is_empty(), "test / product files reference personal paths (docs/workflows/testing.md §5):\n{}", hits.join("\n"));
 }
 
 /// The scanned folders: all of crates/ and the tools' tests/, never a tool's src/.

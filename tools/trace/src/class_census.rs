@@ -452,7 +452,7 @@ pub struct LevelIn {
 /// its overlay (the data lump 0), its placed moby instances and the static spawn's test on a first visit with an empty
 /// save (`rc_game::moby::SpawnRules`), and rc-game's class registry (`moby::classes::update_for`) as the port.
 pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Option<&Path>) -> Result<Summary> {
-    use rc_formats::rac2::level::{LevelWad, Lump, Part};
+    use rc_formats::disc::level::{LevelWad, Lump, Part};
     let mut inputs = Vec::new();
     for level in 0..40u32 {
         let Ok(file) = std::fs::read(extracted.join(format!("G/LEVEL{level}.WAD"))) else { continue };
@@ -461,7 +461,7 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
         let ov = Arc::new(LevelOverlay::parse(ob).with_context(|| format!("level {level:02} overlay"))?);
         let g = wad.part_bytes(Part::Gameplay)?.with_context(|| format!("level {level:02} gameplay"))?;
         let g = if rc_formats::wad::is_wad(g) { rc_formats::wad::decompress(g)? } else { g.to_vec() };
-        let records = rc_formats::rac2::gameplay::moby_instances(&g).with_context(|| format!("level {level:02} instances"))?;
+        let records = rc_formats::disc::gameplay::moby_instances(&g).with_context(|| format!("level {level:02} instances"))?;
         let mut game = rc_game::game::GameState::default();
         let ground = |_: [f32; 3]| None;
         let mut rules = rc_game::moby::SpawnRules { game: &mut game, fresh: true, ground: &ground };

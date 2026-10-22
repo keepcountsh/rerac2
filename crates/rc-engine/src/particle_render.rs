@@ -1,7 +1,7 @@
 //! Particles: the game's simulation (`rc_game::particles`, run on the 60 Hz fixed clock) and `PartProc`'s
 //! sprite renderer (docs/plan/particles.md §7, level01 0x27c878, VU1 program 221571).
 //!
-//! **Simulation.** The game's tick runs `UpdateParts` on [`ParticleSim::sys`] (crate::rac2_play: `rc_game::particles`,
+//! **Simulation.** The game's tick runs `UpdateParts` on [`ParticleSim::sys`] (crate::play: `rc_game::particles`,
 //! on the game's one `rand` stream); this plugin draws the pool.
 //!
 //! **Pass 1 (cull, per frame on the CPU, as the EE does it).** For each live record 0..=hw: camera space

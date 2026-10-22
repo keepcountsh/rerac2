@@ -3,7 +3,7 @@
 //! point `0x2ad8e0`. A path is points `{x, y, z, the length to the next}`; a position on it is a segment and the
 //! distance along that segment.
 
-pub use rc_formats::rac2::gameplay::GrindPath;
+pub use rc_formats::disc::gameplay::GrindPath;
 
 type V3 = [f32; 3];
 

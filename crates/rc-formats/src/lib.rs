@@ -2,7 +2,7 @@
 //!
 //! Most formats are R&C1's with Going Commando's changes: the shared readers follow the specifications in
 //! `docs/formats/` (written for R&C1, first verified byte for byte against a C++ reference extractor, git 2230812),
-//! and [`rac2`] holds what is Going Commando's own (the table of contents, the level WADs, the front end).
+//! and [`disc`] holds what is Going Commando's own (the table of contents, the level WADs, the front end).
 
 pub mod buf;
 pub mod wad;
@@ -38,7 +38,7 @@ pub mod scene;
 pub mod volumes;
 pub mod cameras;
 pub mod pss;
-pub mod rac2;
+pub mod disc;
 pub mod sha1;
 pub mod test_data;
 

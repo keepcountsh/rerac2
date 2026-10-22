@@ -1,6 +1,6 @@
 //! The 2D pass: sprites, glyph quads and rectangles as the game sends them to the GS (PATH2 DIRECT packets, no VU1
-//! program), drawn after all 3D: the front end (crate::rac2) and the HUD, the markers and the fades of the game
-//! (crate::rac2_play) each draw a [`Layer`] of [`Hud2d`] primitives.
+//! program), drawn after all 3D: the front end (crate::front_end) and the HUD, the markers and the fades of the game
+//! (crate::play) each draw a [`Layer`] of [`Hud2d`] primitives.
 //!
 //! **Mapping.** A corner at game pixel (x, y) is sent as `X = x·16 + OFX − 8` with `OFX = (2048 − 256)·16`, i.e.
 //! at window pixel `x − 0.5`. The GS samples pixel *X* at its integer position, the GPU at `X + 0.5`, so the

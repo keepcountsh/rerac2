@@ -2,8 +2,8 @@
 //! static spawn), the host the moby loop and the class updates call (the animation states: crate::moby_anim's for
 //! the placed instances, a store of their own for the mobys the game creates; joint positions; Ratchet's attachment
 //! points), the moby scene the collision queries test (the moby pass of rc_game's kernels, which is R&C2's), and the
-//! draw of the created mobys (crate::moby_render's extra instances). Built and ticked by crate::rac2_play
-//! (docs/plan/rac2_bringup.md §6.6).
+//! draw of the created mobys (crate::moby_render's extra instances). Built and ticked by crate::play
+//! (docs/plan/bringup.md §6.6).
 
 use crate::moby_anim::MobyAnim;
 use crate::moby_render::{self, ExtraMobys, LevelMobys, MobyMaterial, MobyOcclusion};
@@ -35,7 +35,7 @@ pub struct Created {
 }
 
 /// The moby world of the level and what its collision and draw need.
-pub struct Rac2Mobys {
+pub struct Mobys {
     pub world: MobyWorld,
     pub coll: Arc<HashMap<i16, MobyCollision>>,
     pub cache: Arc<Mutex<PoseCache>>,
@@ -45,7 +45,7 @@ pub struct Rac2Mobys {
     pub snap: Option<(Snapshot, Arc<MobyGrid>)>,
     /// Created mobys by moby index.
     pub created: HashMap<usize, Created>,
-    /// Created mobys posed from another's joints (Ratchet's head item: [`Rac2Mobys::skin_head`]): their palettes.
+    /// Created mobys posed from another's joints (Ratchet's head item: [`Mobys::skin_head`]): their palettes.
     pub skinned: HashMap<usize, Vec<moby_anim::Rows>>,
     /// The ship's canopy (`rc_game::canopy`, from the level overlay) and this tick's for the draw.
     pub canopy: Option<rc_game::canopy::Canopy>,
@@ -86,7 +86,7 @@ pub struct HeroPose<'a> {
     pub scale: f32,
     /// His posture's joint modifiers (rc_game::hero::posture), as his drawn pose has them.
     pub mods: &'a [rc_formats::moby_anim::JointModifier],
-    /// His pose layers (rc_game::hero::layers, [`Rac2Mobys::hero_layers`]), as his drawn pose has them.
+    /// His pose layers (rc_game::hero::layers, [`Mobys::hero_layers`]), as his drawn pose has them.
     pub layers: &'a [crate::moby_anim::InstanceLayer],
 }
 
@@ -106,7 +106,7 @@ pub struct Host<'a> {
     pub created: &'a mut HashMap<usize, Created>,
     pub hero: Option<HeroPose<'a>>,
     pub hero_chains: &'a [Vec<u8>],
-    /// The classes' joint lists ([`Rac2Mobys::chains`]; None: the queries find no joints).
+    /// The classes' joint lists ([`Mobys::chains`]; None: the queries find no joints).
     pub chains: Option<&'a Chains>,
     /// The camera's position (`0x1b8d40`).
     pub camera: V3,
@@ -119,7 +119,7 @@ pub struct HostSound<'a> {
     pub system: &'a mut rc_game::audio::AudioSystem,
     pub listener: rc_game::audio::voices::Listener,
     pub tick: u64,
-    /// `+0x6d` per moby: the voice slot of its sequence's loop sound ([`Rac2Mobys::loop_slots`]).
+    /// `+0x6d` per moby: the voice slot of its sequence's loop sound ([`Mobys::loop_slots`]).
     pub loops: &'a mut HashMap<usize, u8>,
 }
 
@@ -358,14 +358,14 @@ impl MobyHost for Host<'_> {
 }
 
 fn footstep_base(gameplay: &[u8]) -> usize {
-    let Ok(Some(s)) = rc_formats::rac2::gameplay::level_settings(gameplay) else { return 0 };
+    let Ok(Some(s)) = rc_formats::disc::gameplay::level_settings(gameplay) else { return 0 };
     let w = |i: usize| s.get(4 * i..4 * i + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
     let n = w(0x1a);
     let at = if n == 0 { 0x1f } else if n < 1 { 0x17 } else { 0x17 + 8 * n as usize };
     usize::try_from(w(at)).unwrap_or(0)
 }
 
-impl Rac2Mobys {
+impl Mobys {
     /// Ratchet's pose layers for the evaluator (rc_game::hero::layers), in his `+0x60` list's order (the newest node
     /// first): each over its joint list's second byte list; a holding layer's keys below 0x17 from its class.
     pub fn hero_layers(&self, l: &rc_game::hero::layers::Layers) -> Vec<crate::moby_anim::InstanceLayer> {
@@ -435,7 +435,7 @@ impl Rac2Mobys {
     }
 
     /// The class table (core order) and the static spawn of the level's moby instances.
-    pub fn load(lv: &crate::level_load::LoadedLevel, blobs: crate::rac2_level::ClassBlobs, host: &Host, game: &mut rc_game::game::GameState, fresh: bool) -> Rac2Mobys {
+    pub fn load(lv: &crate::level_load::LoadedLevel, blobs: crate::level_wad::ClassBlobs, host: &Host, game: &mut rc_game::game::GameState, fresh: bool) -> Mobys {
         let m = &lv.mobys;
         let classes = m
             .classes
@@ -469,7 +469,7 @@ impl Rac2Mobys {
                     .unwrap_or_default(),
             })
             .collect();
-        use rc_formats::rac2::gameplay as g2;
+        use rc_formats::disc::gameplay as g2;
         let records = g2::moby_instances(&lv.gameplay).unwrap_or_default();
         // The classes without a model (the level's logic objects: the arrival, the scene triggers, …) are in the
         // game's class table too, with their updates (`0x32e1f8` fills the slots by o_class, model or not).
@@ -481,16 +481,16 @@ impl Rac2Mobys {
         }
         let mut world = MobyWorld::new(classes);
         let data = rc_game::moby::SpawnData {
-            pvars: g2::pvar_blocks(&lv.gameplay).map_err(|e| eprintln!("rac2: pvars: {e}")).unwrap_or_default(),
+            pvars: g2::pvar_blocks(&lv.gameplay).map_err(|e| eprintln!("mobys: pvars: {e}")).unwrap_or_default(),
             links: g2::pvar_fixups(&lv.gameplay, "pvar_moby_links").unwrap_or_default(),
             fixups: g2::pvar_fixups(&lv.gameplay, "pvar_pointer_fixups").unwrap_or_default(),
-            groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("rac2: moby groups: {e}")).unwrap_or_default(),
+            groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("mobys: moby groups: {e}")).unwrap_or_default(),
             ties: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
             tie_classes: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.o_class).collect(),
             tie_spheres: tie_spheres(lv),
             shrubs: g2::shrub_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
-            tie_groups: g2::instance_groups(&lv.gameplay, "tie_groups").map_err(|e| eprintln!("rac2: tie groups: {e}")).unwrap_or_default(),
-            shrub_groups: g2::instance_groups(&lv.gameplay, "shrub_groups").map_err(|e| eprintln!("rac2: shrub groups: {e}")).unwrap_or_default(),
+            tie_groups: g2::instance_groups(&lv.gameplay, "tie_groups").map_err(|e| eprintln!("mobys: tie groups: {e}")).unwrap_or_default(),
+            shrub_groups: g2::instance_groups(&lv.gameplay, "shrub_groups").map_err(|e| eprintln!("mobys: shrub groups: {e}")).unwrap_or_default(),
         };
         let ground = |p: [f32; 3]| -> Option<f32> {
             let coll = lv.collision.as_ref()?;
@@ -529,8 +529,8 @@ impl Rac2Mobys {
             .collect();
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
-        let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("rac2: grind paths: {e}")).unwrap_or_default();
-        Rac2Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("mobys: grind paths: {e}")).unwrap_or_default();
+        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }
@@ -622,7 +622,7 @@ impl CreatedDraw {
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
-        mobys: &Rac2Mobys,
+        mobys: &Mobys,
         level: &crate::level_load::LoadedLevel,
         commands: &mut Commands,
         meshes: &mut Assets<Mesh>,

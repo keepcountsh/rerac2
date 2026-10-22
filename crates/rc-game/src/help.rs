@@ -21,8 +21,8 @@
 
 use crate::game::GameState;
 use crate::gui::{self, Quad, Tex};
-use rc_formats::rac2::boot::Glyph;
-use rc_formats::rac2::gui_sprite::Sprite;
+use rc_formats::disc::boot::Glyph;
+use rc_formats::disc::gui_sprite::Sprite;
 use rc_formats::strings::Message;
 use std::collections::HashMap;
 

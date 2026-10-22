@@ -1,7 +1,7 @@
-//! A Going Commando gameplay file (the level file's gameplay part, WAD-compressed; `rac2::level::Part::Gameplay`):
+//! A Going Commando gameplay file (the level file's gameplay part, WAD-compressed; `disc::level::Part::Gameplay`):
 //! 40 header words of section offsets (0 = absent), then the sections. The order is R&C1's
 //! (`crate::gameplay::SECTION_NAMES`) with sections added; the records that the shared readers take are R&C1's or
-//! map to R&C1's structures here (docs/plan/rac2_bringup.md §6.1).
+//! map to R&C1's structures here (docs/plan/bringup.md §6.1).
 //!
 //! **How each name is known** (Aranos, level 0; [`SECTIONS`]): *content* = the payload has R&C1's layout or carries
 //! counts that match the level (e.g. the occlusion mappings hold 833 tfrags and 2000 ties, the core's counts);
@@ -131,13 +131,13 @@ pub(crate) const MOBY_INSTANCE: usize = 0x88;
 
 /// A moby instance: R&C1's fields, and the four words R&C2 adds.
 #[derive(Clone, Copy, Debug)]
-pub struct Rac2MobyInstance {
+pub struct PlacedMoby {
     pub base: MobyInstance,
     pub extra: [i32; 4],
 }
 
 /// The static moby instances (`s32 count, s32 spawnable, pad[2]`, then records stepped by their size word).
-pub fn moby_instances(gameplay: &[u8]) -> Result<Vec<Rac2MobyInstance>> {
+pub fn moby_instances(gameplay: &[u8]) -> Result<Vec<PlacedMoby>> {
     let Some(s) = section(gameplay, "moby_instances")? else { return Ok(Vec::new()) };
     let b = Buf(s);
     let count = b.i32(0)?;
@@ -153,7 +153,7 @@ pub fn moby_instances(gameplay: &[u8]) -> Result<Vec<Rac2MobyInstance>> {
         rec.extend_from_slice(b.sub(p + 0x20, MOBY_INSTANCE - 0x20, "moby instance")?.bytes());
         let mut base: MobyInstance = Buf(&rec).pod(0, "moby instance")?;
         base.size = crate::gameplay::MOBY_INSTANCE_SIZE as i32;
-        out.push(Rac2MobyInstance { base, extra: [b.i32(p + 0x10)?, b.i32(p + 0x14)?, b.i32(p + 0x18)?, b.i32(p + 0x1c)?] });
+        out.push(PlacedMoby { base, extra: [b.i32(p + 0x10)?, b.i32(p + 0x14)?, b.i32(p + 0x18)?, b.i32(p + 0x1c)?] });
         p += MOBY_INSTANCE;
     }
     Ok(out)

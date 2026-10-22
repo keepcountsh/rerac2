@@ -1,4 +1,4 @@
-//! The console's clock (`sceCdReadClock`) for the front end's random seed (crate::rac2): the host's local time as BCD.
+//! The console's clock (`sceCdReadClock`) for the front end's random seed (crate::front_end): the host's local time as BCD.
 
 /// `sceCdReadClock` (BCD) now, in the host's **local** time: the console's clock chip keeps JST and the game converts
 /// it with the system configuration's time zone and summer time (0x12d6d8), so a save shows the player's own date;
