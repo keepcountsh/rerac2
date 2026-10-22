@@ -314,6 +314,8 @@ fn tick(
         return;
     }
     p.game.frame += 1;
+    // `0x3596d0`: the play time (NTSC: one a frame).
+    p.game.play_time += 1;
     match p.game.scenes.mode {
         rc_game::scene::SCENE => {
             scene_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut(), parts.as_deref_mut().map(|s| &mut s.sys));

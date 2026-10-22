@@ -152,6 +152,7 @@ mod at {
     pub const HELD: u32 = 0x1a7398;
     pub const SCENES: u32 = 0x139768;
     pub const SAVE_CLOCK: u32 = 0x1a7360;
+    pub const PLAY_TIME: u32 = 0x1a7bc8;
     pub const MISSIONS: u32 = 0x19b2e8;
     pub const UID_BITS: u32 = 0x19b4a8;
     pub const VISITED: u32 = 0x1a7bf0;
@@ -190,6 +191,7 @@ impl GameState {
         for i in 0..at::AMMO_LEN { s.set_i32(G, at::AMMO + 4 * i as u32, self.ammo.get(i).copied().unwrap_or(0)); }
         for i in 0..at::QUICK_SELECT_LEN { s.set_i32(G, at::QUICK_SELECT + 4 * i as u32, self.quick_select.get(i).copied().unwrap_or(0)); }
         s.set_i32(G, at::HELD, self.held);
+        s.set_i32(G, at::PLAY_TIME, self.play_time);
         for (n, &seen) in self.scenes_seen.iter().enumerate() {
             let (w, bit) = scene_bit(n);
             let v = s.i32(G, w) as u32;
@@ -234,6 +236,7 @@ impl GameState {
             if let Some(q) = self.quick_select.get_mut(i) { *q = s.i32(G, at::QUICK_SELECT + 4 * i as u32); }
         }
         self.held = s.i32(G, at::HELD);
+        self.play_time = s.i32(G, at::PLAY_TIME);
         for n in 0..self.scenes_seen.len() {
             let (w, bit) = scene_bit(n);
             self.scenes_seen[n] = s.i32(G, w) as u32 & bit != 0;
