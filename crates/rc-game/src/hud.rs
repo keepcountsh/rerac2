@@ -452,9 +452,11 @@ impl Health {
             x = (x * scale + x * scale) * spacing + origin[0];
             y = (y * scale + y * scale) * spacing + origin[1];
             let (mut sx, mut sy) = (scale, scale);
+            // `0x441560`: the second quarter sits below the first, mirrored vertically; the third right of it,
+            // mirrored horizontally (`0x441a68`'s scale signs by the mirror code).
             match q {
-                1 => { y += scale + gap; sx = -scale; }
-                2 => { x += scale + gap; sy = -scale; }
+                1 => { y += scale + gap; sy = -scale; }
+                2 => { x += scale + gap; sx = -scale; }
                 3 => { x += scale + gap; y += scale + gap; sx = -scale; sy = -scale; }
                 _ => {}
             }
