@@ -26,7 +26,7 @@
 //! when a system tag table is given (`tools/ghidra/names/census_systems.tsv`), `systems.tsv` and `unit_systems.tsv`.
 
 use anyhow::{Context, Result};
-use rc_formats::level_overlay::{address_refs, mask, LevelOverlay, Relocation, TEXT_SECTION};
+use rc_formats::level_overlay::{address_refs, address_refs_gp, mask, LevelOverlay, Relocation, GP, TEXT_SECTION};
 use rc_game::moby_update::classes::LevelPorts;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -78,12 +78,15 @@ pub struct Graph {
     /// The starts with evidence of their own (a `jal` target, a class-table update, or right after a `jr ra` +
     /// delay slot), as opposed to a code address only formed with `lui`/`%lo`.
     pub strong: BTreeSet<u32>,
+    /// The overlay's first section (below it: the boot ELF).
+    pub base: u32,
 }
 
 fn words_of(s: &rc_formats::font::OverlaySection) -> Vec<u32> { s.data.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect() }
 
-/// The function starts exactly as `LevelOverlay` finds them (its set is private; same rules).
-fn starts_of(ov: &LevelOverlay) -> (u32, u32, BTreeSet<u32>) {
+/// The function starts exactly as `LevelOverlay` finds them (its set is private; same rules), the `lui`/`%lo` and
+/// `$gp` addresses with the game's `$gp`.
+fn starts_of(ov: &LevelOverlay, gp: u32) -> (u32, u32, BTreeSet<u32>) {
     let Some(t) = ov.sections.get(TEXT_SECTION) else { return (0, 0, BTreeSet::new()) };
     let text = words_of(t);
     let (ts, te) = (t.dest, t.dest + 4 * text.len() as u32);
@@ -93,13 +96,17 @@ fn starts_of(ov: &LevelOverlay) -> (u32, u32, BTreeSet<u32>) {
         let w = text[p];
         if text[p - 2] == JR_RA && w >> 16 == 0x27bd && w & 0x8000 != 0 { s.insert(ts + 4 * p as u32); }
     }
-    s.extend(address_refs(&text).into_iter().map(|(_, a)| a).filter(|&a| a >= ts && a < te && a % 4 == 0));
+    s.extend(address_refs_gp(&text, gp).into_iter().map(|(_, a)| a).filter(|&a| a >= ts && a < te && a % 4 == 0));
     (ts, te, s)
 }
 
 impl Graph {
-    pub fn build(ov: &LevelOverlay) -> Graph {
-        let (ts, te, starts) = starts_of(ov);
+    /// R&C1's graph: its overlay base and `$gp`.
+    pub fn build(ov: &LevelOverlay) -> Graph { Graph::build_with(ov, OVERLAY_BASE, GP) }
+
+    /// The graph of an overlay based at `base` with the game's `$gp` (Going Commando: 0x1a7c80, 0x1aeff0).
+    pub fn build_with(ov: &LevelOverlay, base: u32, gp: u32) -> Graph {
+        let (ts, te, starts) = starts_of(ov, gp);
         // A code address formed with `lui`/`%lo` is taken as a function only with other evidence of a start (a
         // `jal` target, a class-table update, or right after a `jr ra` + delay slot): constants such as the colour
         // 0x202020 also look like `.text` addresses.
@@ -109,7 +116,7 @@ impl Graph {
         strong.extend(ov.vtbl().iter().map(|e| e.update));
         let is_fn = |a: u32| strong.contains(&a) || (a >= ts + 8 && at(a - 8) == JR_RA);
         let strong_starts: BTreeSet<u32> = starts.iter().copied().filter(|&a| is_fn(a)).collect();
-        let mut g = Graph { starts: starts.clone(), callees: HashMap::new(), callers: HashMap::new(), jalr: HashMap::new(), extent: HashMap::new(), data: HashMap::new(), strong: strong_starts };
+        let mut g = Graph { starts: starts.clone(), callees: HashMap::new(), callers: HashMap::new(), jalr: HashMap::new(), extent: HashMap::new(), data: HashMap::new(), strong: strong_starts, base };
         for &f in &starts {
             let Some(n) = ov.extent(f) else { continue };
             let Some(code) = ov.code(f, n) else { continue };
@@ -129,13 +136,13 @@ impl Graph {
                 }
             }
             let mut data: BTreeSet<String> = data_refs(code, ts, te);
-            for (_, a) in address_refs(code) {
+            for (_, a) in address_refs_gp(code, gp) {
                 if a >= ts && a < te {
                     if (a < f || a >= end) && starts.contains(&a) && is_fn(a) { out.insert((a, Edge::Ptr)); }
                     continue;
                 }
                 if a >= BOOT_BASE { data.insert(format!("G:{a:08x}")); }
-                if a >= OVERLAY_BASE && a % 4 == 0 {
+                if a >= base && a % 4 == 0 {
                     // A table of function starts (entries inside this function are a switch's jump table).
                     let mut p = a;
                     for _ in 0..256 {
@@ -168,7 +175,7 @@ impl Graph {
         let mut u: BTreeSet<u32> = BTreeSet::from([root]);
         loop {
             let mut added = false;
-            let cands: Vec<u32> = u.iter().flat_map(|f| self.callees.get(f).into_iter().flatten().map(|&(c, _)| c)).filter(|c| !u.contains(c) && *c >= OVERLAY_BASE).collect();
+            let cands: Vec<u32> = u.iter().flat_map(|f| self.callees.get(f).into_iter().flatten().map(|&(c, _)| c)).filter(|c| !u.contains(c) && *c >= self.base).collect();
             for c in cands {
                 if u.contains(&c) { continue; }
                 let callers = self.callers.get(&c);
@@ -305,17 +312,56 @@ const OUTSIDE: [(u32, &str); 5] = [
 /// The level-01 copy must be a function start there, and for a short function (under 8 words, whose masked words
 /// can also match inside another function) have the same extent.
 fn key_of(level: u32, f: u32, ov: &LevelOverlay, to_l01: &Relocation, cl: &Clusters, l01: &Graph) -> (String, bool) {
-    if f < OVERLAY_BASE { return (format!("boot:{f:08x}"), true); }
-    if level == 1 { return (format!("L01:{f:08x}"), true); }
+    key_in(&Rac::RAC1, level, f, ov, to_l01, cl, l01, &HashMap::new())
+}
+
+/// [`key_of`] for a game: its reference level (`L01:` / `L00:`) and overlay base.
+/// `by_hash`: the reference level's functions by their masked-code hash (a copy `Relocation` misses: the same code
+/// over the same extent, linked elsewhere).
+#[allow(clippy::too_many_arguments)]
+fn key_in(g: &Rac, level: u32, f: u32, ov: &LevelOverlay, to_ref: &Relocation, cl: &Clusters, reference: &Graph, by_hash: &HashMap<u64, u32>) -> (String, bool) {
+    let r = g.ref_level;
+    if f < g.base { return (format!("boot:{f:08x}"), true); }
+    if level == r { return (format!("L{r:02}:{f:08x}"), true); }
     let n = ov.extent(f).unwrap_or(0);
-    if let Some(a) = to_l01.func(f).filter(|a| l01.starts.contains(a) && (n >= 8 || l01.extent.get(a) == Some(&n))) {
-        return (format!("L01:{a:08x}"), true);
+    if let Some(a) = to_ref.func(f).filter(|a| reference.starts.contains(a) && (n >= 8 || reference.extent.get(a) == Some(&n))) {
+        return (format!("L{r:02}:{a:08x}"), true);
     }
     if let Some((h, one, _)) = cl.0.get(&(level, f)) {
-        if let Some(a) = one { return (format!("L01:{a:08x}"), true); }
+        if let Some(a) = one { return (format!("L{r:02}:{a:08x}"), true); }
         return (format!("C:{h}"), false);
     }
-    (format!("H:{:016x}", code_hash(ov, f).unwrap_or(0)), false)
+    let h = code_hash(ov, f).unwrap_or(0);
+    if let Some(a) = by_hash.get(&h) { return (format!("L{r:02}:{a:08x}"), true); }
+    (format!("H:{h:016x}"), false)
+}
+
+/// What differs between the games for the census.
+pub struct Rac {
+    /// The overlay's first section: code below it is the boot ELF's.
+    pub base: u32,
+    pub gp: u32,
+    /// The level whose addresses name the shared functions (`L01:` / `L00:`).
+    pub ref_level: u32,
+    /// The decompiler exports of the reference level and the boot ELF (`work/decomp/<program>`).
+    pub ref_program: &'static str,
+    pub boot_program: &'static str,
+    /// Where the port's citations count (`repo_refs`): path prefixes under the repo.
+    pub cites: &'static [&'static str],
+}
+
+impl Rac {
+    pub const RAC1: Rac = Rac { base: OVERLAY_BASE, gp: GP, ref_level: 1, ref_program: "level01.elf", boot_program: "SCUS_971.99", cites: &["crates/", "docs/"] };
+    /// Going Commando: the overlays' `.lit` at 0x1a7c80 on every level, `$gp` 0x1aeff0, Aranos as the reference
+    /// (its Ghidra program and decompiler export, `rc2/level00.elf`); only its own port and docs count as citations.
+    pub const RAC2: Rac = Rac {
+        base: 0x1a_7c80,
+        gp: 0x1a_eff0,
+        ref_level: 0,
+        ref_program: "rc2/level00.elf",
+        boot_program: "rc2/SCUS_972.68",
+        cites: &["crates/rc-game2/", "crates/rc-engine/src/rac2", "crates/rc-formats/src/rac2", "docs/plan/rac2"],
+    };
 }
 
 /// Function names from the decompiler export (`work/decomp/<program>/index.tsv`).
@@ -326,7 +372,7 @@ pub fn names(work: &Path, program: &str) -> HashMap<u32, String> {
 
 /// Hex tokens cited in the repo: token value → (files under crates/, files under docs/). Lower-case `0x…` (5–8 digits)
 /// and `fun_XXXXXXXX`.
-fn repo_refs(root: &Path) -> HashMap<u32, (BTreeSet<String>, BTreeSet<String>)> {
+fn repo_refs(root: &Path, cites: &[&str]) -> HashMap<u32, (BTreeSet<String>, BTreeSet<String>)> {
     let mut out: HashMap<u32, (BTreeSet<String>, BTreeSet<String>)> = HashMap::new();
     fn walk(d: &Path, ext: &str, files: &mut Vec<PathBuf>) {
         let Ok(rd) = std::fs::read_dir(d) else { return };
@@ -342,6 +388,7 @@ fn repo_refs(root: &Path) -> HashMap<u32, (BTreeSet<String>, BTreeSet<String>)> 
             let Ok(s) = std::fs::read_to_string(&p) else { continue };
             let s = s.to_ascii_lowercase();
             let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().into_owned();
+            if !cites.iter().any(|c| rel.starts_with(c)) { continue; }
             let b = s.as_bytes();
             let mut i = 0;
             while i + 2 < b.len() {
@@ -439,7 +486,15 @@ pub struct Summary {
     pub out: PathBuf,
 }
 
-/// Runs the census over the levels in `levels`.
+/// One level's inputs: its overlay, its classes' placed and created instances, and the port's name for each class
+/// it runs.
+pub struct LevelIn {
+    pub ov: Arc<LevelOverlay>,
+    pub placed: BTreeMap<i32, (usize, usize)>,
+    pub ports: HashMap<i32, String>,
+}
+
+/// Runs R&C1's census over the levels in `levels`.
 pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Option<&Path>, levels: &[u32]) -> Result<Summary> {
     let load = |l: u32| -> Option<Arc<LevelOverlay>> {
         let b = std::fs::read(extracted.join(format!("levels/{l:02}/overlay.bin"))).ok()?;
@@ -448,21 +503,7 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
     let mut cache: HashMap<u32, Option<Arc<LevelOverlay>>> = HashMap::new();
     for l in 0..19 { cache.insert(l, load(l)); }
     let reference = |l: u32| cache.get(&l).cloned().flatten();
-    let l01 = reference(1).context("level 01 overlay")?;
-    let l01_names = names(work, "level01.elf");
-    let boot_names = names(work, "SCUS_971.99");
-    let clusters = Clusters::load(&repo.join("tools/ghidra/names/clusters.tsv"));
-    let l01_graph = Graph::build(&l01);
-    let tagmap = tag_file.map(tags).unwrap_or_default();
-
-    let mut rows: Vec<ClassRow> = Vec::new();
-    let mut units: Vec<Unit> = Vec::new();
-    let mut unit_by_hash: HashMap<(u64, bool), usize> = HashMap::new();
-    let mut shared: BTreeMap<String, Shared> = BTreeMap::new();
-    // Boot global key → (units whose own code forms it, one is ported).
-    let mut globals: BTreeMap<String, (BTreeSet<usize>, bool)> = BTreeMap::new();
-    let mut level_names: HashMap<u32, HashMap<u32, String>> = HashMap::new();
-
+    let mut inputs = Vec::new();
     for &level in levels {
         let Some(ov) = reference(level) else { eprintln!("level {level:02}: no overlay"); continue };
         let ports = LevelPorts::from_overlays(&ov, &reference, &OUTSIDE.map(|(a, _)| a));
@@ -476,27 +517,91 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
             e.0 += 1;
             if t.spawn { e.1 += 1; }
         }
-        let graph = Graph::build(&ov);
-        let to_l01 = Relocation::new(&ov, &l01);
-        let lnames = names(work, &format!("level{level:02}.elf"));
+        let port_of: HashMap<i32, String> = ov
+            .vtbl()
+            .iter()
+            .filter_map(|e| {
+                let c = e.o_class as i16;
+                let p = ports.get(c).map(|u| format!("{u:?}")).or_else(|| ports.external(c).and_then(|a| OUTSIDE.iter().find(|o| o.0 == a)).map(|o| o.1.to_string()))?;
+                Some((e.o_class, p))
+            })
+            .collect();
+        inputs.push((level, LevelIn { ov, placed, ports: port_of }));
+    }
+    let clusters = Clusters::load(&repo.join("tools/ghidra/names/clusters.tsv"));
+    census(&Rac::RAC1, inputs, clusters, repo, work, out, tag_file)
+}
+
+/// Going Commando's census (`class-census --game rac2`): every `G/LEVELn.WAD` of `extracted` (the R&C2 data folder),
+/// its overlay (the data lump 0), its placed moby instances and the static spawn's test on a first visit with an empty
+/// save (`rc_game2::moby::SpawnRules`), and rc-game2's class registry (`moby::classes::update_for`) as the port.
+pub fn run_rac2(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Option<&Path>) -> Result<Summary> {
+    use rc_formats::rac2::level::{LevelWad, Lump, Part};
+    let mut inputs = Vec::new();
+    for level in 0..40u32 {
+        let Ok(file) = std::fs::read(extracted.join(format!("G/LEVEL{level}.WAD"))) else { continue };
+        let wad = LevelWad::parse(&file).with_context(|| format!("LEVEL{level}.WAD"))?;
+        let Some(ob) = wad.lump(Lump::Overlay)? else { eprintln!("level {level:02}: no overlay"); continue };
+        let ov = Arc::new(LevelOverlay::parse(ob).with_context(|| format!("level {level:02} overlay"))?);
+        let g = wad.part_bytes(Part::Gameplay)?.with_context(|| format!("level {level:02} gameplay"))?;
+        let g = if rc_formats::wad::is_wad(g) { rc_formats::wad::decompress(g)? } else { g.to_vec() };
+        let records = rc_formats::rac2::gameplay::moby_instances(&g).with_context(|| format!("level {level:02} instances"))?;
+        let mut game = rc_game2::game::GameState::default();
+        let ground = |_: [f32; 3]| None;
+        let mut rules = rc_game2::moby::SpawnRules { game: &mut game, fresh: true, ground: &ground };
+        let mut placed: BTreeMap<i32, (usize, usize)> = BTreeMap::new();
+        for r in &records {
+            let c = r.base.o_class;
+            if c == 0 { continue; }
+            let skip = rules.test(r).0;
+            let e = placed.entry(c).or_default();
+            e.0 += 1;
+            if !skip { e.1 += 1; }
+        }
+        let ports: HashMap<i32, String> = ov.vtbl().iter().filter(|e| rc_game2::moby::classes::update_for(e.o_class as i16).is_some()).map(|e| (e.o_class, "rc_game2".to_string())).collect();
+        inputs.push((level, LevelIn { ov, placed, ports }));
+    }
+    census(&Rac::RAC2, inputs, Clusters(HashMap::new()), repo, work, out, tag_file)
+}
+
+/// The census over the levels' inputs (module docs).
+fn census(g: &Rac, inputs: Vec<(u32, LevelIn)>, clusters: Clusters, repo: &Path, work: &Path, out: &Path, tag_file: Option<&Path>) -> Result<Summary> {
+    let l01 = inputs.iter().find(|(l, _)| *l == g.ref_level).map(|(_, i)| i.ov.clone()).with_context(|| format!("level {:02} overlay", g.ref_level))?;
+    let l01_names = names(work, g.ref_program);
+    let boot_names = names(work, g.boot_program);
+    let l01_graph = Graph::build_with(&l01, g.base, g.gp);
+    let mut by_hash: HashMap<u64, u32> = HashMap::new();
+    for &f in &l01_graph.starts {
+        if l01_graph.extent.get(&f).is_some_and(|&n| n >= 8) { if let Some(h) = code_hash(&l01, f) { by_hash.entry(h).or_insert(f); } }
+    }
+    let tagmap = tag_file.map(tags).unwrap_or_default();
+    let rp = format!("L{:02}:", g.ref_level);
+
+    let mut rows: Vec<ClassRow> = Vec::new();
+    let mut units: Vec<Unit> = Vec::new();
+    let mut unit_by_hash: HashMap<(u64, bool), usize> = HashMap::new();
+    let mut shared: BTreeMap<String, Shared> = BTreeMap::new();
+    // Boot global key → (units whose own code forms it, one is ported).
+    let mut globals: BTreeMap<String, (BTreeSet<usize>, bool)> = BTreeMap::new();
+    let mut level_names: HashMap<u32, HashMap<u32, String>> = HashMap::new();
+
+    for (level, input) in &inputs {
+        let (level, ov, placed) = (*level, &input.ov, &input.placed);
+        let graph = Graph::build_with(ov, g.base, g.gp);
+        let to_l01 = Relocation::new(ov, &l01);
+        let lnames = names(work, &g.ref_program.replace(&format!("level{:02}", g.ref_level), &format!("level{level:02}")));
         let mut update_classes: BTreeMap<u32, Vec<i32>> = BTreeMap::new();
         for e in ov.vtbl() {
             if e.update == 0 || e.o_class == 0 { continue; }
             update_classes.entry(e.update).or_default().push(e.o_class);
         }
         for (&update, cls) in &update_classes {
-            let ported: Vec<String> = cls
-                .iter()
-                .filter_map(|&c| {
-                    let c = c as i16;
-                    ports.get(c).map(|u| format!("{u:?}")).or_else(|| ports.external(c).and_then(|a| OUTSIDE.iter().find(|o| o.0 == a)).map(|o| o.1.to_string()))
-                })
-                .collect();
+            let ported: Vec<String> = cls.iter().filter_map(|c| input.ports.get(c).cloned()).collect();
             let is_ported = !ported.is_empty();
             let (p, _c): (usize, usize) = cls.iter().map(|c| placed.get(c).copied().unwrap_or_default()).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
             if p == 0 && !is_ported { continue; }
             let (private, leaves) = graph.unit(update);
-            let h = code_hash(&ov, update).unwrap_or(0);
+            let h = code_hash(ov, update).unwrap_or(0);
             let uid = *unit_by_hash.entry((h, is_ported)).or_insert_with(|| {
                 units.push(Unit { ported: is_ported, ..Default::default() });
                 units.len() - 1
@@ -517,16 +622,16 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
                 rows.push(ClassRow { level, o_class: c, placed: pl, created: cr, update, port: ported.first().cloned().unwrap_or_default(), unit: uid });
             }
             for (&leaf, kinds) in &leaves {
-                let (key, _) = key_of(level, leaf, &ov, &to_l01, &clusters, &l01_graph);
+                let (key, _) = key_in(g, level, leaf, ov, &to_l01, &clusters, &l01_graph, &by_hash);
                 u.leaves.entry(key.clone()).or_default().extend(kinds.iter().copied());
                 let s = shared.entry(key.clone()).or_default();
                 s.sites.insert((level, leaf));
                 s.units.insert(uid);
                 if is_ported { s.in_ported_unit = true; }
-                if s.callees.is_empty() && leaf >= OVERLAY_BASE {
+                if s.callees.is_empty() && leaf >= g.base {
                     s.words = graph.extent.get(&leaf).copied().unwrap_or(0);
                     for &(c, _) in graph.callees.get(&leaf).into_iter().flatten() {
-                        s.callees.insert(key_of(level, c, &ov, &to_l01, &clusters, &l01_graph).0);
+                        s.callees.insert(key_in(g, level, c, ov, &to_l01, &clusters, &l01_graph, &by_hash).0);
                     }
                 }
             }
@@ -536,7 +641,7 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
             data.extend(cls.iter().map(|c| format!("X:{c}")).filter(|k| tagmap.contains_key(k)));
             for key in &data {
                 let a = key.get(2..10).and_then(|h| u32::from_str_radix(h, 16).ok()).unwrap_or(0);
-                if key.starts_with("G:") && a < OVERLAY_BASE {
+                if key.starts_with("G:") && a < g.base {
                     let e = globals.entry(key.clone()).or_default();
                     e.0.insert(uid);
                     e.1 |= is_ported;
@@ -551,7 +656,7 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
             if is_ported {
                 // The functions a ported unit owns count as ported too (by their level-01 key).
                 for &f in &private {
-                    let (key, _) = key_of(level, f, &ov, &to_l01, &clusters, &l01_graph);
+                    let (key, _) = key_in(g, level, f, ov, &to_l01, &clusters, &l01_graph, &by_hash);
                     shared.entry(key).or_default().in_ported_unit = true;
                 }
             }
@@ -559,10 +664,10 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
         level_names.insert(level, lnames);
     }
 
-    let refs = repo_refs(repo);
+    let refs = repo_refs(repo, g.cites);
     let name_of = |key: &str, s: Option<&Shared>| -> String {
         if key.starts_with("G:") || key.starts_with("X:") { return tagmap.get(key).map(|t| t.name.clone()).unwrap_or_default(); }
-        if let Some(a) = key.strip_prefix("L01:").and_then(|h| u32::from_str_radix(h, 16).ok()) {
+        if let Some(a) = key.strip_prefix(rp.as_str()).and_then(|h| u32::from_str_radix(h, 16).ok()) {
             return l01_names.get(&a).cloned().unwrap_or_default();
         }
         if let Some(a) = key.strip_prefix("boot:").and_then(|h| u32::from_str_radix(h, 16).ok()) {
@@ -570,7 +675,7 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
         }
         s.and_then(|s| s.sites.iter().find_map(|(l, a)| level_names.get(l).and_then(|m| m.get(a)).cloned())).unwrap_or_default()
     };
-    let addr_of = |key: &str| -> Option<u32> { key.strip_prefix("L01:").or_else(|| key.strip_prefix("boot:")).or_else(|| key.strip_prefix("G:").map(|h| &h[..8.min(h.len())])).and_then(|h| u32::from_str_radix(h, 16).ok()) };
+    let addr_of = |key: &str| -> Option<u32> { key.strip_prefix(rp.as_str()).or_else(|| key.strip_prefix("boot:")).or_else(|| key.strip_prefix("G:").map(|h| &h[..8.min(h.len())])).and_then(|h| u32::from_str_radix(h, 16).ok()) };
 
     std::fs::create_dir_all(out)?;
     // classes.tsv
@@ -612,7 +717,24 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
         })
         .collect();
     srow.sort_by_key(|r| (std::cmp::Reverse(r.3), std::cmp::Reverse(r.2), r.0.clone()));
-    let mut t = String::from("key\tname\tunported_units\tcreated\tported_unit_uses\tcrates_refs\tdocs_refs\twords\trep_site\tn_levels\tsystem\tstatus\tconf\tcrates_files\tdocs_files\tcallees\n");
+    // An `H:` function's nearest reference function (same length within 4 words, at least 85 % of the masked words
+    // equal): for reading it in the reference level's decompiler export.
+    let ref_masked: Vec<(u32, Vec<u32>)> = l01_graph.starts.iter().filter_map(|&f| Some((f, mask(l01.code(f, *l01_graph.extent.get(&f)?)?)))).collect();
+    let near = |k: &str, sh: &Shared| -> String {
+        if !k.starts_with("H:") { return String::new(); }
+        let Some(&(lv, a)) = sh.sites.iter().next() else { return String::new() };
+        let Some(ov) = inputs.iter().find(|(l, _)| *l == lv).map(|(_, i)| &i.ov) else { return String::new() };
+        let Some(m) = ov.extent(a).and_then(|n| ov.code(a, n)).map(mask) else { return String::new() };
+        let mut best = (0.0f32, 0u32);
+        for (f, w) in &ref_masked {
+            if w.len().abs_diff(m.len()) > 4 || m.len() < 4 { continue; }
+            let eq = w.iter().zip(&m).filter(|(x, y)| x == y).count();
+            let sc = eq as f32 / w.len().max(m.len()) as f32;
+            if sc > best.0 { best = (sc, *f); }
+        }
+        if best.0 >= 0.85 { format!("L{:02}:{:08x}@{:.2}", g.ref_level, best.1, best.0) } else { String::new() }
+    };
+    let mut t = String::from("key\tname\tunported_units\tcreated\tported_unit_uses\tcrates_refs\tdocs_refs\twords\trep_site\tn_levels\tsystem\tstatus\tconf\tcrates_files\tdocs_files\tcallees\tnear\n");
     for (k, s, n, c) in &srow {
         let (cr, dr) = addr_of(k).and_then(|a| refs.get(&a)).map(|(c, d)| (c.len(), d.len())).unwrap_or((0, 0));
         let files = |doc: bool| -> String {
@@ -622,7 +744,7 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
         let tag = tagmap.get(*k);
         let rep = s.sites.iter().next().map(|(l, a)| format!("L{l:02}:{a:06x}")).unwrap_or_default();
         t += &format!(
-            "{k}\t{}\t{n}\t{c}\t{}\t{cr}\t{dr}\t{}\t{rep}\t{nlev}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{k}\t{}\t{n}\t{c}\t{}\t{cr}\t{dr}\t{}\t{rep}\t{nlev}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             name_of(k, Some(s)),
             s.in_ported_unit as u8,
             s.words,
@@ -631,7 +753,8 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
             tag.map(|t| t.conf.as_str()).unwrap_or(""),
             files(false),
             files(true),
-            s.callees.iter().cloned().collect::<Vec<_>>().join(";")
+            s.callees.iter().cloned().collect::<Vec<_>>().join(";"),
+            near(k, s)
         );
     }
     crate::write_output(&out.join("shared.tsv"), t)?;

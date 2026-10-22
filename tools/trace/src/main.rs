@@ -65,7 +65,7 @@ Commands:
       overlay callees N calls deep; every level's counterpart is compared after masking the relocated fields.
       Default: --cite crates/rc-game/src/hero --callees 1 --name hero. Writes NAME.tsv, NAME_matrix.txt and
       NAME_diffs.txt (only the differing instructions) to work/overlay_diff/ (--out).
-  class-census [--out DIR] [--tags FILE] [--extracted DIR]
+  class-census [--game rac2] [--out DIR] [--tags FILE] [--extracted DIR]
       Static census of the unported moby classes on levels 00-18 (docs/plan/class_census.md): per class the
       placed / created instances, its class-port unit (update + private callees, grouped across levels by
       code identity) and the shared functions it calls. Writes classes.tsv, units.tsv, shared.tsv and, with
@@ -156,12 +156,20 @@ fn run() -> Result<i32> {
     let cmd = a.0.remove(0);
     match cmd.as_str() {
         "class-census" => {
-            let out = a.opt("--out")?.map(PathBuf::from).unwrap_or_else(|| rc_trace::work_dir().join("census"));
-            let tags = a.opt("--tags")?.map(PathBuf::from).unwrap_or_else(|| rc_trace::repo_root().join("tools/ghidra/names/census_systems.tsv"));
-            let extracted = a.extracted()?;
-            a.done()?;
-            let levels: Vec<u32> = (0..19).collect();
-            let s = rc_trace::class_census::run(&extracted, &rc_trace::repo_root(), &rc_trace::work_dir(), &out, Some(&tags), &levels)?;
+            let rac2 = a.opt("--game")?.is_some_and(|g| g == "rac2");
+            let (dir, table) = if rac2 { ("census-rac2", "census_systems_rac2.tsv") } else { ("census", "census_systems.tsv") };
+            let out = a.opt("--out")?.map(PathBuf::from).unwrap_or_else(|| rc_trace::work_dir().join(dir));
+            let tags = a.opt("--tags")?.map(PathBuf::from).unwrap_or_else(|| rc_trace::repo_root().join("tools/ghidra/names").join(table));
+            let s = if rac2 {
+                let extracted = a.opt("--extracted")?.map(PathBuf::from).unwrap_or_else(rc_formats::test_data::rac2_root);
+                a.done()?;
+                rc_trace::class_census::run_rac2(&extracted, &rc_trace::repo_root(), &rc_trace::work_dir(), &out, Some(&tags))?
+            } else {
+                let extracted = a.extracted()?;
+                a.done()?;
+                let levels: Vec<u32> = (0..19).collect();
+                rc_trace::class_census::run(&extracted, &rc_trace::repo_root(), &rc_trace::work_dir(), &out, Some(&tags), &levels)?
+            };
             println!(
                 "class census: {} unported class-levels ({} placed, {} created instances), {} class-port units, {} shared functions -> {}",
                 s.classes, s.placed, s.created, s.units, s.shared, s.out.display()

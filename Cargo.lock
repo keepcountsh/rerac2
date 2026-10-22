@@ -4437,6 +4437,7 @@ dependencies = [
  "rc-extract",
  "rc-formats",
  "rc-game",
+ "rc-game2",
  "ruzstd",
 ]
 

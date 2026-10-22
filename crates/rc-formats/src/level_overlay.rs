@@ -91,9 +91,9 @@ struct HiState([Option<u32>; 32]);
 
 impl HiState {
     /// Masks `w` and updates the state; returns (masked word, the full address `w` forms from a `lui`, if any).
-    fn step(&mut self, w: u32) -> (u32, Option<u32>) { self.step_inner(w) }
+    fn step(&mut self, w: u32, gp: u32) -> (u32, Option<u32>) { self.step_inner(w, gp) }
 
-    fn step_inner(&mut self, w: u32) -> (u32, Option<u32>) {
+    fn step_inner(&mut self, w: u32, gp: u32) -> (u32, Option<u32>) {
         let o = op(w);
         match o {
             // j / jal: the target.
@@ -136,7 +136,7 @@ impl HiState {
                 let s = rs(w);
                 // `ori` completes a `lui` with the zero-extended immediate, the others sign-extend it.
                 let lo = if o == 13 { w & 0xffff } else { sext(w) };
-                let full = if s == 28 { Some(GP.wrapping_add(sext(w))) } else { self.0[s].map(|hi| (hi << 16).wrapping_add(lo)) };
+                let full = if s == 28 { Some(gp.wrapping_add(sext(w))) } else { self.0[s].map(|hi| (hi << 16).wrapping_add(lo)) };
                 let masked = if full.is_some() { w & 0xffff_0000 } else { w };
                 if writes_rt(o) && rt(w) != 0 { self.0[rt(w)] = None; }
                 (masked, full)
@@ -149,8 +149,11 @@ impl HiState {
 pub fn mask(words: &[u32]) -> Vec<u32> { walk(words).into_iter().map(|(m, _)| m).collect() }
 
 /// The (word offset, address) of every `lui`/`%lo` pair completed in `words`, and of every `$gp`-relative access.
-pub fn address_refs(words: &[u32]) -> Vec<(usize, u32)> {
-    walk(words).into_iter().enumerate().filter_map(|(i, (_, a))| a.map(|a| (i, a))).collect()
+pub fn address_refs(words: &[u32]) -> Vec<(usize, u32)> { address_refs_gp(words, GP) }
+
+/// [`address_refs`] with another game's `$gp` (Going Commando's 0x1aeff0; the masking does not depend on it).
+pub fn address_refs_gp(words: &[u32], gp: u32) -> Vec<(usize, u32)> {
+    walk_gp(words, gp).into_iter().enumerate().filter_map(|(i, (_, a))| a.map(|a| (i, a))).collect()
 }
 
 /// The masked first four words (the relocator's index key; equal to the first four of [`mask`] of any longer run).
@@ -161,7 +164,9 @@ fn key(w: &[u32]) -> [u32; 4] {
 
 /// Walks `words` from a function start in address order; at a forward branch target the state also takes the
 /// registers the branch brought in (after its delay slot), so a `lui` in a delay slot reaches its use.
-fn walk(words: &[u32]) -> Vec<(u32, Option<u32>)> {
+fn walk(words: &[u32]) -> Vec<(u32, Option<u32>)> { walk_gp(words, GP) }
+
+fn walk_gp(words: &[u32], gp: u32) -> Vec<(u32, Option<u32>)> {
     let mut st = HiState::default();
     let mut pending: HashMap<usize, HiState> = HashMap::new();
     let mut branch_to: Option<usize> = None;
@@ -170,7 +175,7 @@ fn walk(words: &[u32]) -> Vec<(u32, Option<u32>)> {
         if let Some(p) = pending.remove(&i) {
             for r in 0..32 { if st.0[r].is_none() { st.0[r] = p.0[r]; } }
         }
-        out.push(st.step(w));
+        out.push(st.step(w, gp));
         if let Some(t) = branch_to.take() {
             // The delay slot has run: the branch's state reaches its target.
             let e = pending.entry(t).or_default();

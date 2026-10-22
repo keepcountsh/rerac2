@@ -12,6 +12,8 @@ description = "Dev tool (never ships). Ground-truth harness: compares our reimpl
 rc-formats = { path = "../../crates/rc-formats" }
 # The port's gameplay logic (pure Rust, no Bevy), for the spawn-state comparison (compare-novalis-spawn).
 rc-game = { path = "../../crates/rc-game" }
+# Going Commando's port (pure Rust), for its class census (`class-census --game rac2`: the class registry, the spawn rules).
+rc-game2 = { path = "../../crates/rc-game2" }
 # The extractor library, for the by-hand disc checks (`disc-check`: the size/SHA-1 table and a full extraction).
 rc-extract = { path = "../../crates/rc-extract" }
 anyhow.workspace = true

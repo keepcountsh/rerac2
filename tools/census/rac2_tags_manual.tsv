@@ -1,0 +1,65 @@
+# Going Commando census tags read by hand in the Aranos decomp (work/decomp/rc2/level00.elf); they win over the
+# generated rows of tools/census/rac2_tags.py. conf L = read in the decomp (inferred); cite = a port line, system fixed.
+key	name	system	status	conf	note
+L00:00311688	delete_moby	moby	has	L	state 0xfd / 0xfe: the moby's removal
+L00:002a48f0	stub	trivial	trivial	L	empty function
+L00:002e7718	draw_list_add	fxdraw	partly	L	(fn, arg) into the 0x40-entry list 0x1be040 / 0x1be140 (count 0x1b18c8); the port has 0x2e7920's list only
+L00:00323bf8	seq_time_check	anim	partly	L	a time / sequence-frame comparison over 0x311880, 0x323b78
+L00:003327e8	part_spawn_02	particles	missing	L	0x330df0(2): particle type 2
+L00:0033b5e0	part_spawn_3c	particles	missing	L	0x330df0(0x3c): particle type 0x3c
+L00:00327388	drop_bolts_scaled	bolts	has	L	0x322af0 with the per-level bolt value 0x2a0d30[level]; 3 within 7 of Ratchet
+L00:00313300	set_moby_colour	moby	trivial	L	+0x38's high bytes
+L00:00313330	get_moby_colour	moby	trivial	L	+0x38's high bytes
+L00:00320128	moby_colour_lerp	moby	trivial	L	maths over 0x313330
+L00:00360750	play_level_sound	sound	partly	L	the level's sound table 0x1b196c (0x20 each) through 0x3603c8; slot +0x1886de
+L00:00321688	clamp_length	math	trivial	L	vector length clamp
+L00:00320440	wrap_angle	math	trivial	L	to (−π, π]
+L00:0031e980	vec_helper	math	trivial	L	maths only
+L00:003261f8	moby_space_point	math	trivial	L	a point through a moby's matrix
+L00:00343fb8	steer_maths	math	trivial	L	maths only (no engine calls)
+L00:002f5460	help_text	ui	has	L	the help block's text by id (help.rs)
+L00:00327a28	message_slot	ui	missing	L	the prompt / message slot (0x1a8fb0 / 0x1a8fb4) with a help text; help.rs: the prompt slot 0x327ae0 not ported
+L00:004287b8	script_cam_pos	camera	missing	L	camera class 5 (script): its position (+0x80); cameras.rs has classes 0 and 0x13
+L00:00428810	script_cam_look	camera	missing	L	camera class 5 (script): its look point (+0x90)
+L00:00428880	script_cam_start	camera	missing	L	camera class 5 (script): the switch (0x2d8168) and set-up
+L00:004289f0	script_cam_update	camera	missing	L	camera class 5 (script): update
+L00:0031c970	group_flag	group	partly	L	byte +0xbc of every moby in the group list 0x1fa8a0[n]
+L00:0031b518	anim_state_helper	anim	has	L	over 0x3116e0
+L00:00304200	level_streaming	level	partly	L	the level's load / change steps (0x1c92c0.., sound, memory card)
+L00:002ecef8	fx_texture_set	fxdraw	partly	L	0x2e71b8 (the effect texture) with 0x262460
+L00:0037c948	hw_timer	game	trivial	L	reads the EE timer 0x10000000
+L00:0031c618	line_collide	collision	partly	L	a line test through 0x2de878 / 0x2df8d8
+L00:00326820	hero_distance	hero	partly	L	distance to Ratchet (0x1b1a90), or 100 − it in the ship mode (0x1a8ff4)
+L00:00326448	hero_direction	hero	partly	L	direction to Ratchet / his ship (0x189ed0, 0x3263d0)
+L00:0032b580	shards	breakfx	missing	cite	props.rs: the shards, not drawn
+L00:002ecfb0	burst	breakfx	missing	cite	props.rs: the burst, not drawn
+L00:003210a8	debris	breakfx	missing	cite	enemies: the debris and the burst
+L00:0031fa50	colour_take	colour	missing	cite	the moby's colour taken over
+L00:003241d8	colour_take2	colour	missing	cite	the moby's colour taken over
+L00:0037d5a0	splash	particles	missing	cite	hero: the bubbles and splashes
+L00:002f51a0	item_18	items	missing	cite	the item 0x18
+L00:003222a8	platform_velocity	platform	missing	cite	a carried moby takes the platform's velocity
+L00:0032ea38	speech	dialogue	missing	cite	the scene's speech start
+L00:00323c90	trail	fxdraw	missing	cite	the trail at +0x70
+L00:00325270	equip_item	items	missing	cite	equipping a reward item
+L00:00323d10	clank_anim	clank	missing	cite	Clank's own animation
+L00:00323e58	clank_anim2	clank	missing	cite	Clank's own animation
+L00:0031da58	shadow	shadow	missing	cite	the blob shadow
+L00:002fda20	flash_light	light	missing	cite	the Lancer's flash: a point light
+L00:002d6d60	rumble	rumble	missing	cite	pad rumble
+boot:001153d4	memcpy	libc	trivial	L	the boot ELF's memcpy
+boot:00115484	memset	libc	trivial	L	the boot ELF's memset
+boot:001157ac	strlen	libc	trivial	L	the boot ELF's strlen (0x8080… word test)
+boot:00115ac0	strcmp	libc	trivial	L	the boot ELF's string compare / copy
+boot:00115da8	sprintf	libc	trivial	L	the boot ELF's sprintf (a string FILE, 0x7fffffff)
+boot:00122b00	softfloat	libc	trivial	L	the boot ELF's double maths
+boot:00123298	softfloat	libc	trivial	L	the boot ELF's double maths
+boot:001234f0	softfloat	libc	trivial	L	the boot ELF's double maths
+L00:00321a78	variant_region	level	missing	L	the level's variant boxes (0x1c92e0 / 0x1c9300, count 0x1c92cc, from the gameplay header): the box holding a point = the variant 0x1c92c0
+L00:0031cac0	group_iter	group	partly	L	iterates the moby group 0x1fa8a0[+0x21] (cached 0x1b1ff8 / 0x1b2000)
+L00:00327648	debris_chunks	breakfx	missing	L	spawns n mobys 0x43e (0x2dbdb0) with the callback 0x39c6b8: thrown debris
+L00:002edd50	fx_beam	fxdraw	missing	L	a quad strip through 0x2eb998 with the effect texture 0x2ecef8
+L00:002da530	vec_to_angles	math	trivial	L	maths only
+L00:0031e048	ballistic	math	trivial	L	maths only: a throw's speed for a time and gravity
+L00:00326248	moby_matrix_point	math	trivial	L	maths only
+L00:0031f230	spring	math	trivial	L	maths only
