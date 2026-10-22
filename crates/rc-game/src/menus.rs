@@ -163,6 +163,8 @@ pub enum Page {
     Weapons,
     /// The pause's Gadgets page (`0x43c410` / `0x43cf08` / `0x43d568`): the hand items, the packs and the boots.
     Gadgets,
+    /// The pause's Items page (`0x43a968` / `0x43b3e8` / `0x43c2d8`): the items had and the collectables' counters.
+    Items,
 }
 
 /// A grid of the grid drawer (`0x42e0c8`, its argument block): the table, its size, the icons' and frames' step and
@@ -213,6 +215,39 @@ mod gadgets {
             _ => &HAND,
         }
     }
+}
+
+/// The Items page (`0x43a968`'s elements, `0x1ae580`.. / `0x1ae630`..): its sprites, title and "Exit" at (250, 207);
+/// its sections' grids (`0x43c1e8` the top pair, `0x43c008` the single cell, `0x43bf18` the main 4 × 2, `0x43c0f8`
+/// the counters); the counters' panel (`0x43b8a8`).
+mod items {
+    use super::GridSpec;
+    use rc_formats::disc::menu_tables::Grid;
+    pub const AT: [f32; 2] = [250.0, 207.0];
+    pub const SPRITES: [(u32, u32); 4] = [(0x9e, 0x6044_2d00), (0x9f, 0x6024_1700), (0xa0, 0x55f0_c070), (0xa1, 0x55f0_c070)];
+    pub const FRAME: u32 = 0x5d;
+    pub const SELECTION: u32 = 0x5e;
+    /// "Items" (centred) and "Exit" (left-aligned).
+    pub const TITLE: (u32, [f32; 2]) = (0x2bea, [-156.0, -182.0]);
+    pub const EXIT: (u32, [f32; 2]) = (0x2be5, [40.0, 150.0]);
+    const STEP: [f32; 2] = [54.0, 46.0];
+    const NAME: [f32; 2] = [-118.0, 3.0];
+    pub const TOP: GridSpec = GridSpec { grid: Grid::ItemsTop, cols: 2, rows: 1, icon_step: STEP, icon_at: [-223.0, -145.0], frame_step: STEP, frame_at: [-207.0, -127.0], name_at: NAME, skip: &[], slot: 0 };
+    pub const SINGLE: GridSpec = GridSpec { grid: Grid::ItemsSingle, cols: 1, rows: 1, icon_step: STEP, icon_at: [-60.0, -145.0], frame_step: STEP, frame_at: [-45.0, -127.0], name_at: NAME, skip: &[], slot: 0 };
+    pub const MAIN: GridSpec = GridSpec { grid: Grid::ItemsMain, cols: 4, rows: 2, icon_step: STEP, icon_at: [-223.0, -93.0], frame_step: STEP, frame_at: [-207.0, -75.0], name_at: NAME, skip: &[], slot: 0 };
+    pub const COUNTERS: GridSpec = GridSpec { grid: Grid::ItemsCounters, cols: 2, rows: 2, icon_step: STEP, icon_at: [15.0, 53.0], frame_step: STEP, frame_at: [30.0, 72.0], name_at: NAME, skip: &[], slot: 0 };
+    /// By section (`+0x4b8`).
+    pub const SPECS: [&GridSpec; 4] = [&TOP, &SINGLE, &MAIN, &COUNTERS];
+    /// The panel: the counter's description (scale 0.9, centred) and its title at the name's place; the lines' labels
+    /// (left-aligned) and values (right-aligned 100 on; 16 lower when there is one line); the total's rule.
+    pub const DESCRIPTION_AT: [f32; 2] = [172.0, 60.0];
+    pub const TITLE_AT: [f32; 2] = [-117.0, 3.0];
+    pub const LINES_AT: [[f32; 2]; 3] = [[122.0, 80.0], [122.0, 100.0], [122.0, 130.0]];
+    pub const VALUE_X: f32 = 100.0;
+    pub const RULE: [i32; 4] = [134, 124, 212, 126];
+    /// By counter: its description / title, its lines' labels. 0 the platinum bolts (found, spent, left).
+    pub const COUNTER_TEXT: [u32; 4] = [0x333e, 0x333c, 0x333b, 0x333a];
+    pub const LABELS: [u32; 3] = [0x2c51, 0x2c52, 0x2c53];
 }
 
 /// The Weapons page's layout (`0x1ae810`.., `0x1aea40`..): the page's sprites at (250, 207), a cell's sprite, frame
@@ -557,6 +592,9 @@ pub struct Menus {
     /// `+0x500` row).
     gadget_section: usize,
     gadget_cell: [usize; 2],
+    /// The Items page's section (`+0x4b8`, the counters first) and cell (`+0x4ac` column, `+0x4b0` row).
+    items_section: usize,
+    items_cell: [usize; 2],
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -611,6 +649,8 @@ impl Menus {
             equipped: [None; 4],
             gadget_section: 0,
             gadget_cell: [0, 0],
+            items_section: 3,
+            items_cell: [0, 0],
         }
     }
 
@@ -719,6 +759,7 @@ impl Menus {
             Page::Sound | Page::Camera | Page::Controls => self.setting_tick(pressed, cx, &mut out),
             Page::Weapons => self.weapons_tick(pressed, cx, &mut out),
             Page::Gadgets => self.gadgets_tick(pressed, cx, &mut out),
+            Page::Items => self.items_tick(pressed, &mut out),
         }
         out
     }
@@ -743,6 +784,7 @@ impl Menus {
                 PauseRow::Options => self.go(Page::PauseOptions, out),
                 PauseRow::Weapons => self.go(Page::Weapons, out),
                 PauseRow::Gadgets => self.go(Page::Gadgets, out),
+                PauseRow::Items => self.go(Page::Items, out),
                 PauseRow::Port => {
                     self.port_row = 0;
                     self.port_top = 0;
@@ -977,6 +1019,79 @@ impl Menus {
             } else {
                 out.push(Out::Sound(5));
             }
+        }
+    }
+
+    /// The Items page (`0x43b3e8`), by section (`0x43ae20` the top pair, `0x43b1d0` the single cell, `0x43af30` the
+    /// main grid, `0x43b098` the counters): each move sound 3, between the sections as the original's (the main
+    /// grid's edges lead up to the pair or the single cell, right to the counters). Nothing to take; △ back.
+    fn items_tick(&mut self, keys: u16, out: &mut Vec<Out>) {
+        if keys & pad::TRIANGLE != 0 {
+            return self.back(out);
+        }
+        if keys & (pad::START | pad::SELECT) != 0 {
+            return self.close(out);
+        }
+        let Some(k) = [pad::UP, pad::DOWN, pad::LEFT, pad::RIGHT].into_iter().find(|&k| keys & k != 0) else { return };
+        out.push(Out::Sound(3));
+        self.pulse = 0;
+        let (s, [c, r]) = (&mut self.items_section, &mut self.items_cell);
+        match (*s, k) {
+            (0, pad::UP) => (*s, *r) = (2, 1),
+            (0, pad::DOWN) => (*s, *r) = (2, 0),
+            (0, pad::LEFT) => {
+                if *c == 0 {
+                    *s = 1;
+                } else {
+                    *c -= 1;
+                }
+            }
+            (0, pad::RIGHT) => {
+                if *c == 1 {
+                    (*s, *c, *r) = (1, 0, 0);
+                } else {
+                    *c += 1;
+                }
+            }
+            (1, pad::UP) => (*s, *r, *c) = (2, 1, 3),
+            (1, pad::DOWN) => (*s, *r, *c) = (2, 0, 3),
+            (1, pad::LEFT) => (*s, *c, *r) = (0, 1, 0),
+            (1, pad::RIGHT) => (*s, *c, *r) = (3, 0, 0),
+            (2, pad::UP) => match (*r, *c) {
+                (1, _) => *r = 0,
+                (_, 0 | 1) => *s = 0,
+                (_, 2) => *r = 1,
+                _ => (*s, *r, *c) = (1, 0, 0),
+            },
+            (2, pad::DOWN) => match (*r, *c) {
+                (0, _) => *r = 1,
+                (_, 0 | 1) => (*s, *r) = (0, 0),
+                (_, 2) => *r = 0,
+                _ => (*s, *r, *c) = (3, 0, 0),
+            },
+            (2, pad::LEFT) => *c = (*c + 3) % 4,
+            (2, pad::RIGHT) => {
+                if *c == 3 {
+                    (*s, *c) = (3, 0);
+                } else {
+                    *c += 1;
+                }
+            }
+            (3, pad::UP) => match (*r, *c) {
+                (1, _) => *r = 0,
+                (_, 0) => (*s, *r, *c) = (2, 1, 3),
+                _ => *r = 1,
+            },
+            (3, pad::DOWN) => *r ^= 1,
+            (3, pad::LEFT) => {
+                if *c == 0 {
+                    (*s, *c, *r) = (2, 3, 1);
+                } else {
+                    *c -= 1;
+                }
+            }
+            (3, pad::RIGHT) => *c ^= 1,
+            _ => {}
         }
     }
 
@@ -1447,6 +1562,7 @@ impl Menus {
             Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
             Page::Weapons => return self.draw_weapons(out, a, v, icon),
             Page::Gadgets => return self.draw_gadgets(out, a, v, icon),
+            Page::Items => return self.draw_items(out, a, v, icon),
             Page::Quit => {
                 self.draw_pause_options(out, a, icon);
                 gui::fill(out, [0, 0, 0, 0x30]);
@@ -1477,7 +1593,7 @@ impl Menus {
                 self.draw_planet(out, a, card);
                 self.draw_message(out, a, card);
             }
-            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons | Page::Gadgets => {}
+            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons | Page::Gadgets | Page::Items => {}
         }
     }
 
@@ -1629,6 +1745,55 @@ impl Menus {
         }
         if let Some(s) = a.sprites.get(&SELECTION) { gui::sprite(out, s, spec.frame(AT, c, r), 0.0, [1.0, 1.0], self.pulse_colour()); }
         for (id, o) in LABELS { centred(out, a.strings.get(id), o); }
+    }
+
+    /// The Items page (`0x43c2d8`): the page's sprites, the title and "Exit", the four grids, the counters' panel
+    /// (`0x43b8a8`: in the counters, the one selected, else the platinum bolts), the selection.
+    fn draw_items(&self, out: &mut Vec<Quad>, a: &Assets, v: &View, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) {
+        use items::*;
+        for (id, c) in SPRITES {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, AT, 0.0, [1.0, 1.0], gui::rgba(c)); }
+        }
+        // `align`: 0 left, 1 centred, 2 right (a text element's `+0x44`).
+        let text = |out: &mut Vec<Quad>, t: &[u8], o: [f32; 2], align: i32, scale: f32| {
+            let w = gui::text_width(&a.glyphs, t, scale);
+            let x = AT[0] + o[0] - (w * align / 2) as f32;
+            gui::text(out, &a.glyphs, 1, t, x, AT[1] + o[1], scale, gui::rgba(0x80f0_f0f0));
+        };
+        text(out, a.strings.get(TITLE.0), TITLE.1, 1, 1.0);
+        text(out, a.strings.get(EXIT.0), EXIT.1, 0, 1.0);
+        let s = self.items_section;
+        let [c, r] = self.items_cell;
+        let spec = SPECS[s];
+        // `+0x4b4`: the selected cell's item; in the counters, the counter.
+        let current = if s == 3 { (c + r * 2) as i32 } else { v.tables.grid(spec.grid).get(c + r * spec.cols).map_or(0, |g| g.item as i32) };
+        for g in SPECS {
+            self.draw_grid(out, a, v, icon, g, AT, FRAME, current);
+        }
+        let counter = if s == 3 { c + r * 2 } else { 0 };
+        let g = |addr: u32| v.save.i32(Scope::Global, addr);
+        let lines: Vec<(u32, i32)> = match counter {
+            0 => {
+                let (found, spent) = (platinum_bolts(v.save), v.save.u8(Scope::Global, 0x139648) as i32);
+                LABELS.iter().copied().zip([found, spent, (found - spent).clamp(0, 40)]).collect()
+            }
+            1 => vec![(LABELS[0], v.save.bytes(Scope::Global, 0x1a7a22, 2).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]) as i32))],
+            2 => vec![(LABELS[0], g(0x1a7a24))],
+            _ => vec![(LABELS[0], g(0x1a7a04))],
+        };
+        let below = if counter == 0 { 0.0 } else { 16.0 };
+        for (&[x, y], (label, value)) in LINES_AT.iter().zip(&lines) {
+            text(out, a.strings.get(*label), [x, y], 0, 1.0);
+            text(out, value.to_string().as_bytes(), [x + VALUE_X, y + below], 2, 1.0);
+        }
+        text(out, a.strings.get(COUNTER_TEXT[counter]), DESCRIPTION_AT, 1, 0.9);
+        if current == counter as i32 { text(out, a.strings.get(COUNTER_TEXT[counter]), TITLE_AT, 1, 1.0); }
+        if counter == 0 {
+            let [x0, y0, x1, y1] = RULE;
+            let (bx, by) = (AT[0] as i32, AT[1] as i32);
+            gui::rect(out, by + y0, by + y1, bx + x0, bx + x1, gui::rgba(0x55f0_c070));
+        }
+        if let Some(sp) = a.sprites.get(&SELECTION) { gui::sprite(out, sp, spec.frame(AT, c, r), 0.0, [1.0, 1.0], self.pulse_colour()); }
     }
 
     /// The grid drawer (`0x42e0c8`) for the pages without upgrade bars: per cell not left out, a plain icon (kind 2)
@@ -1934,6 +2099,13 @@ fn record<'a>(v: &View<'a>, item: i32) -> Option<&'a rc_formats::disc::menu_tabl
     let i = u32::try_from(item).ok()?;
     let row = v.save.bytes(Scope::Global, 0x139568 + i, 1).map_or(0, |b| b[0]);
     v.tables.items.get(if row == 0 { i as usize } else { row as usize })
+}
+
+/// `0x327c68`: the platinum bolts found, 4 a level (`0x19b278 + 4·level`, one byte each; level 2 another 4 at
+/// `0x19b2e0`), level 0x1a left out; at most 40.
+fn platinum_bolts(save: &SaveData) -> i32 {
+    let found = |at: u32| (0..4).filter(|&k| save.u8(Scope::Global, at + k) != 0).count() as i32;
+    (0..0x1c).filter(|&l| l != 0x1a).map(|l| found(0x19b278 + 4 * l) + if l == 2 { found(0x19b2e0) } else { 0 }).sum::<i32>().clamp(0, 40)
 }
 
 /// `%d`, or `%d,%03d` from 1000.
