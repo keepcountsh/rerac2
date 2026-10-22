@@ -394,7 +394,7 @@ fn tick(
     };
     let ended = std::mem::take(&mut r.movie_ended);
     let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
-    let mut cx = card.as_deref_mut().map(|c| menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut r.port, option_rows: &r.data.option_rows });
+    let mut cx = card.as_deref_mut().map(|c| menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut r.port, held, option_rows: &r.data.option_rows });
     for req in r.front.tick(held, ended, &r.data.assets, cx.as_mut()) {
         match req {
             Request::Sound(n) => if r.trace { println!("front end: frame {}: sound {n} (not played)", r.ticks) },

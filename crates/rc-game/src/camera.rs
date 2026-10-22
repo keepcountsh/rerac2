@@ -46,7 +46,8 @@ const DEG40: f32 = 0.698_131_7;
 const DEG1_75: f32 = 0.030_543_262;
 /// The pitch limit of the rows (70°).
 const DEG70: f32 = 1.221_730_6;
-/// `$gp+0x256c` + 4·(option `0x1a7bb4` − 1): the yaw rate (rad/tick) the stick turns at; option 1 (1°) is the default.
+/// `$gp+0x2568` + 4·option `0x1a7bb4` (`0x4278c8`): the yaw rate (rad/tick) the stick turns at (the Camera page's
+/// Slow, Medium, Fast).
 const YAW_RATES: [f32; 3] = [0.017_453_294, 0.022_689_28, 0.038_397_24];
 
 fn lerp(a: V3, b: V3, t: f32) -> V3 { add(a, scale(sub(b, a), t)) }
@@ -117,9 +118,10 @@ pub struct CamInput<'a> {
     pub coll: Option<&'a Collision>,
     /// The right stick (`0x138280` / `0x138284`), up / left negative.
     pub rstick: [f32; 2],
-    /// Options `0x1a7bb0` (yaw normal) and `0x1a7bac` (pitch normal).
+    /// Options `0x1a7bb0` (yaw normal) and `0x1a7bac` (pitch normal), and the rotation speed `0x1a7bb4` (0..=2).
     pub yaw_normal: bool,
     pub pitch_normal: bool,
+    pub speed: usize,
     /// The mobys the queries test (None: the world only); they ignore Ratchet's moby.
     pub scene: Option<&'a MobyScene<'a>>,
     pub hero_moby: Option<usize>,
@@ -946,7 +948,7 @@ impl FollowCamera {
         if yi == 0.0 {
             if self.script_yaw != 0.0 { yi = self.script_yaw; }
         } else {
-            self.yaw_rate = YAW_RATES[0];
+            self.yaw_rate = YAW_RATES[inp.speed.min(2)];
         }
         let pi = if self.script & 2 != 0 {
             self.script_pitch / DEG40

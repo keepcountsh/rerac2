@@ -47,6 +47,8 @@ mod pad {
     pub const SELECT: u16 = 0x100;
     pub const START: u16 = 0x800;
     pub const UP: u16 = 0x1000;
+    pub const RIGHT: u16 = 0x2000;
+    pub const LEFT: u16 = 0x8000;
     pub const DOWN: u16 = 0x4000;
 }
 
@@ -152,6 +154,64 @@ pub enum Page {
     PauseOptions,
     Save,
     Quit,
+    /// The in-game Options' setting pages (level 00 `0x433e28` Sound, `0x4334c8` Camera, `0x4347a0` Controls).
+    Sound,
+    Camera,
+    Controls,
+}
+
+/// The game's options in the save data (`0x1a7b98`.., kept across a new game): words up to the camera speed, then
+/// bytes.
+pub mod opt {
+    /// 1: stereo (`0x132938`).
+    pub const STEREO: u32 = 0x1a7ba0;
+    /// The volumes, 0..=1024: music, sound effects.
+    pub const MUSIC: u32 = 0x1a7ba4;
+    pub const SFX: u32 = 0x1a7ba8;
+    /// 1: normal (not reversed).
+    pub const PITCH_NORMAL: u32 = 0x1a7bac;
+    pub const YAW_NORMAL: u32 = 0x1a7bb0;
+    /// 0..=2: the camera's yaw rate (`gp+0x2568` + 4·n).
+    pub const CAM_SPEED: u32 = 0x1a7bb4;
+    pub const WIDESCREEN: u32 = 0x1a7bb9;
+    pub const VIBRATION: u32 = 0x1a7bba;
+    pub const QS_PAUSE: u32 = 0x1a7bbb;
+}
+
+/// The setting pages' window (`0x431c38` with the gp tables: sprites 0x8b..0x8d) and rows.
+mod settings {
+    pub const SOUND_FRAME: f32 = 0.67;
+    pub const CAMERA_FRAME: f32 = 0.65;
+    pub const CONTROLS_FRAME: f32 = 0.4;
+    /// Sound: the labels right-aligned at x 256 (font 2), the sliders 10 right of the window's centre.
+    pub const SOUND_ROWS: [f32; 3] = [145.0, 190.0, 225.0];
+    pub const SLIDER_AT: [f32; 3] = [10.0, -49.0, -4.0];
+    pub const SLIDER: [f32; 2] = [150.0, 16.0];
+    pub const SLIDER_BACK: u32 = 0x20ff_ffff;
+    pub const SLIDER_FILL: u32 = 0x55f0_c070;
+    /// Camera: four rows centred at x 256 (font 2).
+    pub const CAMERA_ROWS: [f32; 4] = [120.0, 155.0, 190.0, 225.0];
+    /// Controls: two rows centred (font 1).
+    pub const CONTROLS_ROWS: [f32; 2] = [150.0, 190.0];
+    pub const SELECTED: u32 = 0x80d0_d0d0;
+    pub const OTHER: u32 = 0x7080_8080;
+    /// Texts: "Sound effects volume", "Music volume", "Toggle stereo/mono", MONO, STEREO; "Up/Down movement",
+    /// "Left/Right movement", "Change camera rotation speed", Reversed, Normal, Slow, Medium, Fast; "Vibration",
+    /// "Quick Select Pause"; the titles Sound, Camera, Controls.
+    pub const SFX: u32 = 0x2da5;
+    pub const MUSIC: u32 = 0x2da6;
+    pub const STEREO: u32 = 0x2da7;
+    pub const MONO_STEREO: [u32; 2] = [0x2da8, 0x2da9];
+    pub const UP_DOWN: u32 = 0x2c78;
+    pub const LEFT_RIGHT: u32 = 0x2c77;
+    pub const SPEED: u32 = 0x2dae;
+    pub const REVERSED_NORMAL: [u32; 2] = [0x2c7a, 0x2c79];
+    pub const SPEEDS: [u32; 3] = [0x2dad, 0x2dac, 0x2dab];
+    pub const VIBRATION: u32 = 0x2c30;
+    pub const QS_PAUSE: u32 = 0x3079;
+    pub const SOUND_TITLE: u32 = 0x2c2d;
+    pub const CAMERA_TITLE: u32 = 0x2c2e;
+    pub const CONTROLS_TITLE: u32 = 0x2bf7;
 }
 
 /// The pause list's rows (`0x345740`, on foot: the texts `0x1abb30`) and the port's Port Options after Options.
@@ -389,6 +449,8 @@ pub struct Menus {
     /// The pause list's and its Options list's rows.
     pause_row: usize,
     options_row: usize,
+    /// The setting page's row.
+    setting_row: usize,
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -409,6 +471,8 @@ pub struct Ctx<'a> {
     pub clock: [u8; 8],
     /// The port's settings (the engine's).
     pub port: &'a mut PortValues,
+    /// The buttons held (`0x138340`: the sliders move while ← / → are held).
+    pub held: u16,
     /// The Options page's rows ([`option_rows`]).
     pub option_rows: &'a [OptionRow],
 }
@@ -434,6 +498,7 @@ impl Menus {
             in_game: false,
             pause_row: 0,
             options_row: 0,
+            setting_row: 0,
         }
     }
 
@@ -539,6 +604,7 @@ impl Menus {
             Page::PauseOptions => self.pause_options_tick(pressed, cx, &mut out),
             Page::Save => self.save_tick(pressed, cx, &mut out),
             Page::Quit => self.quit_tick(pressed, &mut out),
+            Page::Sound | Page::Camera | Page::Controls => self.setting_tick(pressed, cx, &mut out),
         }
         out
     }
@@ -602,12 +668,92 @@ impl Menus {
                     self.dialog = Some(Dialog { next: Page::Load, over_page: false, frames: 0, fail_wait: 0 });
                 }
                 PauseOption::Subtitles => self.go(Page::Toggle(Toggle::Subtitles), out),
+                PauseOption::Sound | PauseOption::Camera | PauseOption::Controls => {
+                    self.setting_row = 0;
+                    let page = match PauseOption::ALL[self.options_row] {
+                        PauseOption::Sound => Page::Sound,
+                        PauseOption::Camera => Page::Camera,
+                        _ => Page::Controls,
+                    };
+                    self.go(page, out);
+                }
                 PauseOption::Quit => {
                     out.push(Out::Sound(4));
                     self.previous = Some(self.page);
                     self.page = Page::Quit;
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// The setting pages (`0x434088` Sound, `0x4335f0` Camera, `0x4348c8` Controls): Up / Down through the rows
+    /// (sound 3), ✕ the row's toggle (sound 4; 5 on a slider), ← / → held move a volume by 6 (0..=1024).
+    fn setting_tick(&mut self, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
+        if keys & pad::TRIANGLE != 0 {
+            return self.back(out);
+        }
+        if keys & (pad::START | pad::SELECT) != 0 {
+            return self.close(out);
+        }
+        let n = match self.page {
+            Page::Sound => 3,
+            Page::Camera => 4,
+            _ => 2,
+        };
+        if keys & (pad::UP | pad::DOWN) != 0 {
+            out.push(Out::Sound(3));
+            self.setting_row = if keys & pad::UP != 0 { (self.setting_row + n - 1) % n } else { (self.setting_row + 1) % n };
+            return;
+        }
+        let save = &mut *cx.save;
+        let flip = |save: &mut SaveData, addr: u32, word: bool| {
+            if word {
+                let v = save.i32(Scope::Global, addr);
+                save.set_i32(Scope::Global, addr, (v == 0) as i32);
+            } else {
+                let v = save.u8(Scope::Global, addr);
+                save.set_u8(Scope::Global, addr, (v == 0) as u8);
+            }
+        };
+        match (self.page, self.setting_row) {
+            (Page::Sound, r @ (0 | 1)) => {
+                let addr = if r == 0 { opt::SFX } else { opt::MUSIC };
+                let d = if cx.held & pad::LEFT != 0 { -6 } else if cx.held & pad::RIGHT != 0 { 6 } else { 0 };
+                if d != 0 { save.set_i32(Scope::Global, addr, (save.i32(Scope::Global, addr) + d).clamp(0, 0x400)); }
+                if keys & pad::CROSS != 0 { out.push(Out::Sound(5)); }
+            }
+            _ if keys & pad::CROSS == 0 => {}
+            (Page::Sound, _) => {
+                out.push(Out::Sound(4));
+                flip(save, opt::STEREO, true);
+            }
+            (Page::Camera, 0) => {
+                out.push(Out::Sound(4));
+                flip(save, opt::PITCH_NORMAL, true);
+            }
+            (Page::Camera, 1) => {
+                out.push(Out::Sound(4));
+                flip(save, opt::YAW_NORMAL, true);
+            }
+            (Page::Camera, 2) => {
+                out.push(Out::Sound(4));
+                let v = save.i32(Scope::Global, opt::CAM_SPEED);
+                save.set_i32(Scope::Global, opt::CAM_SPEED, (v + 1).rem_euclid(3));
+            }
+            (Page::Camera, _) => {
+                out.push(Out::Sound(4));
+                let on = cx.port.get(Setting::Aspect) == 0;
+                save.set_u8(Scope::Global, opt::WIDESCREEN, on as u8);
+                out.push(Out::Port(Setting::Aspect, if on { 2 } else { 0 }));
+            }
+            (_, 0) => {
+                out.push(Out::Sound(4));
+                flip(save, opt::VIBRATION, false);
+            }
+            _ => {
+                out.push(Out::Sound(4));
+                flip(save, opt::QS_PAUSE, false);
             }
         }
     }
@@ -1071,6 +1217,7 @@ impl Menus {
             Page::Port => return self.draw_port(out, a, v),
             Page::Pause => return self.draw_pause(out, a),
             Page::PauseOptions => return self.draw_pause_options(out, a, icon),
+            Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
             Page::Quit => {
                 self.draw_pause_options(out, a, icon);
                 gui::fill(out, [0, 0, 0, 0x30]);
@@ -1101,7 +1248,65 @@ impl Menus {
                 self.draw_planet(out, a, card);
                 self.draw_message(out, a, card);
             }
-            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit => {}
+            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls => {}
+        }
+    }
+
+    /// The setting pages' draws (`0x434320` Sound, `0x433798` Camera, `0x4349d0` Controls): the window, then the rows
+    /// ("<setting>: <value>"; the selected row light, the others grey).
+    fn draw_setting(&self, out: &mut Vec<Quad>, a: &Assets, v: &View) {
+        use settings::*;
+        let (frame, title) = match self.page {
+            Page::Sound => (SOUND_FRAME, SOUND_TITLE),
+            Page::Camera => (CAMERA_FRAME, CAMERA_TITLE),
+            _ => (CONTROLS_FRAME, CONTROLS_TITLE),
+        };
+        draw_window_page(out, a, frame, title);
+        let colour = |row: usize| gui::rgba(if row == self.setting_row { SELECTED } else { OTHER });
+        let word = |addr: u32| v.save.i32(Scope::Global, addr);
+        let byte = |addr: u32| v.save.u8(Scope::Global, addr);
+        let line = |label: u32, value: u32| [a.strings.get(label), b": ", a.strings.get(value)].concat();
+        // Font 2 (`0x2ea608` centred, `0x2ea4d8` right-aligned), font 1 (`0x2ea570` centred).
+        let font2 = |out: &mut Vec<Quad>, t: &[u8], x: f32, y: f32, c: [u8; 4], right: bool| {
+            let w = gui::text_width(&a.glyphs_2, t, 1.0);
+            let x = if right { x - w as f32 } else { x - (w >> 1) as f32 };
+            gui::text(out, &a.glyphs_2, 2, t, x, y, 1.0, c);
+        };
+        match self.page {
+            Page::Sound => {
+                let at = options::TOGGLE_AT;
+                for (row, (label, addr)) in [(SFX, opt::SFX), (MUSIC, opt::MUSIC)].into_iter().enumerate() {
+                    let y = SOUND_ROWS[row];
+                    font2(out, &[a.strings.get(label), b": "].concat(), 256.0, y, colour(row), true);
+                    // `0x42d360`: the bar, then the value's part of it.
+                    let (x0, y0) = (at[0] + SLIDER_AT[0], at[1] + SLIDER_AT[1 + row]);
+                    let [w, h] = SLIDER;
+                    gui::rect(out, y0 as i32, (y0 + h) as i32, x0 as i32, (x0 + w) as i32, gui::rgba(SLIDER_BACK));
+                    let fill = word(addr).clamp(0, 0x400) as f32 / 1024.0 * w;
+                    gui::rect(out, y0 as i32, (y0 + h) as i32, x0 as i32, (x0 + fill) as i32, gui::rgba(SLIDER_FILL));
+                }
+                let mode = MONO_STEREO[(word(opt::STEREO) != 0) as usize];
+                font2(out, &line(STEREO, mode), 256.0, SOUND_ROWS[2], colour(2), false);
+            }
+            Page::Camera => {
+                let rows = [
+                    line(UP_DOWN, REVERSED_NORMAL[(word(opt::PITCH_NORMAL) != 0) as usize]),
+                    line(LEFT_RIGHT, REVERSED_NORMAL[(word(opt::YAW_NORMAL) != 0) as usize]),
+                    line(SPEED, SPEEDS[word(opt::CAM_SPEED).clamp(0, 2) as usize]),
+                    line(0x307a, if v.port.get(Setting::Aspect) != 0 { options::ON } else { options::OFF }),
+                ];
+                for (row, t) in rows.iter().enumerate() { font2(out, t, 256.0, CAMERA_ROWS[row], colour(row), false); }
+            }
+            _ => {
+                let rows = [
+                    line(VIBRATION, if byte(opt::VIBRATION) != 0 { options::ON } else { options::OFF }),
+                    line(QS_PAUSE, if byte(opt::QS_PAUSE) != 0 { options::ON } else { options::OFF }),
+                ];
+                for (row, t) in rows.iter().enumerate() {
+                    let w = gui::text_width(&a.glyphs, t, 1.0);
+                    gui::text(out, &a.glyphs, 1, t, 256.0 - (w >> 1) as f32, CONTROLS_ROWS[row], 1.0, colour(row));
+                }
+            }
         }
     }
 
@@ -1392,6 +1597,20 @@ fn draw_toggle(out: &mut Vec<Quad>, a: &Assets, t: Toggle, on: bool) {
     }
     let line = [a.strings.get(t.text()), b": ", a.strings.get(if on { ON } else { OFF })].concat();
     centred(out, &line, 256.0, 170.0, if t == Toggle::Subtitles { 0x80d0_d0d0 } else { 0x80f0_f0f0 });
+}
+
+/// A setting page's window (`0x431fa8`): sprites 0x8b..0x8d at (255, 195) at the page's keyframe, the title,
+/// "✕ Toggle" and "△ Exit".
+fn draw_window_page(out: &mut Vec<Quad>, a: &Assets, frame: f32, title: u32) {
+    use options::*;
+    for (id, c) in TOGGLE_SPRITES {
+        if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, TOGGLE_AT, frame, [1.0, 1.0], gui::rgba(c)); }
+    }
+    for (id, [dx, dy]) in [(title, TOGGLE_TITLE), (TOGGLE_TEXT, TOGGLE_TOGGLE), (EXIT_TEXT, TOGGLE_EXIT)] {
+        let t = a.strings.get(id);
+        let w = gui::text_width(&a.glyphs, t, 1.0);
+        gui::text(out, &a.glyphs, 1, t, TOGGLE_AT[0] + dx - (w >> 1) as f32, TOGGLE_AT[1] + dy, 1.0, gui::rgba(0x80f0_f0f0));
+    }
 }
 
 /// The language (`0x1a7bbc`): English until the options are ported.

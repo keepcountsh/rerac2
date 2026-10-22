@@ -77,9 +77,11 @@ fn pause_tick(
     if std::mem::take(&mut p.pause_opened) { p.game.store(&mut c.save); }
     let mut port = crate::port_options::values(&gfx, &display);
     let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
-    let mut cx = rc_game::menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut port, option_rows: &[] };
+    let held = (p.pad.held & 0xffff) as u16;
+    let mut cx = rc_game::menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut port, held, option_rows: &[] };
     let Some(m) = p.pause.as_mut() else { return };
     let outs = m.tick((p.pad.pressed & 0xffff) as u16, &mut cx);
+
     use rc_game::menus::Out;
     for o in outs {
         match o {
@@ -198,6 +200,14 @@ fn tick(
 
     // The front end's layer is up: the game waits (as R&C1's tick does under its front end).
     if front.is_some_and(|f| !f.done()) { return; }
+    // The Sound page's volumes (rc_game::menus::opt, the card's save data; `RC_AUDIO_MUSIC` / `RC_AUDIO_SFX` win).
+    if let (Some(out), Some(c)) = (audio.as_deref_mut(), card.as_deref()) {
+        use rc_game::menus::opt;
+        let w = |a: u32| c.save.i32(rc_game::save::Scope::Global, a).clamp(0, 0x400);
+        let sys = out.system();
+        if std::env::var_os("RC_AUDIO_MUSIC").is_none() && sys.music_option != w(opt::MUSIC) { sys.music_option = w(opt::MUSIC); }
+        if std::env::var_os("RC_AUDIO_SFX").is_none() && sys.sfx_option != w(opt::SFX) { sys.sfx_option = w(opt::SFX); }
+    }
     // The scenes add sequence slots to the level's class animations (as the game's actors do), unseen by the
     // systems that watch the level for a new one.
     let level = level.bypass_change_detection();
@@ -539,6 +549,12 @@ fn tick(
         (inp.scene, inp.hero_moby) = (scene.as_ref(), mobys.hero_moby);
         inp.level = p.game.level;
         inp.strafe_held = p.pad.held & (rc_game::pad::button::L2 | rc_game::pad::button::R2) != 0;
+        // The Camera page's options (rc_game::menus::opt, in the card's save data).
+        if let Some(c) = card.as_deref() {
+            use rc_game::menus::opt;
+            let w = |a: u32| c.save.i32(rc_game::save::Scope::Global, a);
+            (inp.pitch_normal, inp.yaw_normal, inp.speed) = (w(opt::PITCH_NORMAL) != 0, w(opt::YAW_NORMAL) != 0, w(opt::CAM_SPEED).clamp(0, 2) as usize);
+        }
         p.camera.update(&inp, &mut p.game.cam_tweaks);
     }
     // The rest of the camera update `0x2d9f38`: the fade back in (`0x2d9d98`), the level cameras' choice and the
@@ -1308,7 +1324,7 @@ fn listener(c: &FollowCamera) -> rc_game::audio::voices::Listener {
 
 /// The camera's inputs: the options' yaw and pitch normal (`0x1a7bb0` / `0x1a7bac`, the defaults).
 fn cam_input<'a>(hero: &'a Hero, coll: Option<&'a rc_formats::collision::Collision>, rstick: [f32; 2]) -> CamInput<'a> {
-    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, scene: None, hero_moby: None, level: 0, strafe_held: false }
+    CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, speed: 0, scene: None, hero_moby: None, level: 0, strafe_held: false }
 }
 
 fn camera_view(c: &FollowCamera) -> CameraView {
