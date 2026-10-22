@@ -37,6 +37,7 @@ use crate::gui::{self, text_box, Quad, Tex, TextBox};
 use crate::memcard::{status, MemCard, Preview, TYPE_PS2};
 use crate::save::{self, SaveData, Scope};
 use port::{PortValues, Setting, ENTRIES};
+use rc_formats::disc::menu_tables::MenuTables;
 use rc_formats::disc::boot::MenuRow;
 
 /// Pad bits (`0x138344`).
@@ -158,6 +159,48 @@ pub enum Page {
     Sound,
     Camera,
     Controls,
+    /// The pause's Weapons page (level 00 `0x43d698` / `0x43dba0` / `0x43e640`): the 4 × 6 grid of the weapons.
+    Weapons,
+}
+
+/// The Weapons page's layout (`0x1ae810`.., `0x1aea40`..): the page's sprites at (250, 207), a cell's sprite, frame
+/// and selection at (50 + 53.5·col, 77 + 47·row), its icon (32 × 32) 16 left and 18 up, its upgrade bar (32 × 5) at
+/// (35 + 53·col, 92 + 47·row), the title, the name and the ammo line.
+mod weapons {
+    pub const AT: [f32; 2] = [250.0, 207.0];
+    pub const SPRITES: [(u32, u32); 3] = [(0x21, 0x6044_2d00), (0x22, 0x55f0_c070), (0x28, 0x80ff_de8d)];
+    pub const CELL: (u32, u32) = (0x29, 0x6024_1700);
+    /// A cell of a weapon out of ammo.
+    pub const CELL_EMPTY: u32 = 0x6020_2080;
+    pub const FRAME: (u32, u32) = (0x23, 0x30f0_c070);
+    pub const FRAME_HELD: u32 = 0x80ff_de8d;
+    pub const SELECTION: u32 = 0x27;
+    pub const OVERLAY: (u32, u32) = (0x2a, 0x6024_1700);
+    pub const CELL_AT: [f32; 2] = [-200.0, -130.0];
+    pub const STEP: [f32; 2] = [53.5, 47.0];
+    pub const ICON_AT: [f32; 2] = [-216.0, -148.0];
+    pub const BAR_AT: [f32; 2] = [-215.0, -115.0];
+    pub const BAR_STEP: [f32; 2] = [53.0, 47.0];
+    pub const BAR: [f32; 2] = [32.0, 5.0];
+    pub const BAR_BACK: u32 = 0x8000_0000;
+    /// `0x42ddd8`: the fill's colour; a weapon of class 0 with an upgrade to earn, blue (to `0x60001eff` along the
+    /// bar: drawn flat).
+    pub const BAR_FILL: u32 = 0x55f0_c070;
+    pub const BAR_UPGRADE: u32 = 0x6049_c1ff;
+    pub const TITLE_AT: [f32; 2] = [-125.0, -182.0];
+    pub const NAME_AT: [f32; 2] = [110.0, 118.0];
+    pub const AMMO_AT: [f32; 2] = [34.0, 152.0];
+    /// The icons' colours by the record's class (`gp−0x11c8`; the special items 0xc, 0xe, 0x11, 0x12, 0x35:
+    /// `gp−0x11d8`), a placeholder icon (0xea7e) grey.
+    pub const ICON_COLOURS: [u32; 2] = [0x60f0_f0b0, 0x6040_d7d7];
+    pub const SPECIAL_COLOURS: [u32; 4] = [0x60f0_f0b0, 0x6029_a1ff, 0x6040_d7d7, 0x60f0_8040];
+    pub const NO_ICON: u16 = 0xea7e;
+    /// "Weapons", "Ammo", "Uses no ammo".
+    pub const TITLE: u32 = 0x2be7;
+    pub const AMMO: u32 = 0x2c5f;
+    pub const NO_AMMO: u32 = 0x2c4f;
+    pub const COLS: usize = 4;
+    pub const ROWS: usize = 6;
 }
 
 /// The game's options in the save data (`0x1a7b98`.., kept across a new game): words up to the camera speed, then
@@ -399,6 +442,8 @@ pub enum Out {
     Loaded { level: i32 },
     /// A Port Options row (or the 16:9 toggle) changed its setting.
     Port(Setting, u8),
+    /// The Weapons page's ✕: the weapon to hold (`0x1fec00`).
+    Equip(i32),
     /// In the game: the pause closes (the game goes on).
     Resume,
     /// In the game: Quit Game was answered yes (back to the front end).
@@ -451,6 +496,9 @@ pub struct Menus {
     options_row: usize,
     /// The setting page's row.
     setting_row: usize,
+    /// The Weapons page's cell (`+0x4c4` column, `+0x4c8` row) and the weapon taken there.
+    weapon_cell: [usize; 2],
+    equipped: Option<i32>,
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -475,6 +523,8 @@ pub struct Ctx<'a> {
     pub held: u16,
     /// The Options page's rows ([`option_rows`]).
     pub option_rows: &'a [OptionRow],
+    /// The level's pause tables (empty in the front end).
+    pub tables: &'a MenuTables,
 }
 
 impl Menus {
@@ -499,6 +549,8 @@ impl Menus {
             pause_row: 0,
             options_row: 0,
             setting_row: 0,
+            weapon_cell: [0, 0],
+            equipped: None,
         }
     }
 
@@ -605,6 +657,7 @@ impl Menus {
             Page::Save => self.save_tick(pressed, cx, &mut out),
             Page::Quit => self.quit_tick(pressed, &mut out),
             Page::Sound | Page::Camera | Page::Controls => self.setting_tick(pressed, cx, &mut out),
+            Page::Weapons => self.weapons_tick(pressed, cx, &mut out),
         }
         out
     }
@@ -627,6 +680,7 @@ impl Menus {
         } else if keys & pad::CROSS != 0 {
             match rows[self.pause_row] {
                 PauseRow::Options => self.go(Page::PauseOptions, out),
+                PauseRow::Weapons => self.go(Page::Weapons, out),
                 PauseRow::Port => {
                     self.port_row = 0;
                     self.port_top = 0;
@@ -754,6 +808,48 @@ impl Menus {
             _ => {
                 out.push(Out::Sound(4));
                 flip(save, opt::QS_PAUSE, false);
+            }
+        }
+    }
+
+    /// The Weapons page (`0x43dba0`): Up / Down through the rows, ← / → through the columns (wrapping, sound 3); ✕
+    /// on a weapon had: hold it (sound 4), else sound 5; △ back to the pause list.
+    fn weapons_tick(&mut self, keys: u16, cx: &mut Ctx, out: &mut Vec<Out>) {
+        use weapons::{COLS, ROWS};
+        if keys & pad::TRIANGLE != 0 {
+            return self.back(out);
+        }
+        if keys & (pad::START | pad::SELECT) != 0 {
+            return self.close(out);
+        }
+        let [c, r] = &mut self.weapon_cell;
+        let moved = if keys & pad::UP != 0 {
+            *r = (*r + ROWS - 1) % ROWS;
+            true
+        } else if keys & pad::DOWN != 0 {
+            *r = (*r + 1) % ROWS;
+            true
+        } else if keys & pad::LEFT != 0 {
+            *c = (*c + COLS - 1) % COLS;
+            true
+        } else if keys & pad::RIGHT != 0 {
+            *c = (*c + 1) % COLS;
+            true
+        } else {
+            false
+        };
+        if moved {
+            out.push(Out::Sound(3));
+            self.pulse = 0;
+        }
+        if keys & pad::CROSS != 0 {
+            let item = cx.tables.weapon_grid.get(*c + *r * COLS).copied().unwrap_or(0) as i32;
+            if 0 < item && had(cx.save, item) {
+                out.push(Out::Sound(4));
+                out.push(Out::Equip(item));
+                self.equipped = Some(item);
+            } else {
+                out.push(Out::Sound(5));
             }
         }
     }
@@ -1218,6 +1314,7 @@ impl Menus {
             Page::Pause => return self.draw_pause(out, a),
             Page::PauseOptions => return self.draw_pause_options(out, a, icon),
             Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
+            Page::Weapons => return self.draw_weapons(out, a, v, icon),
             Page::Quit => {
                 self.draw_pause_options(out, a, icon);
                 gui::fill(out, [0, 0, 0, 0x30]);
@@ -1248,7 +1345,7 @@ impl Menus {
                 self.draw_planet(out, a, card);
                 self.draw_message(out, a, card);
             }
-            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls => {}
+            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons => {}
         }
     }
 
@@ -1307,6 +1404,76 @@ impl Menus {
                     gui::text(out, &a.glyphs, 1, t, 256.0 - (w >> 1) as f32, CONTROLS_ROWS[row], 1.0, colour(row));
                 }
             }
+        }
+    }
+
+    /// The Weapons page (`0x43e640`): the page's sprites; per cell its sprite (red when the weapon is out of ammo),
+    /// the weapon's icon and upgrade bar when had, its frame (light when held); the selection pulsing; the title,
+    /// the selected weapon's name and ammo. Not drawn yet: the selected weapon's model (`0x3f9ec`), the mods'
+    /// marks (`0x43e1f8`).
+    fn draw_weapons(&self, out: &mut Vec<Quad>, a: &Assets, v: &View, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) {
+        use weapons::*;
+        let at = |o: [f32; 2]| [AT[0] + o[0], AT[1] + o[1]];
+        let sprite = |out: &mut Vec<Quad>, id: u32, p: [f32; 2], c: [u8; 4]| {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, p, 0.0, [1.0, 1.0], c); }
+        };
+        for (id, c) in SPRITES { sprite(out, id, AT, gui::rgba(c)); }
+        let held = self.equipped.unwrap_or_else(|| v.save.i32(Scope::Global, 0x1a7398));
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                let item = v.tables.weapon_grid.get(c + r * COLS).copied().unwrap_or(0) as i32;
+                let rec = record(v, item);
+                let (cf, rf) = (c as f32, r as f32);
+                let cell = at([CELL_AT[0] + STEP[0] * cf, CELL_AT[1] + STEP[1] * rf]);
+                let have = 0 < item && had(v.save, item);
+                let empty = have && rec.is_some_and(|r| r.uses_ammo) && ammo(v.save, item) == 0;
+                sprite(out, CELL.0, cell, gui::rgba(if empty { CELL_EMPTY } else { CELL.1 }));
+                if let (true, Some(rec)) = (have, rec) {
+                    let colour = if rec.icon == NO_ICON {
+                        0x8080_8080
+                    } else if matches!(item, 0xc | 0xe | 0x11 | 0x12 | 0x35) {
+                        SPECIAL_COLOURS[(rec.class as usize).min(3)]
+                    } else if item == 0x10 && 1 < rec.class {
+                        ICON_COLOURS[(rec.class as usize - 2).min(1)]
+                    } else {
+                        ICON_COLOURS[(rec.class as usize).min(1)]
+                    };
+                    let [x, y] = at([ICON_AT[0] + STEP[0] * cf, ICON_AT[1] + STEP[1] * rf]);
+                    if let Some((tex, [tw, th])) = icon(rec.icon, 0) {
+                        out.push(Quad { pos: [[x, y], [x + 32.0, y], [x, y + 32.0], [x + 32.0, y + 32.0]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex, rgba: gui::rgba(colour) });
+                    }
+                    // `0x42d360`: the experience (`0x139868 + 4·item`, ÷ 32) of the upgrade's (`+0x5c`); a weapon
+                    // without an upgrade full. Not on a placeholder icon. The New Game+ colours (`0x2f51a0`) not ported.
+                    if rec.icon != NO_ICON {
+                        let [bx, by] = at([BAR_AT[0] + BAR_STEP[0] * cf, BAR_AT[1] + BAR_STEP[1] * rf]);
+                        let xp = v.save.i32(Scope::Global, 0x139868 + 4 * item as u32) >> 5;
+                        let fill = if rec.xp_max < 1 { 1.0 } else { (xp.max(0) as f32 / rec.xp_max as f32).min(1.0) };
+                        let c = if rec.class == 0 && 0 < rec.xp_max { BAR_UPGRADE } else { BAR_FILL };
+                        gui::rect(out, by as i32, (by + BAR[1]) as i32, bx as i32, (bx + BAR[0]) as i32, gui::rgba(BAR_BACK));
+                        gui::rect(out, by as i32, (by + BAR[1]) as i32, bx as i32, (bx + BAR[0] * fill) as i32, gui::rgba(c));
+                    }
+                }
+                sprite(out, FRAME.0, cell, gui::rgba(if have && item == held { FRAME_HELD } else { FRAME.1 }));
+            }
+        }
+        let [c, r] = self.weapon_cell;
+        sprite(out, SELECTION, at([CELL_AT[0] + STEP[0] * c as f32, CELL_AT[1] + STEP[1] * r as f32]), self.pulse_colour());
+        sprite(out, OVERLAY.0, AT, gui::rgba(OVERLAY.1));
+        let centred = |out: &mut Vec<Quad>, t: &[u8], p: [f32; 2]| {
+            let w = gui::text_width(&a.glyphs, t, 1.0);
+            gui::text(out, &a.glyphs, 1, t, p[0] - (w >> 1) as f32, p[1], 1.0, gui::rgba(0x80f0_f0f0));
+        };
+        centred(out, a.strings.get(TITLE), at(TITLE_AT));
+        let item = v.tables.weapon_grid.get(c + r * COLS).copied().unwrap_or(0) as i32;
+        let rec = record(v, item);
+        if let (true, Some(rec)) = (0 < item && had(v.save, item), rec) {
+            centred(out, a.strings.get(rec.name), at(NAME_AT));
+            let line = if rec.uses_ammo {
+                format!("{}:  {}/{}", String::from_utf8_lossy(a.strings.get(AMMO)), thousands(ammo(v.save, item)), thousands(rec.max_ammo as i32)).into_bytes()
+            } else {
+                a.strings.get(NO_AMMO).to_vec()
+            };
+            centred(out, &line, at(AMMO_AT));
         }
     }
 
@@ -1557,6 +1724,22 @@ impl Menus {
     }
 }
 
+/// Item `item` had (`0x1a7b00`).
+fn had(save: &SaveData, item: i32) -> bool { save.u8(Scope::Global, 0x1a7b00 + item as u32) != 0 }
+
+/// Item `item`'s ammo (`0x139688`).
+fn ammo(save: &SaveData, item: i32) -> i32 { save.i32(Scope::Global, 0x139688 + 4 * item as u32) }
+
+/// Item `item`'s record: its row `0x139568[item]` (an upgrade moves it; a save without the table: the item's own).
+fn record<'a>(v: &View<'a>, item: i32) -> Option<&'a rc_formats::disc::menu_tables::ItemRecord> {
+    let i = u32::try_from(item).ok()?;
+    let row = v.save.bytes(Scope::Global, 0x139568 + i, 1).map_or(0, |b| b[0]);
+    v.tables.items.get(if row == 0 { i as usize } else { row as usize })
+}
+
+/// `%d`, or `%d,%03d` from 1000.
+fn thousands(n: i32) -> String { if n < 1000 { n.to_string() } else { format!("{},{:03}", n / 1000, n % 1000) } }
+
 /// The pause list's rows on foot.
 pub fn pause_rows() -> &'static [PauseRow] { &PauseRow::ALL }
 
@@ -1570,6 +1753,7 @@ pub struct View<'a> {
     pub save: &'a SaveData,
     pub port: &'a PortValues,
     pub option_rows: &'a [OptionRow],
+    pub tables: &'a MenuTables,
 }
 
 /// A toggle page's state: 16:9 is the port's aspect being wide; the others their option byte.

@@ -8,8 +8,8 @@
 //!
 //! A game starts with the Lancer (crate::game::GameState::start_items), so Ratchet arrives holding it.
 //!
-//! Not ported: the other slots (the back item `0x18b130`: Clank, the packs), the quick select and the requested item
-//! `0x18c0e8` (`0x3227d8`), the item a forced wrench gives back (`0x18c120`), the class streaming (`0x305cc0` /
+//! Not ported: the other slots (the back item `0x18b130`: Clank, the packs), the quick select (`0x3227d8`), the
+//! gadgets a request uses instead of holding (0x1f, 0x3d, 9, 0x2d), the weapon before the last (`0x1a7a0c`), the item a forced wrench gives back (`0x18c120`), the class streaming (`0x305cc0` /
 //! `0x305ab0`: the engine loads every hand class with the level), the upper-body layers of a use (`0x311e10`, rows
 //! `+0x1c` / `+0x20`: the Lancer has none), the L2 + R2 weapon pull (`0x1a7a88` bit 0x20, `0x2d67b8`), the strafe /
 //! look stance marker.
@@ -107,6 +107,8 @@ pub struct ItemBlock {
     /// locked away); `0x18b054`: the frame the next item may be created after.
     pub selected: i32,
     pub wrench_req: bool,
+    /// `0x18c0e8`: an item asked for (the pause's Weapons page, `0x344dd0`; 0x77: none), taken by the next change.
+    pub request: i32,
     pub next_create: i32,
     /// `0x18b058`: 0xff when the item has ammo and none is left.
     pub empty: u8,
@@ -380,12 +382,22 @@ fn switch(world: &mut MobyWorld, ctx: &mut Ctx) {
         it.selected = ctx.game.held;
         changed = true;
     }
+    if it.request != 0 {
+        if it.request == it.selected {
+            it.request = 0;
+        } else {
+            it.selected = if it.request == 0x77 { 0 } else { it.request };
+            ctx.game.held = it.selected;
+            changed = true;
+        }
+    }
     if it.flying == 2 { changed = false; }
     if it.use_state != 0 {
         it.use_state -= 1;
         if it.use_state != 0 { changed = false; }
     }
     if !changed { return; }
+    it.request = 0;
     it.item_ticks = 3;
     it.use_end(h.state, ctx.hero_view.seq_b, idle);
     ctx.game.wrench_out = it.selected == WRENCH;

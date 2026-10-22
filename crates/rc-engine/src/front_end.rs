@@ -394,7 +394,7 @@ fn tick(
     };
     let ended = std::mem::take(&mut r.movie_ended);
     let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
-    let mut cx = card.as_deref_mut().map(|c| menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut r.port, held, option_rows: &r.data.option_rows });
+    let mut cx = card.as_deref_mut().map(|c| menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut r.port, held, option_rows: &r.data.option_rows, tables: &rc_formats::disc::menu_tables::EMPTY });
     for req in r.front.tick(held, ended, &r.data.assets, cx.as_mut()) {
         match req {
             Request::Sound(n) => if r.trace { println!("front end: frame {}: sound {n} (not played)", r.ticks) },
@@ -486,7 +486,7 @@ fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut me
     let icon = |id: u16, f: u16| icons.get(&(id, f)).map(|&(i, s)| (gui::Tex::Slot(i), s));
     // A loaded save's level loading: black.
     let quads = if r.level.is_some() { let mut q = Vec::new(); gui::fill(&mut q, [0, 0, 0, 0x80]); q } else { {
-        let view = card.as_deref().map(|c| menus::View { card: &c.mc, save: &c.save, port: &r.port, option_rows: &r.data.option_rows });
+        let view = card.as_deref().map(|c| menus::View { card: &c.mc, save: &c.save, port: &r.port, option_rows: &r.data.option_rows, tables: &rc_formats::disc::menu_tables::EMPTY });
         r.front.draw(&r.data.assets, view.as_ref(), &icon)
     } };
     for q in quads {

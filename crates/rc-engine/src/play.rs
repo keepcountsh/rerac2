@@ -65,6 +65,7 @@ fn pause_tick(
     card: Option<ResMut<crate::card::Card>>,
     mut gfx: ResMut<crate::graphics::GraphicsSettings>,
     mut display: ResMut<crate::display::DisplaySettings>,
+    hud: Option<Res<GameHud>>,
 ) {
     let Some(mut play) = play else { return };
     let p = &mut *play;
@@ -78,7 +79,7 @@ fn pause_tick(
     let mut port = crate::port_options::values(&gfx, &display);
     let clock = if crate::determinism::deterministic() { [0; 8] } else { crate::clock::clock_now() };
     let held = (p.pad.held & 0xffff) as u16;
-    let mut cx = rc_game::menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut port, held, option_rows: &[] };
+    let mut cx = rc_game::menus::Ctx { card: &mut c.mc, save: &mut c.save, blank: &c.blank, clock, port: &mut port, held, option_rows: &[], tables: hud.as_deref().map_or(&rc_formats::disc::menu_tables::EMPTY, |h| &h.tables) };
     let Some(m) = p.pause.as_mut() else { return };
     let outs = m.tick((p.pad.pressed & 0xffff) as u16, &mut cx);
 
@@ -103,6 +104,8 @@ fn pause_tick(
                 p.game.go_to_level(-1, false);
                 p.pause = None;
             }
+            // `0x344dd0`: leaving the menu asks for the weapon the page took (`0x18c0e8`) when it is not the one held.
+            Out::Equip(item) => p.hero.items.request = if item == p.game.held { 0 } else { item },
             Out::Sound(_) => {}
         }
     }
@@ -955,6 +958,21 @@ struct GameHud {
     icons: std::collections::HashMap<(u16, u16), (usize, [f32; 2])>,
     /// FX texture → layer texture and texel size (the markers', rc_game::hud::marker).
     fx: std::collections::HashMap<u16, (usize, [f32; 2])>,
+    /// The level's pause tables (its item records, the Weapons grid).
+    tables: rc_formats::disc::menu_tables::MenuTables,
+}
+
+/// Level `index`'s pause tables, found from Aranos's (rc_formats::disc::menu_tables); none on a failure.
+fn menu_tables(root: &std::path::Path, index: u32) -> rc_formats::disc::menu_tables::MenuTables {
+    let read = || -> anyhow::Result<_> {
+        let level = crate::level_wad::overlay(root, index)?;
+        let aranos = if index == 0 { level.clone() } else { crate::level_wad::overlay(root, 0)? };
+        Ok(rc_formats::disc::menu_tables::MenuTables::read(&level, &aranos)?)
+    };
+    read().unwrap_or_else(|e| {
+        eprintln!("play: no pause tables ({e:#})");
+        Default::default()
+    })
 }
 
 /// The HUD layer, made on the first frame with a game (composited on the main camera's UI, as crate::hud_render's
@@ -983,6 +1001,7 @@ fn draw_hud(
         };
         let mut textures: Vec<rc_formats::texture::Texture> = data.textures().to_vec();
         let mut icons = std::collections::HashMap::new();
+        let tables = menu_tables(&root, crate::level_load::level_index());
         match crate::level_wad::hud(&root, crate::level_load::level_index()) {
             Ok(h) => {
                 // The bolt icon and the items' (the weapon panel, `ItemRow::icon`).
@@ -995,6 +1014,8 @@ fn draw_hud(
                 }
                 // The pause's pages (rc_game::menus): the Options icons, the save slots' icons and picture.
                 let menu = (0..8).map(|f| (0xea9eu16, f)).chain([(rc_game::menus::ICON_SLOT, 2), (rc_game::menus::ICON_SLOT, 3), (rc_game::menus::ICON_SLOT, 4), (rc_game::menus::ICON_PICTURE, 0)]);
+                // The item records' icons (the Weapons page's cells, every upgrade's).
+                let menu = menu.chain(tables.items.iter().map(|r| (r.icon, 0)).filter(|&(i, _)| i != 0));
                 for (id, f) in menu {
                     if !h.has_icon(id) || icons.contains_key(&(id, f)) { continue; }
                     if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {
@@ -1015,7 +1036,7 @@ fn draw_hud(
         let Some(cam) = flycams.iter().next() else { return };
         let scaling = crate::hud_render::scaling(crate::graphics::Hud::High);
         let layer = crate::hud_render::Layer::spawn(&mut commands, &mut images, &mut meshes, &mut materials, &mut composites, &textures, scaling, cam);
-        commands.insert_resource(GameHud { layer, data, icons, fx });
+        commands.insert_resource(GameHud { layer, data, icons, fx, tables });
         return;
     };
     let p: &mut Play = p;
@@ -1025,7 +1046,7 @@ fn draw_hud(
         // The page loop's picture (`0x2ccc18`): the stopped game darkened, then the pages.
         rc_game::gui::fill(&mut quads, [0, 0, 0, 0x38]);
         let port = crate::port_options::values(&gfx, &display);
-        let view = rc_game::menus::View { card: &c.mc, save: &c.save, port: &port, option_rows: &[] };
+        let view = rc_game::menus::View { card: &c.mc, save: &c.save, port: &port, option_rows: &[], tables: &hud.tables };
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
         quads.extend(m.draw(hud.data.assets(), &view, &icon));
     } else if p.game.scenes.mode == rc_game::scene::MOVIE {

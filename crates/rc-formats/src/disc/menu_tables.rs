@@ -71,3 +71,6 @@ impl MenuTables {
         Ok(out)
     }
 }
+
+/// No tables (the front end's pages).
+pub static EMPTY: MenuTables = MenuTables { items: Vec::new(), weapon_grid: Vec::new() };

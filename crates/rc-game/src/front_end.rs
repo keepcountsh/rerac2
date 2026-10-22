@@ -226,7 +226,7 @@ impl FrontEnd {
                             menus::Out::NewGame => req.push(Request::NewGame),
                             menus::Out::Loaded { level } => req.push(Request::Load { level }),
                             menus::Out::Port(s, v) => req.push(Request::Port(s, v)),
-                            menus::Out::Resume | menus::Out::Quit => {}
+                            menus::Out::Resume | menus::Out::Quit | menus::Out::Equip(_) => {}
                         }
                     }
                 }
