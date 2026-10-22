@@ -6,7 +6,7 @@
 //! - Vertices: packed (one word: bone = bits 28..31, x = sext(bits 0..13)·4, z = bits 12..27 as s16; colour =
 //!   the header's) or 16 bytes `{s16 x, y, z, bone; s16 u, v (/4096); RGBA}` (`FUN_0029e1d0` / `FUN_0029e090`).
 //! - Prims: four vertex indices, a quad drawn as the strip a, b, d, c; a word whose top 24 bits are all ones
-//!   selects texture `byte 0` instead.
+//!   selects texture `byte 0` instead (not counted: the header's count is the quads').
 //! - Frames: per bone 0x18 bytes, a quaternion (s16 / 32768), a scale (u16 / 4096), a translation (s16) and the
 //!   parent (s16, −1 = none) (`FUN_002844a0`).
 
@@ -90,10 +90,17 @@ fn sprite(b: &Buf) -> Result<Sprite> {
             }
         });
     }
-    let mut prims = Vec::with_capacity(nq);
-    for i in 0..nq {
-        let w = b.u32(pq + i * 4)?;
-        prims.push(if w >> 8 == 0x00ff_ffff { Prim::Texture(w as u8) } else { Prim::Quad(w.to_le_bytes()) });
+    // `FUN_003018a0` counts quads only: a texture select steps its counter back.
+    let (mut prims, mut quads, mut at) = (Vec::with_capacity(nq + 1), 0, pq);
+    while quads < nq {
+        let w = b.u32(at)?;
+        at += 4;
+        if w >> 8 == 0x00ff_ffff {
+            prims.push(Prim::Texture(w as u8));
+        } else {
+            prims.push(Prim::Quad(w.to_le_bytes()));
+            quads += 1;
+        }
     }
     if let Some(Prim::Quad(q)) = prims.iter().find(|p| matches!(p, Prim::Quad(q) if q.iter().any(|&v| v as usize >= nv))) {
         return invalid(format!("GUI sprite: quad {q:?} past its {nv} vertices"));
