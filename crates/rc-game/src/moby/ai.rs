@@ -664,6 +664,49 @@ fn damage_of(m: &mut Moby, hit: Option<&super::hits::HitRecord>, wrench: bool) -
     dmg
 }
 
+/// `0x3201e8(m, b)`: a colour flash's tick. The block: `+0` the ticks left, `+2` the phase, `+4..+6` the colour it
+/// comes back to, `+7..+9` the flash's colour (0: that channel stays), `+0xc` / `+0xe` the ticks in and out. The
+/// moby's ambient (`+0x3c`) eases to the flash's colour, then back; when it is over, the colour it came back to.
+pub fn flash(m: &mut Moby, b: usize) {
+    if m.pv_s(b) == 0 { return; }
+    let mut t = m.pv_s(b) as i32;
+    let over = crate::moby::countdown(&mut t);
+    m.set_pv_s(b, t as i16);
+    let base = [m.pv_b(b + 4), m.pv_b(b + 5), m.pv_b(b + 6)];
+    let lit = [m.pv_b(b + 7), m.pv_b(b + 8), m.pv_b(b + 9)];
+    if over {
+        if m.pv_s(b + 2) != 0 {
+            m.ambient = base;
+            return;
+        }
+        m.set_pv_s(b + 2, 1);
+        m.set_pv_s(b, m.pv_s(b + 0xe));
+    }
+    let back = m.pv_s(b + 2) != 0;
+    let n = m.pv_s(b + if back { 0xe } else { 0xc }) as f32;
+    let f = (n - m.pv_s(b) as f32) / n;
+    let (from, to) = if back { (lit, base) } else { (base, lit) };
+    m.ambient = std::array::from_fn(|k| if lit[k] == 0 { base[k] } else { (from[k] as f32 + (to[k] as i32 - from[k] as i32) as f32 * f) as u8 });
+}
+
+/// `0x320128(m, b)`: a colour flash starts (or keeps going in): from the moby's ambient now, or, when it was easing
+/// back, in again from as far as it had come.
+pub fn flash_start(m: &mut Moby, b: usize) {
+    let t = m.pv_s(b);
+    if t != 0 && m.pv_s(b + 2) == 0 { return; }
+    m.set_pv_s(b + 2, 0);
+    m.set_pv_s(b, m.pv_s(b + 0xc));
+    if t == 0 {
+        let [r, g, bl] = m.ambient;
+        m.set_pv_b(b + 4, r);
+        m.set_pv_b(b + 5, g);
+        m.set_pv_b(b + 6, bl);
+    } else {
+        let k = (m.pv_s(b + 0xc) as f32 * (t as f32 / m.pv_s(b + 0xe) as f32)) as i32;
+        m.set_pv_s(b, k.max(1) as i16);
+    }
+}
+
 /// `0x3282b0(m, react, dir, kind)`: the reaction's start — its sequence (a class reaction of the kind, else the
 /// block's fallback with the speeds scaled), dying (kind 4) or spinning (5) without collision and out of the target
 /// list; the knock along `dir` (at least 1 across and 1 up) at the reaction's speeds, facing the hit; the flight's
@@ -726,6 +769,8 @@ fn react_start(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, dir: [f32; 4], kind:
         _ => {}
     }
     if let Some((s, blend)) = seq { ctx.host.set_anim(&w.mobys[id], s, 0, blend); }
+    // The block's flash (its colour: red, `+7`).
+    flash_start(&mut w.mobys[id], r);
     if kind == 1 || !ok { return false; }
     let m = &mut w.mobys[id];
     let mut d = [dir[0], dir[1], dir[2]];
@@ -761,6 +806,7 @@ pub fn take_damage(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, flag: bool) -> i
     let m = &w.mobys[id];
     if m.mode & AI == 0 { return 0; }
     let (h, r) = (health(m), react(m));
+    flash(&mut w.mobys[id], r);
     let hit = w.hit_message(id).filter(|h| h.tmpl.flags & 0x10000 != 0);
     if w.hit_message(id).is_some() && hit.is_none() { w.clear_hit(id); }
     let m = &mut w.mobys[id];

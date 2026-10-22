@@ -457,12 +457,17 @@ impl Mobys {
                     .get(ci)
                     .map(|a| {
                         let blob = blobs.blobs.get(&c.o_class);
+                        // A sequence's `+0x14` is relative to the sequence (the class's pointer list at `+0x48`).
                         a.sequences
                             .iter()
-                            .map(|q| {
+                            .enumerate()
+                            .map(|(i, q)| {
                                 let td = q.as_ref()?.header.trigger_data as usize;
                                 if td == 0 { return None; }
-                                rc_game::moby::ai::Reaction::parse(blob?.get(td..td + 0x20)?)
+                                let blob = blob?;
+                                let at = 0x48 + 4 * i;
+                                let seq = u32::from_le_bytes(blob.get(at..at + 4)?.try_into().ok()?) as usize;
+                                rc_game::moby::ai::Reaction::parse(blob.get(seq + td..seq + td + 0x20)?)
                             })
                             .collect()
                     })

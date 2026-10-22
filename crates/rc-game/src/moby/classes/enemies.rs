@@ -17,8 +17,8 @@
 //! 3 at 1.75: spheres of 0.17 at its joints 0..3 doing `+0x2b0`; his hurt by it → 9; out of reach after 2 s → the
 //! chase); 9 20 ticks, then 10 sequence 4 to its end, then the chase. It bobs 0.1 and sways 8° once `+0x272` is out.
 //!
-//! Not ported: its sounds (`0x3605f0`), the death's burst (`0x3f8348`), the shadow (`0x31da58`), the colour flash
-//! (`0x3201e8`), the lighting (`0x31a8e4`).
+//! Not ported: its sounds (`0x3605f0`), the death's burst (`0x3f8348`), the shadow (`0x31da58`), the lighting
+//! (`0x31a8e4`).
 
 use crate::hero::physics::*;
 use crate::moby::ai;
@@ -298,7 +298,8 @@ pub fn update_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     let m = &mut w.mobys[id];
     if m.state != 4 && m.sub_state == 2 && m.pos[2] < m.pv_f(0x28c) { m.pos[2] = m.pv_f(0x28c); }
-    // `0x3bbf38`: the timers, the bob and the sway once `+0x272` is out, the state's ticks.
+    // `0x3bbf38`: its flash, the timers, the bob and the sway once `+0x272` is out, the state's ticks.
+    ai::flash(m, 0x50);
     let mut t = m.pv_s(0x270) as i32;
     crate::moby::countdown(&mut t);
     m.set_pv_s(0x270, t as i16);
@@ -338,7 +339,7 @@ pub fn update_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 // bite's turn; 0xe after a bite: farther than 4, the fight (0x1c), else sequence 7.
 //
 // Not ported: its sounds but the two, the debris and the burst (`0x3d8d90`, `0x3210a8`, `0x3f8348`), the shadow, the
-// colour flash, the head's and tail's aims (`0x324208` / `0x327308`, the joint records `+0x3d0` / `+0x450`), the
+// head's and tail's aims (`0x324208` / `0x327308`, the joint records `+0x3d0` / `+0x450`), the
 // emerge flash (`0x3d8920`), the gravity frames. Its glows and wire are draw callbacks (crate::fx); its flame jet is
 // particles ([`bite`]).
 
@@ -802,8 +803,9 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         }
         _ => {}
     }
-    // `0x3d81e0`: the timers and the state's ticks.
+    // `0x3d81e0`: its flash, the timers and the state's ticks.
     let m = &mut w.mobys[id];
+    ai::flash(m, 0x50);
     for o in [0x270, 0x272] {
         let mut t = m.pv_s(o) as i32;
         crate::moby::countdown(&mut t);
@@ -840,7 +842,7 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 // in the flight.
 //
 // Not ported: its sounds but the two, the debris and the bursts (`0x3210a8`, `0x3f8348`, `0x327498`), the parts'
-// sparks (`0x3dbc20`), the bite's trail (`0x3dbde8`, `0x3dbe88`, `0x3dc100`), the shadow, the colour flash, the head's
+// sparks (`0x3dbc20`), the bite's trail (`0x3dbde8`, `0x3dbe88`, `0x3dc100`), the shadow, the head's
 // aims (`0x324208`, `0x327308`), the draw callbacks, the scene's hiding (`0x1a8f00` = 2).
 
 const PART: i16 = 0x0aa2;
@@ -1459,6 +1461,7 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     spin_parts(w, id, id, 0x2a0, ctx, angle);
     let m = &mut w.mobys[id];
+    ai::flash(m, 0x50);
     for o in [0x270, 0x272, 0x26] {
         let mut t = m.pv_s(o) as i32;
         crate::moby::countdown(&mut t);
