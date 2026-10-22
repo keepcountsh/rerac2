@@ -168,6 +168,43 @@ pub enum Page {
     Items,
     /// The pause's Help page (`0x283288`: the in-game Options list in its Help mode, `0x438538(0)`).
     Help,
+    /// A Help topic's page (Weapons `0x285978`, Gadgets `0x285b78`).
+    HelpTopic(HelpTopic),
+}
+
+/// The Help pages' item list (`+0x3c480`: `0x43a188` / `0x43a6d0` / `0x43a820`; its list `+0x2c8`: `0x439e98` /
+/// `0x4398a0` / `0x439b10`) at (251, 210): the page's sprites, "Weapons Help" / "Gadgets Help", the items had in a
+/// column scrolling 4 pixels a frame (the selected one boxed, the others fading with their distance), the selected
+/// one's name, "△ Exit"; its description (the page's rect 1) and picture (rect 8).
+mod help_items {
+    pub const AT: [f32; 2] = [251.0, 210.0];
+    pub const SPRITES: [(u32, u32); 3] = [(0x99, 0x6044_2d00), (0x9a, 0x6024_1700), (0x9b, 0x55f0_c070)];
+    pub const TITLE_AT: [f32; 2] = [-131.0, -182.0];
+    pub const NAME_AT: [f32; 2] = [-110.0, 152.0];
+    pub const EXIT_AT: [f32; 2] = [215.0, 157.0];
+    pub const LIST_AT: [f32; 2] = [-216.0, -24.0];
+    /// The icons' size and spacing, the scroll's step, the rows shown each side, the fade's slope (`gp−0xb0c`..).
+    pub const ICON: f32 = 32.0;
+    pub const SPACING: i32 = 40;
+    pub const STEP: i32 = 4;
+    pub const VISIBLE: usize = 6;
+    pub const FADE: f32 = 1.4;
+    /// The icons' colour (`0x1ae4f0`), a mega weapon's (`0x1ae500`); the selection's box (`0x439f90`).
+    pub const COLOURS: [u32; 2] = [0x60f0_f0b0, 0x6029_a1ff];
+    pub const BOX: (u32, u32) = (0x6024_1700, 0x55f0_c070);
+    pub const DESCRIPTION: [i32; 4] = [87, 65, 142, 270];
+    pub const PICTURE: [f32; 4] = [238.0, 60.0, 225.0, 153.0];
+    /// "Help".
+    pub const HELP: u32 = 0x2beb;
+}
+
+/// The Help item list's state (`+0x14` the selected item, `+0x18` scrolling, `+0x1c` upwards, `+0x90` the offset).
+#[derive(Clone, Copy, Debug, Default)]
+struct HelpList {
+    sel: Option<usize>,
+    scrolling: bool,
+    up: bool,
+    offset: i32,
 }
 
 /// The Help list's rows (`0x28a018`: each opens its page) and descriptions (`0x28ed70`).
@@ -643,8 +680,9 @@ pub struct Menus {
     /// low when a new text has to scroll).
     description: u32,
     description_scroll: i32,
-    /// The Help list's row.
+    /// The Help list's row; the Help item list.
     help_row: usize,
+    help_list: HelpList,
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -704,6 +742,7 @@ impl Menus {
             description: 0,
             description_scroll: 0,
             help_row: 0,
+            help_list: HelpList::default(),
         }
     }
 
@@ -723,6 +762,7 @@ impl Menus {
             match page {
                 Page::Pause => None,
                 Page::PauseOptions | Page::Port | Page::Weapons | Page::Gadgets | Page::Items | Page::Help => Some(Page::Pause),
+                Page::HelpTopic(_) => Some(Page::Help),
                 _ => Some(Page::PauseOptions),
             }
         } else {
@@ -814,6 +854,12 @@ impl Menus {
             Page::Items => {
                 self.items_tick(pressed, &mut out);
                 self.description_tick(self.items_description(cx.tables, cx.save), items::DESCRIPTION[3], cx.held);
+            }
+            Page::HelpTopic(t) => {
+                self.help_items_tick(pressed, cx, &mut out);
+                let items = help_items_of(t, cx.tables, cx.save);
+                let d = self.help_list.sel.and_then(|i| items.get(i)).and_then(|&i| record(cx.tables, cx.save, i)).map_or(0, |r| r.description.max(0) as u32);
+                self.description_tick(d, help_items::DESCRIPTION[3], cx.held);
             }
             Page::Help => {
                 self.help_tick(pressed, &mut out);
@@ -1180,6 +1226,12 @@ impl Menus {
                 let row = if self.items_section == 3 { items::COUNTER_PICTURES[c + r * 2] } else { of(cell(s.grid, c + r * s.cols))? };
                 Some((PictureTable::Items, row))
             }
+            Page::HelpTopic(t) => {
+                let items = help_items_of(t, v.tables, v.save);
+                let item = *self.help_list.sel.and_then(|i| items.get(i))?;
+                let table = if t == HelpTopic::Gadgets { PictureTable::HelpGadgets } else { PictureTable::HelpWeapons };
+                Some((table, u16::try_from(record(v.tables, v.save, item)?.picture).ok()?))
+            }
             _ => None,
         }
     }
@@ -1189,7 +1241,8 @@ impl Menus {
     fn draw_picture(&self, out: &mut Vec<Quad>, v: &View, [x, y, w, h]: [f32; 4]) {
         let Some(p) = self.picture(v) else { return };
         if v.picture != Some(p) { return; }
-        out.push(Quad { pos: [[x, y], [x + w, y], [x, y + h], [x + w, y + h]], uv: [[0.0, 0.0], [256.0, 0.0], [0.0, 256.0], [256.0, 256.0]], tex: Tex::Picture(gui::Picture::Item), rgba: [0x80; 4] });
+        let th = p.0.height() as f32;
+        out.push(Quad { pos: [[x, y], [x + w, y], [x, y + h], [x + w, y + h]], uv: [[0.0, 0.0], [256.0, 0.0], [0.0, th], [256.0, th]], tex: Tex::Picture(gui::Picture::Item), rgba: [0x80; 4] });
     }
 
     /// The Items page's selected cell's item (`+0x4b4`); in the counters, the counter.
@@ -1259,7 +1312,47 @@ impl Menus {
             out.push(Out::Sound(3));
             self.help_row = if keys & pad::UP != 0 { (self.help_row + n - 1) % n } else { (self.help_row + 1) % n };
         } else if keys & pad::CROSS != 0 {
-            out.push(Out::Sound(5));
+            match HelpTopic::ALL[self.help_row] {
+                t @ (HelpTopic::Weapons | HelpTopic::Gadgets) => {
+                    self.help_list = HelpList::default();
+                    self.go(Page::HelpTopic(t), out);
+                }
+                _ => out.push(Out::Sound(5)),
+            }
+        }
+    }
+
+    /// The Help item list (`0x4398a0`, with the pad held): Up / Down start a scroll (sound 3) unless at the end; it
+    /// moves 4 pixels a frame and, a row on, selects the next item, going on while a button is held and the list
+    /// has more. △ back to the Help list.
+    fn help_items_tick(&mut self, keys: u16, cx: &Ctx, out: &mut Vec<Out>) {
+        if keys & pad::TRIANGLE != 0 {
+            return self.back(out);
+        }
+        if keys & (pad::START | pad::SELECT) != 0 {
+            return self.close(out);
+        }
+        let Page::HelpTopic(t) = self.page else { return };
+        let n = help_items_of(t, cx.tables, cx.save).len();
+        let l = &mut self.help_list;
+        let sel = l.sel.get_or_insert(n / 2);
+        *sel = (*sel).min(n.saturating_sub(1));
+        if !l.scrolling {
+            if cx.held & pad::UP != 0 && 0 < *sel {
+                (l.scrolling, l.up) = (true, true);
+            } else if cx.held & pad::DOWN != 0 && *sel + 1 < n {
+                (l.scrolling, l.up) = (true, false);
+            } else {
+                return;
+            }
+            out.push(Out::Sound(3));
+            l.offset = 0;
+        }
+        l.offset += if l.up { help_items::STEP } else { -help_items::STEP };
+        if help_items::SPACING <= l.offset.abs() {
+            *sel = if l.up { sel.saturating_sub(1) } else { (*sel + 1).min(n.saturating_sub(1)) };
+            l.scrolling = cx.held != 0 && 0 < *sel && *sel + 1 < n;
+            l.offset = 0;
         }
     }
 
@@ -1723,6 +1816,7 @@ impl Menus {
             Page::Pause => return self.draw_pause(out, a),
             Page::PauseOptions => return self.draw_pause_options(out, a, icon),
             Page::Help => return self.draw_help(out, a, icon),
+            Page::HelpTopic(t) => return self.draw_help_items(out, a, v, icon, t),
             Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
             Page::Weapons => return self.draw_weapons(out, a, v, icon),
             Page::Gadgets => return self.draw_gadgets(out, a, v, icon),
@@ -1757,7 +1851,7 @@ impl Menus {
                 self.draw_planet(out, a, card);
                 self.draw_message(out, a, card);
             }
-            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons | Page::Gadgets | Page::Items | Page::Help => {}
+            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons | Page::Gadgets | Page::Items | Page::Help | Page::HelpTopic(_) => {}
         }
     }
 
@@ -2044,6 +2138,47 @@ impl Menus {
         self.draw_list(out, a, icon, list::HELP_TEXT, 0.0, list::HELP_ICON, &rows, self.help_row);
     }
 
+    /// A Help item page (`0x43a820` and the page's panels): see [`help_items`].
+    fn draw_help_items(&self, out: &mut Vec<Quad>, a: &Assets, v: &View, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>, t: HelpTopic) {
+        use help_items::*;
+        for (id, c) in SPRITES {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, AT, 0.0, [1.0, 1.0], gui::rgba(c)); }
+        }
+        let text = |out: &mut Vec<Quad>, t: &[u8], o: [f32; 2], align: i32| {
+            let w = gui::text_width(&a.glyphs, t, 1.0);
+            gui::text(out, &a.glyphs, 1, t, AT[0] + o[0] - (w * align / 2) as f32, AT[1] + o[1], 1.0, gui::rgba(0x80f0_f0f0));
+        };
+        let title = [a.strings.get(t.text()), b" ", a.strings.get(HELP)].concat();
+        text(out, &title, TITLE_AT, 1);
+        let items = help_items_of(t, v.tables, v.save);
+        let (px, py) = (AT[0] + LIST_AT[0], AT[1] + LIST_AT[1]);
+        // `0x439f90`: the selection's box, its edge pulsing.
+        let k = self.pulse % 40;
+        let p = if k < 20 { k as f32 / 20.0 } else { 1.0 - (k - 20) as f32 / 20.0 };
+        let (x, y) = (px as i32, py as i32);
+        gui::rect(out, y - 4, y + 37, x - 4, x + 36, gui::lerp_colour(p, BOX.0, BOX.1));
+        gui::rect(out, y - 2, y + 35, x - 2, x + 34, gui::rgba(BOX.0));
+        if let Some(sel) = self.help_list.sel.filter(|&s| s < items.len()) {
+            let (centre, reach) = (py + ICON / 2.0, ICON / 2.0 + 4.0 * SPACING as f32);
+            let alpha = |y: f32| (((1.0 - ((centre - y).abs() * FADE).min(reach) / reach) * 255.0) as i32).min(0x80) as u8;
+            let first = sel - sel.min(VISIBLE);
+            let last = (sel + VISIBLE).min(items.len() - 1);
+            for (i, &item) in items.iter().enumerate().take(last + 1).skip(first) {
+                let Some(rec) = record(v.tables, v.save, item) else { continue };
+                let y = py + (SPACING * (i as i32 - sel as i32) + self.help_list.offset) as f32;
+                let mut c = gui::rgba(COLOURS[(rec.mega && rec.class != 0) as usize]);
+                c[3] = alpha(y + ICON / 2.0);
+                if let Some((tex, [tw, th])) = icon(rec.icon, 0) {
+                    out.push(Quad { pos: [[px, y], [px + ICON, y], [px, y + ICON], [px + ICON, y + ICON]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex, rgba: c });
+                }
+            }
+            if let Some(rec) = record(v.tables, v.save, items[sel]) { text(out, a.strings.get(rec.name), NAME_AT, 1); }
+        }
+        text(out, a.strings.get(options::EXIT_TEXT), EXIT_AT, 2);
+        self.draw_description(out, a, DESCRIPTION);
+        self.draw_picture(out, v, PICTURE);
+    }
+
     /// The in-game list (`0x438b48`): the frame (sprites 0x91..0x94, the mode's keyframe but 0x94's), the selection
     /// (0x95), the title, the rows' labels and icons; then the page's description panel and "△ Exit".
     #[allow(clippy::too_many_arguments)]
@@ -2284,6 +2419,12 @@ fn record<'a>(tables: &'a MenuTables, save: &SaveData, item: i32) -> Option<&'a 
     let i = u32::try_from(item).ok()?;
     let row = save.bytes(Scope::Global, 0x139568 + i, 1).map_or(0, |b| b[0]);
     tables.items.get(if row == 0 { i as usize } else { row as usize })
+}
+
+/// A Help item page's items: its grid walked (`0x34dcd8`: the Weapons grid; `0x34dd58`: the hand items), those had.
+fn help_items_of(t: HelpTopic, tables: &MenuTables, save: &SaveData) -> Vec<i32> {
+    let g = if t == HelpTopic::Gadgets { Grid::Hand } else { Grid::Weapons };
+    tables.walk(g).iter().map(|&i| i as i32).filter(|&i| had(save, i)).collect()
 }
 
 /// `0x327c68`: the platinum bolts found, 4 a level (`0x19b278 + 4·level`, one byte each; level 2 another 4 at

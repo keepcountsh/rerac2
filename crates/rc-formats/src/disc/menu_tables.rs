@@ -58,6 +58,8 @@ pub struct GridCell {
 /// What the pause pages read of an item record (offsets from the row's base `0x262500 + 0xe0·row`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ItemRecord {
+    /// `−0x10` ≠ 0: it has a mega upgrade (its upgraded rows show it in their own colour).
+    pub mega: bool,
     /// `−0x0c`: the record's armour / colour class (the upgrade bar's colour table index).
     pub class: u8,
     /// `−0x08`: its name (text id).
@@ -84,6 +86,9 @@ pub struct MenuTables {
     pub items: Vec<ItemRecord>,
     /// The grids' cells (row-major), by [`Grid::ALL`]'s order.
     pub grids: Vec<Vec<GridCell>>,
+    /// The grids' items as the Help pages walk them (`0x439e98`: from the first cell on, while the item is not
+    /// negative, at most 25 cells: past the grid's own cells), by [`Grid::ALL`]'s order.
+    pub walks: Vec<Vec<i16>>,
 }
 
 impl MenuTables {
@@ -99,6 +104,7 @@ impl MenuTables {
                 let b = base + row * ITEM_STRIDE;
                 let Some(icon) = i16_at(b + 0x2c) else { break };
                 out.items.push(ItemRecord {
+                    mega: i32_at(b - 0x10).unwrap_or(0) != 0,
                     class: t.read(b - 0x0c, 1).map_or(0, |x| x[0]),
                     name: i32_at(b - 0x08).unwrap_or(0) as u32,
                     picture: i16_at(b - 0x0a).unwrap_or(-1),
@@ -120,7 +126,19 @@ impl MenuTables {
                 (0..n as u32).map(|k| at + 10 * k).map(|c| GridCell { icon: u(c), frame: u(c + 2), kind: u(c + 4), item: u(c + 6) as i16 }).collect()
             })
             .collect();
+        out.walks = Grid::ALL
+            .iter()
+            .map(|g| {
+                let Some(at) = rel.data(g.table().0) else { return Vec::new() };
+                (0..25u32).map(|k| i16_at(at + 10 * k + 6).unwrap_or(-1)).take_while(|&i| 0 <= i).collect()
+            })
+            .collect();
         Ok(out)
+    }
+
+    /// Grid `g`'s items as the Help pages walk them.
+    pub fn walk(&self, g: Grid) -> &[i16] {
+        Grid::ALL.iter().position(|&x| x == g).and_then(|i| self.walks.get(i)).map_or(&[], Vec::as_slice)
     }
 
     /// Grid `g`'s cells (none when not found).
@@ -130,4 +148,4 @@ impl MenuTables {
 }
 
 /// No tables (the front end's pages).
-pub static EMPTY: MenuTables = MenuTables { items: Vec::new(), grids: Vec::new() };
+pub static EMPTY: MenuTables = MenuTables { items: Vec::new(), grids: Vec::new(), walks: Vec::new() };

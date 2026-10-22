@@ -111,6 +111,8 @@ fn menu_tables_relocate_across_levels() {
     for g in Grid::ALL {
         assert_eq!(m0.grid(g), m1.grid(g), "{g:?}");
     }
+    assert_eq!(m0.walk(Grid::Hand), [0xd, 0x24, 0x27, 0, 0x2e, 0x37, 0, 0]);
+    assert_eq!(m0.walk(Grid::Weapons).len(), 24);
     let lancer = m0.items[0x1e];
     assert_eq!((lancer.icon, lancer.max_ammo, lancer.uses_ammo), (0xea64, 200, true));
     assert_eq!(m1.items[0x1e], lancer);
@@ -131,7 +133,7 @@ fn item_pictures_decode() {
         }
         n += 1;
     }
-    assert_eq!(n, 74);
+    assert_eq!(n, 74 + 16 + 42 + 11);
 }
 
 #[test]

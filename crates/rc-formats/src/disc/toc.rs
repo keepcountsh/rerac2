@@ -25,16 +25,31 @@ pub enum PictureTable {
     Weapons,
     /// `0x14d070`.
     Items,
+    /// The Help pages' (256 × 128): Moves `0x14c360`, Weapons `0x14c3f0`, Gadgets `0x14c558`.
+    HelpMoves,
+    HelpWeapons,
+    HelpGadgets,
 }
 
 impl PictureTable {
-    pub const ALL: [PictureTable; 3] = [PictureTable::Gadgets, PictureTable::Weapons, PictureTable::Items];
+    pub const ALL: [PictureTable; 6] = [PictureTable::Gadgets, PictureTable::Weapons, PictureTable::Items, PictureTable::HelpMoves, PictureTable::HelpWeapons, PictureTable::HelpGadgets];
 
     fn table(self) -> (usize, usize) {
         match self {
             PictureTable::Gadgets => (0x1600, 12),
             PictureTable::Weapons => (0x1660, 45),
             PictureTable::Items => (0x17c8, 21),
+            PictureTable::HelpMoves => (0xab8, 18),
+            PictureTable::HelpWeapons => (0xb48, 45),
+            PictureTable::HelpGadgets => (0xcb0, 12),
+        }
+    }
+
+    /// The pictures' height (their panel's `+0x3c`; all are 256 wide).
+    pub fn height(self) -> u32 {
+        match self {
+            PictureTable::HelpMoves | PictureTable::HelpWeapons | PictureTable::HelpGadgets => 128,
+            _ => 256,
         }
     }
 
