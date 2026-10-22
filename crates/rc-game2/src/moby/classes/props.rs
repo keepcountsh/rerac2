@@ -106,6 +106,95 @@ pub fn update_0c63(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     ctx.game.set_mission(mission, sub, 1);
 }
 
+/// 0x0c5c (`0x3ec140`): drifting smoke in bursts. It waits (`+0x68`[0]: 50..120 ticks), then for `+0x68`[1] ticks
+/// (20 the first time, then 10..25) sends two grey drift particles a tick (crate::particles::drift: 0.1..3, 300
+/// ticks, 0x40808080) 0.417 a tick toward its yaw − 90° (`0x2ef448` / `0x2ef460`: the VU0 cosine and sine), from its
+/// position up to 0.5 up or down, each turning 1..4 either way.
+pub fn update_0c5c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    if m.state == 0 {
+        m.alpha = 0x80;
+        m.state = 1;
+        m.set_pv_i(4, 0x14);
+        m.set_pv_i(0, 0);
+    }
+    if m.state == 1 {
+        let mut t = m.pv_i(0);
+        let out = crate::moby::countdown(&mut t);
+        m.set_pv_i(0, t);
+        if out {
+            m.state = 2;
+            let t = ctx.game.rng.rand_range(0x32, 0x78);
+            w.mobys[id].set_pv_i(0, t);
+        }
+    }
+    let m = &mut w.mobys[id];
+    if m.state != 2 { return; }
+    let mut t = m.pv_i(4);
+    let out = crate::moby::countdown(&mut t);
+    m.set_pv_i(4, t);
+    if out {
+        m.state = 1;
+        let t = ctx.game.rng.rand_range(10, 0x19);
+        w.mobys[id].set_pv_i(4, t);
+        return;
+    }
+    let (pos, yaw) = (m.pos, m.rot[2] - f32::from_bits(0x3fc9_0fdc));
+    let Some(sys) = ctx.parts.as_deref_mut() else { return };
+    let g = &mut ctx.game.rng;
+    let (s, c) = rc_formats::moby_light::vu0_sin_cos(yaw.to_bits());
+    let k = f32::from_bits(0x3ed5_5556);
+    let vel = [f32::from_bits(c) * k, f32::from_bits(s) * k, 0.0];
+    for _ in 0..2 {
+        let mut p = pos;
+        p[2] += g.randf_signed(0.0, 0.5);
+        let size = g.randf(0.1, 3.0);
+        let spin = g.randf_signed(1.0, 4.0) as i32;
+        crate::particles::drift(sys, g, size, p, vel, 300, spin as i16, 0x4080_8080);
+    }
+}
+
+/// 0x0cda (`0x3ef708`): three glow puffs a tick (crate::particles::puff, moving 0.5 a tick down y): two blue ones
+/// (630000, jitter 0.1, grown 1..0.9, 0xdf204080, turning up to 16 either way) and a white one (315000, jitter 0.05,
+/// grown 1..0.97, 0xdfffffff, turning 16), all in the timed fade (phase 2 at 0xdf) with its timer the first's 25: the
+/// first lives 25 ticks, the white one 35 at a random angle. The game's slip, kept: the second puff's life and byte 9
+/// are written to the first's record, so the second keeps the spawner's 10 ticks.
+pub fn update_0cda(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use rc_game::particles::rec;
+    let pos = w.mobys[id].pos;
+    let Some(sys) = ctx.parts.as_deref_mut() else { return };
+    let g = &mut ctx.game.rng;
+    let mut spin = g.randi(0x10);
+    if g.randi(2) != 0 { spin = -spin; }
+    let vel = [0.0, -0.5, 0.0];
+    let fade = |sys: &mut rc_game::particles::Particles, i: usize, first: Option<usize>| {
+        let n = first.map_or(0, |a| sys.pool.recs[a][0xa]);
+        let r = &mut sys.pool.recs[i];
+        rec::set_u32(r, 0x24, 2);
+        r[0x2a] = 0xdf;
+        r[0x2b] = n;
+    };
+    let first = crate::particles::puff(sys, g, 0.1, 1.0, 0.9, 630_000.0, pos, spin, vel, 0xdf20_4080, 0);
+    if let Some(a) = first {
+        rec::set_i16(&mut sys.pool.recs[a], 0xa, 0x19);
+        sys.pool.recs[a][9] = 4 + 0x70;
+        fade(sys, a, first);
+    }
+    if let Some(b) = crate::particles::puff(sys, g, 0.1, 1.0, 0.9, 630_000.0, pos, spin, vel, 0xdf20_4080, 0) {
+        if let Some(a) = first {
+            rec::set_i16(&mut sys.pool.recs[a], 0xa, 0x19);
+            sys.pool.recs[a][9] = 4 + 0x70;
+        }
+        fade(sys, b, first);
+    }
+    if let Some(c) = crate::particles::puff(sys, g, 0.05, 1.0, 0.97, 315_000.0, pos, 0x10, vel, 0xdfff_ffff, 0) {
+        rec::set_i16(&mut sys.pool.recs[c], 0xa, 0x23);
+        sys.pool.recs[c][9] = 4 + 0x70;
+        sys.pool.recs[c][8] = g.randi(0xff) as u8;
+        fade(sys, c, first);
+    }
+}
+
 /// 0x0ac8 (`0x3d0e00`): rocks back and forth — its pitch springs to a random 5..15° (k 0.00087, d 0.00087, at most
 /// 0.00436), a new aim after 60..120 ticks or once there; the sound by the direction.
 pub fn update_0ac8(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {

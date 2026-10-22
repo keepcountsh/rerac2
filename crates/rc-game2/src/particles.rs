@@ -8,6 +8,7 @@
 //! |---|---|---|---|
 //! | 0x17 | [`puff`] `0x335bb8` | `0x335d80` = R&C1's type 23 (`rc_game::particles::type23::update`, the same steps at 60 Hz) | glow puffs |
 //! | 0x2c | [`spark`] `0x339848` | `0x3399c8` ([`update_spark`]) | sparks: alpha down with the life, gravity, drag |
+//! | 0x30 | [`drift`] `0x33a1c0` | `0x33a2e8` = R&C1's type 48 (`rc_game::particles::type48::update48`) | drifting smoke: fades in and out over the life |
 //! | 0x55 | [`sprite`] `0x33ef78` | `+0x3c` = `0x33f120` ([`update_sprite`]) | sprites: alpha and size tweened over the life |
 //! | 0x59 | [`glow`] `0x33f550` | `0x33f6e8` ([`update_glow`]) | a glow riding a moby (the hand item's), pulled toward the camera |
 //!
@@ -28,6 +29,35 @@ fn dec_life(r: &mut rc_game::particles::Record) -> bool {
     let done = crate::moby::countdown(&mut t);
     rec::set_i16(r, 0xa, t as i16);
     done
+}
+
+/// Type 0x30, the drifting particle: R&C1's type 48 (`rc_game::particles::type48`, the same record and update).
+pub const DRIFT: u8 = 0x30;
+
+/// `0x33a1c0(size, pos, vel, life, spin, rgba)`: a drifting particle (type 0x30) at `pos` moving `vel` a tick, its
+/// colour fading in to `rgba` at the middle of its `life` and out again, turning `spin` a tick from a random angle;
+/// ALPHA 0x44, byte 9 = 0x12. R&C1's `type48::spawn48` with Going Commando's random draw.
+#[allow(clippy::too_many_arguments)]
+pub fn drift(sys: &mut Particles, rng: &mut Rng, size: f32, pos: [f32; 3], vel: [f32; 3], life: i16, spin: i16, rgba: u32) -> Option<usize> {
+    let i = sys.create_part(DRIFT)?;
+    let def = sys.def_first(DRIFT);
+    let rot = rng.randi(0x100) as u8;
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, pos);
+    rec::set_u32(r, 4, rgba & 0xff_ffff);
+    r[9] = 2 + 0x10;
+    r[3] = 0x44;
+    r[1] = 0;
+    rec::set_ff(r, 0xc, size * 210_000.0);
+    r[2] = def;
+    r[8] = rot;
+    rec::set_v3(r, 0x20, vel);
+    rec::set_ff(r, 0x30, 2.0 / life as f32);
+    rec::set_i16(r, 0xa, life);
+    rec::set_u32(r, 0x38, rgba);
+    rec::set_i16(r, 0x3c, spin);
+    rec::set_u32(r, 0x34, rgba & 0xff_ffff);
+    Some(i)
 }
 
 /// `0x33ef78(size0, size1, fall, pos, vel, life, rgb, spin, alpha0, alpha1, w)`: a sprite (type 0x55) at `pos` moving
@@ -231,6 +261,7 @@ pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f
         match r[0] {
             0x17 => rc_game::particles::type23::update(sys, i, &mut none),
             0x2c => update_spark(sys, i),
+            DRIFT => rc_game::particles::type48::update48(sys, i, &mut none),
             0x55 if rec::u32(r, 0x3c) == SPRITE_UPDATE => update_sprite(sys, i),
             0x59 => update_glow(sys, i, mobys, cam),
             _ => sys.kill_part(i),

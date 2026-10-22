@@ -41,7 +41,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 
 | ID | System | Consumers | Census | Sources | Seen |
 |---|---|---|---|---|---|
-| G-PRT-001 | **Particle types beyond 0x17 / 0x2c / 0x55 / 0x59**: type 2 `0x3327e8`, 0x3c `0x33b5e0`, sparks (`0x38ce80`, `0x38cc88`, `0x33a058`, `0x336148`, `0x3dbc20`), dust `0x334528`, the bolt sparkle `0x33a6a0`, bubbles and splashes (`0x3378b0`, `0x2aac58`, `0x37d5a0`), smoke | wrench, grind, chute, zip line, crates, bolts, water, burns, 53 units | 53 / 1,757 (30 / 1,047) | particles.rs:15; wrench.rs:15; grind.rs:22, 398; misc.rs:15; crate_.rs:13; bolt.rs:7; water.rs:19; damage.rs:12; props.rs:329 | yes |
+| G-PRT-001 | **Particle types beyond 0x17 / 0x2c / 0x30 / 0x55 / 0x59** (0x30, R&C1's type 48, closed 2026-10-22: particles.rs `drift`): type 2 `0x3327e8`, 0x3c `0x33b5e0`, sparks (`0x38ce80`, `0x38cc88`, `0x33a058`, `0x336148`, `0x3dbc20`), dust `0x334528`, the bolt sparkle `0x33a6a0`, bubbles and splashes (`0x3378b0`, `0x2aac58`, `0x37d5a0`), smoke | wrench, grind, chute, zip line, crates, bolts, water, burns, 53 units | 53 / 1,757 (30 / 1,047) | particles.rs:15; wrench.rs:15; grind.rs:22, 398; misc.rs:15; crate_.rs:13; bolt.rs:7; water.rs:19; damage.rs:12; props.rs:329 | yes |
 | G-PRT-002 | The gravity boots' bend of particle positions `0x380e08` (`+0x1c` = 2) | — | — | particles.rs:15 | minor |
 
 ## Cameras (CAM)
@@ -56,7 +56,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 
 | ID | System | Consumers | Census | Sources | Seen |
 |---|---|---|---|---|---|
-| G-CLS-001 | **The unported classes** (the census): 1,052 class-levels, 662 units; cheap first | Aranos 0x0c5c, 0x0cda (cheap), 0x0ce9, 0x0340; every other level | 190 units / 2,324 cheap | rac2_class_census.md | yes |
+| G-CLS-001 | **The unported classes** (the census): 1,052 class-levels, 662 units; cheap first | Aranos ~~0x0c5c, 0x0cda~~ (closed 2026-10-22, props.rs `update_0c5c` / `update_0cda`), 0x0ce9, 0x0340; every other level | 190 units / 2,324 cheap | rac2_class_census.md | yes |
 | G-CLS-002 | **Moby groups** (`0x1fa8a0[n]`): the members' byte `+0xbc` `0x31c970`, the group walk `0x31cac0` | 30 units | partly: 15 / 139 | census | yes |
 | G-CLS-003 | **The sequence-time test** `0x323bf8` (over `0x311880`, `0x323b78`) | 33 units | partly: 3 / 58 | census | yes |
 | G-CLS-004 | **The static spawn's conditions and the moby lifecycle**: missions, the save bits `0x19b2e8` / `0x19b4a8`, the bolt / XP tallies `0x1c5400` / `0x1c54c0`, the ground snap of rooted instances, the deletion and the created mobys' pvar pool | every level | — | moby.rs:29; rac2_bringup.md §2 C | yes |

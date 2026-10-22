@@ -20,11 +20,15 @@ one or two units). Verdicts:
 
 "Cheap" means the class needs only its own code ported: the shared systems are there. It is not free: the private code
 size (functions / words) is in the cheap list below and in `units.tsv`. As in R&C1, the census counts a function as the
-unit's own when only that unit calls it, so a unit's private code can still hold a whole system.
+unit's own when only that unit calls it, so a unit's private code can still hold a whole system. A second blind spot:
+a **particle spawner's type** is a constant passed to `0x330df0`, and its update is reached only through the engine's
+type table `0x1fe6c0` (set by `0x331ea0`), so a unit that spawns a type the port lacks still reads as cheap (0x0c5c's
+type 0x30 was one). Check the types a cheap unit's spawners make against `rc-game2/src/particles.rs`.
 
-**Aranos (level 0)** has 4 unported classes left: 0x0c5c (7) and 0x0cda (4) are **cheap** (they call only the particle
-and rng code the port has); 0x0ce9 (21; also on levels 1, 7, 9, 13, 16, 26) and 0x0340 (1; on 18 levels) are **partly**:
-they register a callback on the first draw list `0x2e7718` (G-REN-003) and call untagged level code.
+**Aranos (level 0)** had 4 unported classes at this run: 0x0c5c (7) and 0x0cda (4) were **cheap**, and are ported
+since (2026-10-22: `props::update_0c5c` with the particle type 0x30, `props::update_0cda`); 0x0ce9 (21; also on levels
+1, 7, 9, 13, 16, 26) and 0x0340 (1; on 18 levels) are **partly**: they register a callback on the first draw list
+`0x2e7718` (G-REN-003) and call untagged level code.
 
 ## Method (to regenerate)
 
