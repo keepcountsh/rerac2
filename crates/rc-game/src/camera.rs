@@ -655,8 +655,10 @@ impl FollowCamera {
             self.set_pivot_h(if h.mode == 1 && req.is_none() { 1.5 } else { 2.5 }, 0.003);
         }
         if h.group == 0x10 { self.look_h = 0.25; }
+        // Clank (`0x18c0d4` = 1): the distance 3 and heights 1 unless a level camera holds this one (D+0x240) or a
+        // tweak request is in force.
         if h.mode == 1 {
-            if self.red == 0.0 && req.is_none() {
+            if self.owner.is_none() && req.is_none() {
                 self.set_dist(3.0, 0.003, true);
                 if !glide {
                     self.look_h = 1.0;
