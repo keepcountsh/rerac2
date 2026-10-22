@@ -25,10 +25,21 @@ a **particle spawner's type** is a constant passed to `0x330df0`, and its update
 type table `0x1fe6c0` (set by `0x331ea0`), so a unit that spawns a type the port lacks still reads as cheap (0x0c5c's
 type 0x30 was one). Check the types a cheap unit's spawners make against `rc-game2/src/particles.rs`.
 
-**Aranos (level 0)** had 4 unported classes at this run: 0x0c5c (7) and 0x0cda (4) were **cheap**, and are ported
-since (2026-10-22: `props::update_0c5c` with the particle type 0x30, `props::update_0cda`); 0x0ce9 (21; also on levels
-1, 7, 9, 13, 16, 26) and 0x0340 (1; on 18 levels) are **partly**: they register a callback on the first draw list
-`0x2e7718` (G-REN-003) and call untagged level code.
+**Aranos (level 0)** had 4 unported classes at this run, all ported since (2026-10-22): 0x0c5c and 0x0cda (cheap;
+`props::update_0c5c` with the particle type 0x30, `props::update_0cda`), 0x0ce9 (the tie lights,
+`classes::tie_lights`) and 0x0340 (the remote's range, `props::update_0340`: its live part; the remote branch is
+G-HERO-008). The first run read the last two as users of the first draw list `0x2e7718`: a keying collision, below.
+
+**Re-run 2026-10-22 (the keying fix and the Aranos ports).** The draw-list registrars `0x2e7718` (the first list) and
+`0x2e7920` (the second) are the same code with different list addresses, so their masked hashes are equal, and the
+first run keyed every level's copy of either to the first L00 match, `0x2e7718`. Now a copy at the address of an L00
+function with the same masked code is that function, and a hash shared by several L00 functions names none of them
+(the copy keeps its `H:` key). The first list's registrar on the other levels is `H:582266980bbdcff0` (L01 `0x2dce00`,
+152 units on 26 levels: their callbacks are their own code); the second's resolves to `L00:002e7920`. Aranos has
+**no unported class left**. **1,020 unported class-levels, 11,160 placed / 10,759 created** instances in **653 units**,
+876 shared functions (461 tagged). Verdicts: cheap 189 units / 2,353, missing 242 / 6,529, partly 99 / 685, unknown
+123 / 1,192. The missing-system ranking below is unchanged; the partly line now reads the first draw list 72 units /
+485 (G-REN-003).
 
 ## Method (to regenerate)
 
@@ -99,13 +110,13 @@ units for which it is the only missing system, so porting it makes them cheap or
 | pad rumble | 1 | 15 | 1 / 15 | `0x2d6d60` | G-UI-005 |
 | Clank's animation | 3 | 5 | 1 / 3 | `0x323d10`, `0x323e58` | G-HERO-004 |
 
-**Partly** units, by the system they have in part: the first draw list (79 units / 580: `0x2e7718`; G-REN-003),
+**Partly** units, by the system they have in part: the first draw list (79 units / 580 at the first run, 72 / 485 after the keying fix: its registrar; G-REN-003),
 moby groups (15 / 139: `0x31c970`, `0x31cac0`; G-CLS-002), the level sound table (14 / 34: `0x360750`; G-AUD-001),
 the sequence-time test (3 / 58: `0x323bf8`; G-CLS-003), Ratchet / ship queries (3 / 27: `0x326448`, `0x326820`;
 G-CLS-006), the line test (1 / 4: `0x31c618`; G-CLS-005).
 
-`systems.tsv` ranks by every unit that calls a system (not only the blocked ones): the first draw list leads there (160
-units / 2,492), since nearly every enemy registers a callback on it.
+`systems.tsv` ranks by every unit that calls a system (not only the blocked ones): the first draw list leads there (153
+units / 2,397 after the fix), since most other levels' enemies register a callback on it.
 
 ## Cheap wins: classes whose shared calls the port already has
 
@@ -139,7 +150,7 @@ units / 2,492), since nearly every enemy registers a callback on it.
 | U516 | 0x0b19 | 14 | 25 | 7 / 508 |
 | U341 | 0x12aa | 08 | 25 | 1 / 136 |
 
-On Aranos: 0x0c5c (U34, 7 instances) and 0x0cda (U39, 4).
+On Aranos: 0x0c5c (U34, 7 instances) and 0x0cda (U39, 4), both ported since.
 
 The unit ids change between runs (they are numbered by instances).
 

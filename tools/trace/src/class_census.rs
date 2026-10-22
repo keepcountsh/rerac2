@@ -312,17 +312,41 @@ const OUTSIDE: [(u32, &str); 5] = [
 /// The level-01 copy must be a function start there, and for a short function (under 8 words, whose masked words
 /// can also match inside another function) have the same extent.
 fn key_of(level: u32, f: u32, ov: &LevelOverlay, to_l01: &Relocation, cl: &Clusters, l01: &Graph) -> (String, bool) {
-    key_in(&Rac::RAC1, level, f, ov, to_l01, cl, l01, &HashMap::new())
+    key_in(&Rac::RAC1, level, f, ov, to_l01, cl, l01, &RefHashes::default())
 }
 
-/// [`key_of`] for a game: its reference level (`L01:` / `L00:`) and overlay base.
-/// `by_hash`: the reference level's functions by their masked-code hash (a copy `Relocation` misses: the same code
-/// over the same extent, linked elsewhere).
+/// The reference level's functions (8 words or more) by masked-code hash, and each one's hash. Functions that differ
+/// only in the addresses they form (the draw-list registrars `0x2e7718` / `0x2e7920`) share a hash: such a hash names
+/// no one function (`None`).
+#[derive(Default)]
+struct RefHashes {
+    at: HashMap<u32, u64>,
+    by: HashMap<u64, Option<u32>>,
+}
+
+impl RefHashes {
+    fn build(ov: &LevelOverlay, graph: &Graph) -> RefHashes {
+        let mut r = RefHashes::default();
+        for &f in &graph.starts {
+            if !graph.extent.get(&f).is_some_and(|&n| n >= 8) { continue; }
+            let Some(h) = code_hash(ov, f) else { continue };
+            r.at.insert(f, h);
+            r.by.entry(h).and_modify(|a| if *a != Some(f) { *a = None }).or_insert(Some(f));
+        }
+        r
+    }
+}
+
+/// [`key_of`] for a game: its reference level (`L01:` / `L00:`) and overlay base. A function at the same address as
+/// a reference function with the same masked code is that function (engine code sits at the same addresses on every
+/// level); else the relocation, the clusters, then `refs.by` (a copy `Relocation` misses: the same code over the same
+/// extent, linked elsewhere, when the hash names one function).
 #[allow(clippy::too_many_arguments)]
-fn key_in(g: &Rac, level: u32, f: u32, ov: &LevelOverlay, to_ref: &Relocation, cl: &Clusters, reference: &Graph, by_hash: &HashMap<u64, u32>) -> (String, bool) {
+fn key_in(g: &Rac, level: u32, f: u32, ov: &LevelOverlay, to_ref: &Relocation, cl: &Clusters, reference: &Graph, refs: &RefHashes) -> (String, bool) {
     let r = g.ref_level;
     if f < g.base { return (format!("boot:{f:08x}"), true); }
     if level == r { return (format!("L{r:02}:{f:08x}"), true); }
+    if refs.at.get(&f).is_some_and(|&h| code_hash(ov, f) == Some(h)) { return (format!("L{r:02}:{f:08x}"), true); }
     let n = ov.extent(f).unwrap_or(0);
     if let Some(a) = to_ref.func(f).filter(|a| reference.starts.contains(a) && (n >= 8 || reference.extent.get(a) == Some(&n))) {
         return (format!("L{r:02}:{a:08x}"), true);
@@ -332,7 +356,7 @@ fn key_in(g: &Rac, level: u32, f: u32, ov: &LevelOverlay, to_ref: &Relocation, c
         return (format!("C:{h}"), false);
     }
     let h = code_hash(ov, f).unwrap_or(0);
-    if let Some(a) = by_hash.get(&h) { return (format!("L{r:02}:{a:08x}"), true); }
+    if let Some(Some(a)) = refs.by.get(&h) { return (format!("L{r:02}:{a:08x}"), true); }
     (format!("H:{h:016x}"), false)
 }
 
@@ -570,10 +594,7 @@ fn census(g: &Rac, inputs: Vec<(u32, LevelIn)>, clusters: Clusters, repo: &Path,
     let l01_names = names(work, g.ref_program);
     let boot_names = names(work, g.boot_program);
     let l01_graph = Graph::build_with(&l01, g.base, g.gp);
-    let mut by_hash: HashMap<u64, u32> = HashMap::new();
-    for &f in &l01_graph.starts {
-        if l01_graph.extent.get(&f).is_some_and(|&n| n >= 8) { if let Some(h) = code_hash(&l01, f) { by_hash.entry(h).or_insert(f); } }
-    }
+    let by_hash = RefHashes::build(&l01, &l01_graph);
     let tagmap = tag_file.map(tags).unwrap_or_default();
     let rp = format!("L{:02}:", g.ref_level);
 

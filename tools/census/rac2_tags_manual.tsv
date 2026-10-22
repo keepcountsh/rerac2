@@ -3,7 +3,8 @@
 key	name	system	status	conf	note
 L00:00311688	delete_moby	moby	has	L	state 0xfd / 0xfe: the moby's removal
 L00:002a48f0	stub	trivial	trivial	L	empty function
-L00:002e7718	draw_list_add	fxdraw	partly	L	(fn, arg) into the 0x40-entry list 0x1be040 / 0x1be140 (count 0x1b18c8); the port has 0x2e7920's list only
+L00:002e7718	draw_list_add	fxdraw	partly	L	(fn, arg) into the 0x40-entry list 0x1be040 / 0x1be140 (count 0x1b18c8); Aranos's users: the arrival's ship draw 0x362b40 and class 0xd0
+H:582266980bbdcff0	draw_list_add	fxdraw	partly	L	the first draw list's registrar 0x2e7718 on the other levels (L01 0x2dce00: (fn, arg) into 0x1be7c0; same code as 0x2e7920, the second list's, so it is keyed by its hash): the port has the second list only; the callbacks are the classes' own (G-REN-003)
 L00:00323bf8	seq_time_check	anim	partly	L	a time / sequence-frame comparison over 0x311880, 0x323b78
 L00:003327e8	part_spawn_02	particles	missing	L	0x330df0(2): particle type 2
 L00:0033b5e0	part_spawn_3c	particles	missing	L	0x330df0(0x3c): particle type 0x3c
