@@ -161,14 +161,16 @@ pub struct Fader {
     pub active: bool,
     /// The value is a colour (mode 0) or two floats (mode 2).
     pub colour_mode: bool,
+    /// `+0x20` (`0x4403c8`): at an end it stops (0), starts over the same way (1) or turns back (2).
+    pub repeat: u8,
 }
 
 impl Fader {
     fn colour(keys: [(f32, u32); 3], count: usize) -> Fader {
-        Fader { keys: keys.map(|(t, c)| (t, [0.0; 2], c)), count, tangents: [[0.0, 0.0], [1.0, 1.0]], t: 0.0, dir: -1, speed: 0.116_666_6, active: false, colour_mode: true }
+        Fader { keys: keys.map(|(t, c)| (t, [0.0; 2], c)), count, tangents: [[0.0, 0.0], [1.0, 1.0]], t: 0.0, dir: -1, speed: 0.116_666_6, active: false, colour_mode: true, repeat: 0 }
     }
     fn floats(keys: [(f32, [f32; 2]); 3], count: usize) -> Fader {
-        Fader { keys: keys.map(|(t, v)| (t, v, 0)), count, tangents: [[0.0, 0.0], [1.0, 1.0]], t: 0.0, dir: -1, speed: 0.116_666_6, active: false, colour_mode: false }
+        Fader { keys: keys.map(|(t, v)| (t, v, 0)), count, tangents: [[0.0, 0.0], [1.0, 1.0]], t: 0.0, dir: -1, speed: 0.116_666_6, active: false, colour_mode: false, repeat: 0 }
     }
     /// `0x440388(f, dir)`.
     fn run(&mut self, dir: i32) {
@@ -184,7 +186,14 @@ impl Fader {
         self.t += self.speed * self.dir as f32;
         let done = if self.dir == 1 { 1.0 < self.t } else { self.t < 0.0 };
         self.t = self.t.clamp(0.0, 1.0);
-        if done { self.active = false; }
+        if done {
+            self.active = false;
+            match self.repeat {
+                1 => self.run(self.dir),
+                2 => self.run(-self.dir),
+                _ => {}
+            }
+        }
     }
     /// The value at t: the segment's lerp along its curve.
     fn sample(&self) -> ([f32; 2], u32) {
@@ -360,6 +369,8 @@ pub struct Health {
     pub hidden: bool,
     /// `+8`: the widget's position.
     pub pos: [f32; 2],
+    /// `+0x140`: the pills' colour, light blue to white and back over 200 ticks each way.
+    pub pill: Fader,
     /// `+0x1d4` / `+0x25c`: the back's colour and size; `+0x2e4` / `+0x36c` the outline's.
     pub back_colour: Fader,
     pub back_size: Fader,
@@ -374,8 +385,14 @@ impl Health {
         back_colour.tangents[1] = [0.0, 2.0];
         let mut outline_colour = c(0x00f0_c070, 0x55f0_c070);
         outline_colour.tangents[1] = [0.0, 3.0];
+        // `0x440ab0`: keys 0x80f0c070 at 0 and 0x80f0f0f0 at 1, 0.005 a tick, flat tangents, turning back at each end.
+        let mut pill = Fader::colour([(0.0, 0x80f0_c070), (1.0, 0x80f0_f0f0), (1.0, 0x80f0_f0f0)], 2);
+        pill.tangents[0] = [0.0, 0.0];
+        pill.speed = 0.005;
+        pill.repeat = 2;
+        pill.run(1);
         Health {
-            health: 0, max, shown: false, timer: 0, blink: 0, old_max: max, hidden: true, pos: [147.0, 10.0],
+            health: 0, max, shown: false, timer: 0, blink: 0, old_max: max, hidden: true, pos: [147.0, 10.0], pill,
             back_colour,
             back_size: Fader::floats([(0.0, [0.0, 0.0]), (0.3, [1.0, 1.0]), (1.0, [1.0, 1.0])], 3),
             outline_colour,
@@ -405,6 +422,7 @@ impl Health {
 
     /// `0x441968`.
     pub fn tick(&mut self) {
+        self.pill.step();
         for f in [&mut self.back_colour, &mut self.back_size, &mut self.outline_colour, &mut self.outline_size] { f.step(); }
         if self.timer != 0 {
             self.timer -= 1;
@@ -463,7 +481,7 @@ impl Health {
             if g >= cols { x += 2.0; }
             let blinking = self.blink != 0 && i >= self.old_max;
             if i < self.health {
-                let c = if blinking { blink_colour } else { 0x80f0_c070 };
+                let c = if blinking { blink_colour } else { self.pill.sample().1 };
                 out.push(Draw::Sprite { id: filled, pos: [x, y], scale: [sx, sy], frame: 0.0, colour: c });
             }
             out.push(Draw::Sprite { id: empty, pos: [x, y], scale: [sx, sy], frame: 0.0, colour: 0x55f0_c070 });
