@@ -85,7 +85,9 @@ fn pause_tick(
         match o {
             Out::Resume | Out::MainMenu | Out::Close => p.pause = None,
             Out::Port(s, v) => crate::port_options::apply(s, v, &mut gfx, &mut display),
-            Out::Loaded { level } => {
+            // A save of level 0 not visited yet starts a new game from it (`0x2f7328`): level 0, as a load.
+            Out::Loaded { .. } | Out::NewGame => {
+                let level = if let Out::Loaded { level } = o { level } else { 0 };
                 // The loaded game, on its level (the level change carries it: [`unload`]).
                 let mut g = rc_game::game::GameState::default();
                 g.load(&c.save);
@@ -99,7 +101,7 @@ fn pause_tick(
                 p.game.go_to_level(-1, false);
                 p.pause = None;
             }
-            Out::NewGame | Out::Sound(_) => {}
+            Out::Sound(_) => {}
         }
     }
 }

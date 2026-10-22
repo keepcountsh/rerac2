@@ -202,6 +202,7 @@ impl GameState {
                 let v = self.missions.get(l * 0x10 + k as usize).copied().unwrap_or(0);
                 s.set_u8(Scope::Level(l), at::MISSIONS + k, v);
             }
+            set_visited(s, l, self.visited.get(l).copied().unwrap_or(0));
         }
         if let Ok(l) = usize::try_from(self.level) {
             if let Some(b) = s.bytes_mut(Scope::Level(l), at::UID_BITS, 0x400) {
@@ -245,6 +246,7 @@ impl GameState {
             for k in 0..0x10u32 {
                 if let Some(m) = self.missions.get_mut(l * 0x10 + k as usize) { *m = s.u8(Scope::Level(l), at::MISSIONS + k); }
             }
+            if let Some(v) = self.visited.get_mut(l) { *v = visited(s, l); }
         }
         if let Some(b) = usize::try_from(self.level).ok().and_then(|l| s.bytes(Scope::Level(l), at::UID_BITS, 0x400)) {
             let n = self.uid_bits.len().min(0x400);
