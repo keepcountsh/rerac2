@@ -18,6 +18,7 @@ pub mod hero;
 pub mod hud;
 pub mod level;
 pub mod light;
+pub mod memcard;
 pub mod moby;
 pub mod pad;
 pub mod particles;
