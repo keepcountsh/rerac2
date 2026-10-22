@@ -166,6 +166,37 @@ pub enum Page {
     Gadgets,
     /// The pause's Items page (`0x43a968` / `0x43b3e8` / `0x43c2d8`): the items had and the collectables' counters.
     Items,
+    /// The pause's Help page (`0x283288`: the in-game Options list in its Help mode, `0x438538(0)`).
+    Help,
+}
+
+/// The Help list's rows (`0x28a018`: each opens its page) and descriptions (`0x28ed70`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelpTopic {
+    Monsterpedia,
+    HelpLog,
+    Controls,
+    Moves,
+    Weapons,
+    Gadgets,
+    Ship,
+}
+
+impl HelpTopic {
+    pub const ALL: [HelpTopic; 7] = [HelpTopic::Monsterpedia, HelpTopic::HelpLog, HelpTopic::Controls, HelpTopic::Moves, HelpTopic::Weapons, HelpTopic::Gadgets, HelpTopic::Ship];
+    fn text(self) -> u32 { [0x305c, 0x2cb7, 0x2bf7, 0x2bf8, 0x2be7, 0x2be8, 0x30a9][self as usize] }
+    fn description(self) -> u32 { [0x305d, 0x2cb8, 0x3114, 0x2c03, 0x2c04, 0x2c05, 0x3113][self as usize] }
+}
+
+/// The in-game list (`+0x3c160`, `0x438538`) by mode: 0 Help, 1 Options. Its description panel (the pages' rect 1)
+/// and "△ Exit" (right-aligned, `0x34f898` / `0x348248`).
+mod list {
+    pub const DESCRIPTION: [i32; 4] = [285, 80, 180, 134];
+    pub const EXIT_AT: [f32; 2] = [455.0, 293.0];
+    /// Help's row icons: `0xea9d` frames 0..6 (`gp−0xc10`, `0x28edd0`).
+    pub const HELP_ICON: u16 = 0xea9d;
+    /// "Help".
+    pub const HELP_TEXT: u32 = 0x2beb;
 }
 
 /// A grid of the grid drawer (`0x42e0c8`, its argument block): the table, its size, the icons' and frames' step and
@@ -412,6 +443,8 @@ impl PauseOption {
             PauseOption::Quit => 0x2c31,
         }
     }
+    /// Its description (`0x28ed90`).
+    fn description(self) -> u32 { [0x2c3c, 0x2c3d, 0x2c3e, 0x2c02, 0x2c40, 0x2c41, 0x2c42, 0x2c44][self as usize] }
 }
 
 /// The pause list (`0x43f3f8` / `0x43fc18`, button rows) and the in-game Options list (`0x438148` / `0x438b48`).
@@ -610,6 +643,8 @@ pub struct Menus {
     /// low when a new text has to scroll).
     description: u32,
     description_scroll: i32,
+    /// The Help list's row.
+    help_row: usize,
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -668,6 +703,7 @@ impl Menus {
             items_cell: [0, 0],
             description: 0,
             description_scroll: 0,
+            help_row: 0,
         }
     }
 
@@ -686,7 +722,7 @@ impl Menus {
         if self.in_game {
             match page {
                 Page::Pause => None,
-                Page::PauseOptions | Page::Port => Some(Page::Pause),
+                Page::PauseOptions | Page::Port | Page::Weapons | Page::Gadgets | Page::Items | Page::Help => Some(Page::Pause),
                 _ => Some(Page::PauseOptions),
             }
         } else {
@@ -770,7 +806,6 @@ impl Menus {
             Page::Toggle(t) => self.toggle_tick(t, pressed, cx, &mut out),
             Page::Port => self.port_tick(pressed, cx, &mut out),
             Page::Pause => self.pause_tick(pressed, &mut out),
-            Page::PauseOptions => self.pause_options_tick(pressed, cx, &mut out),
             Page::Save => self.save_tick(pressed, cx, &mut out),
             Page::Quit => self.quit_tick(pressed, &mut out),
             Page::Sound | Page::Camera | Page::Controls => self.setting_tick(pressed, cx, &mut out),
@@ -778,7 +813,15 @@ impl Menus {
             Page::Gadgets => self.gadgets_tick(pressed, cx, &mut out),
             Page::Items => {
                 self.items_tick(pressed, &mut out);
-                self.description_tick(cx);
+                self.description_tick(self.items_description(cx.tables, cx.save), items::DESCRIPTION[3], cx.held);
+            }
+            Page::Help => {
+                self.help_tick(pressed, &mut out);
+                self.description_tick(HelpTopic::ALL[self.help_row].description(), list::DESCRIPTION[3], cx.held);
+            }
+            Page::PauseOptions => {
+                self.pause_options_tick(pressed, cx, &mut out);
+                self.description_tick(PauseOption::ALL[self.options_row].description(), list::DESCRIPTION[3], cx.held);
             }
         }
         out
@@ -805,6 +848,7 @@ impl Menus {
                 PauseRow::Weapons => self.go(Page::Weapons, out),
                 PauseRow::Gadgets => self.go(Page::Gadgets, out),
                 PauseRow::Items => self.go(Page::Items, out),
+                PauseRow::Help => self.go(Page::Help, out),
                 PauseRow::Port => {
                     self.port_row = 0;
                     self.port_top = 0;
@@ -1166,21 +1210,20 @@ impl Menus {
 
     /// The description's scroll (`0x346ee0`): 3/16 of a pixel a frame (10 with L1 L2 R1 R2 held); a new text starts
     /// over ([`Menus::draw_description`] keeps it at 0 for a text that fits).
-    fn description_tick(&mut self, cx: &Ctx) {
-        let d = self.items_description(cx.tables, cx.save);
+    fn description_tick(&mut self, d: u32, box_height: i32, held: u16) {
         if d != self.description {
             self.description = d;
-            self.description_scroll = -(items::DESCRIPTION[3] as i32) * 8;
+            self.description_scroll = -box_height * 8;
         } else {
-            self.description_scroll += if cx.held & 0xf == 0xf { 10 } else { 3 };
+            self.description_scroll += if held & 0xf == 0xf { 10 } else { 3 };
         }
     }
 
-    /// The Items page's description panel (`0x346ee0`, flags 0x114: the text id the page gives, font 2): the text
-    /// wrapped in the box, scrolling up (and again 0x30 below its end) when it does not fit.
-    fn draw_description(&self, out: &mut Vec<Quad>, a: &Assets) {
+    /// A description panel (`0x346ee0`, flags 0x114: the text id the page gives, font 2) in box `[x, y, w, h]` (the
+    /// page's rect, the text's corner at its centre's place): the text wrapped in the box, scrolling up (and again
+    /// 0x30 below its end) when it does not fit.
+    fn draw_description(&self, out: &mut Vec<Quad>, a: &Assets, [x, y, w, h]: [i32; 4]) {
         if self.description == 0 { return; }
-        let [x, y, w, h] = items::DESCRIPTION;
         let t = a.strings.get(self.description);
         let mut b = gui::TextBox { top: y, bottom: y + h, left: x, right: x + w - 4, x, y, line: 16, flags: gui::text_box::MEASURE, ..Default::default() };
         gui::text_in_box(out, &a.glyphs_2, 2, &mut b, t, [0; 4]);
@@ -1202,6 +1245,22 @@ impl Menus {
     /// Body slot `slot`'s item as the pages show it: the one taken, else the save's (`0x1a7398 + 4·slot`).
     fn equipped(&self, save: &SaveData, slot: usize) -> i32 {
         self.equipped[slot].unwrap_or_else(|| save.i32(Scope::Global, 0x1a7398 + 4 * slot as u32))
+    }
+
+    /// The Help list (the in-game list's update, mode 0): Up / Down through the rows (wrapping, sound 3), ✕ opens the
+    /// row's page (not ported yet: sound 5), △ back to the pause list.
+    fn help_tick(&mut self, keys: u16, out: &mut Vec<Out>) {
+        let n = HelpTopic::ALL.len();
+        if keys & pad::TRIANGLE != 0 {
+            self.back(out);
+        } else if keys & (pad::START | pad::SELECT) != 0 {
+            self.close(out);
+        } else if keys & (pad::UP | pad::DOWN) != 0 {
+            out.push(Out::Sound(3));
+            self.help_row = if keys & pad::UP != 0 { (self.help_row + n - 1) % n } else { (self.help_row + 1) % n };
+        } else if keys & pad::CROSS != 0 {
+            out.push(Out::Sound(5));
+        }
     }
 
     /// Mode 4 kind 9 (`0x287140`): ✕ yes, △ no.
@@ -1663,6 +1722,7 @@ impl Menus {
             Page::Port => return self.draw_port(out, a, v),
             Page::Pause => return self.draw_pause(out, a),
             Page::PauseOptions => return self.draw_pause_options(out, a, icon),
+            Page::Help => return self.draw_help(out, a, icon),
             Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
             Page::Weapons => return self.draw_weapons(out, a, v, icon),
             Page::Gadgets => return self.draw_gadgets(out, a, v, icon),
@@ -1697,7 +1757,7 @@ impl Menus {
                 self.draw_planet(out, a, card);
                 self.draw_message(out, a, card);
             }
-            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons | Page::Gadgets | Page::Items => {}
+            Page::Options | Page::Toggle(_) | Page::Port | Page::Pause | Page::PauseOptions | Page::Quit | Page::Sound | Page::Camera | Page::Controls | Page::Weapons | Page::Gadgets | Page::Items | Page::Help => {}
         }
     }
 
@@ -1899,7 +1959,7 @@ impl Menus {
             gui::rect(out, by + y0, by + y1, bx + x0, bx + x1, gui::rgba(0x55f0_c070));
         }
         if let Some(sp) = a.sprites.get(&SELECTION) { gui::sprite(out, sp, spec.frame(AT, c, r), 0.0, [1.0, 1.0], self.pulse_colour()); }
-        self.draw_description(out, a);
+        self.draw_description(out, a, items::DESCRIPTION);
         self.draw_picture(out, v, PICTURE);
     }
 
@@ -1974,30 +2034,48 @@ impl Menus {
     /// The in-game Options list (`0x438b48`): the frame (sprites 0x91..0x94), the selection (0x95), the title, the
     /// labels (the front end's Options list's places) and the row icons.
     fn draw_pause_options(&self, out: &mut Vec<Quad>, a: &Assets, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) {
+        let rows: Vec<(u32, u16)> = PauseOption::ALL.iter().enumerate().map(|(i, o)| (o.text(), i as u16)).collect();
+        self.draw_list(out, a, icon, pause::OPTIONS_TEXT, 1.0, pause::OPTIONS_ICON, &rows, self.options_row);
+    }
+
+    /// The Help list (the in-game list in mode 0: seven rows, the frame's first keyframe).
+    fn draw_help(&self, out: &mut Vec<Quad>, a: &Assets, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) {
+        let rows: Vec<(u32, u16)> = HelpTopic::ALL.iter().enumerate().map(|(i, t)| (t.text(), i as u16)).collect();
+        self.draw_list(out, a, icon, list::HELP_TEXT, 0.0, list::HELP_ICON, &rows, self.help_row);
+    }
+
+    /// The in-game list (`0x438b48`): the frame (sprites 0x91..0x94, the mode's keyframe but 0x94's), the selection
+    /// (0x95), the title, the rows' labels and icons; then the page's description panel and "△ Exit".
+    #[allow(clippy::too_many_arguments)]
+    fn draw_list(&self, out: &mut Vec<Quad>, a: &Assets, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>, title: u32, key: f32, icon_id: u16, rows: &[(u32, u16)], selected: usize) {
         use options::{ICONS_AT, ICON_RGBA, LABELS_AT, SELECTION, SELECTION_AT};
         use pause::*;
         let at = OPTIONS_AT;
-        for (id, c, key) in OPTIONS_SPRITES {
-            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, at, key, [1.0, 1.0], gui::rgba(c)); }
+        for (id, c, k) in OPTIONS_SPRITES {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, at, if k == 0.0 { 0.0 } else { key }, [1.0, 1.0], gui::rgba(c)); }
         }
         if let Some(s) = a.sprites.get(&SELECTION) {
-            let p = [at[0] + SELECTION_AT[0], at[1] + SELECTION_AT[1] + SELECTION_AT[2] * self.options_row as f32];
+            let p = [at[0] + SELECTION_AT[0], at[1] + SELECTION_AT[1] + SELECTION_AT[2] * selected as f32];
             gui::sprite(out, s, p, 0.0, [1.0, 1.05], self.pulse_colour());
         }
         let centred = |out: &mut Vec<Quad>, t: &[u8], x: f32, y: f32, c: u32| {
             let w = gui::text_width(&a.glyphs, t, 1.0);
             gui::text(out, &a.glyphs, 1, t, x - (w >> 1) as f32, y, 1.0, gui::rgba(c));
         };
-        centred(out, a.strings.get(OPTIONS_TEXT), at[0] + OPTIONS_TITLE[0], at[1] + OPTIONS_TITLE[1], 0x80f0_f0f0);
-        for (i, o) in PauseOption::ALL.iter().enumerate() {
-            let c = if i == self.options_row { 0x70ff_feed } else { 0x80f0_f0f0 };
-            centred(out, a.strings.get(o.text()), at[0] + LABELS_AT[0], at[1] + LABELS_AT[1] + LABELS_AT[2] * i as f32, c);
+        centred(out, a.strings.get(title), at[0] + OPTIONS_TITLE[0], at[1] + OPTIONS_TITLE[1], 0x80f0_f0f0);
+        for (i, &(text, frame)) in rows.iter().enumerate() {
+            let c = if i == selected { 0x70ff_feed } else { 0x80f0_f0f0 };
+            centred(out, a.strings.get(text), at[0] + LABELS_AT[0], at[1] + LABELS_AT[1] + LABELS_AT[2] * i as f32, c);
             let (x, y) = (at[0] + ICONS_AT[0], at[1] + ICONS_AT[1] + ICONS_AT[2] * i as f32);
-            if let Some((tex, [tw, th])) = icon(OPTIONS_ICON, i as u16) {
-                let rgba = gui::rgba(if i == self.options_row { 0x70ff_feed } else { ICON_RGBA });
+            if let Some((tex, [tw, th])) = icon(icon_id, frame) {
+                let rgba = gui::rgba(if i == selected { 0x70ff_feed } else { ICON_RGBA });
                 out.push(Quad { pos: [[x, y], [x + 32.0, y], [x, y + 32.0], [x + 32.0, y + 32.0]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex, rgba });
             }
         }
+        self.draw_description(out, a, list::DESCRIPTION);
+        let t = a.strings.get(options::EXIT_TEXT);
+        let w = gui::text_width(&a.glyphs, t, 1.0);
+        gui::text(out, &a.glyphs, 1, t, list::EXIT_AT[0] - w as f32, list::EXIT_AT[1], 1.0, gui::rgba(0x80f0_f0f0));
     }
 
     /// The selection's colour (`0x2aa3f0(0x60442d00, 0x70fffeed, 20)`).

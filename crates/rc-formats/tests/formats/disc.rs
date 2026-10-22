@@ -133,3 +133,12 @@ fn item_pictures_decode() {
     }
     assert_eq!(n, 74);
 }
+
+#[test]
+fn zz_print_texts() {
+    let Ok(ids) = std::env::var("RC_TEXT_IDS") else { return };
+    let (Some(hdr), Some(misc)) = (read("RC2.HDR"), read("G/MISC.WAD")) else { return };
+    let part = Toc::parse(&hdr).unwrap().misc_part(MISC_FRONT_END).unwrap();
+    let en = FrontEnd::parse(rc_formats::wad::decompress(&misc[part.bytes()]).unwrap()).unwrap().strings(0).unwrap();
+    for id in ids.split(',') { let i = u32::from_str_radix(id, 16).unwrap(); eprintln!("{i:#x}: {:?}", String::from_utf8_lossy(en.get(i))); }
+}

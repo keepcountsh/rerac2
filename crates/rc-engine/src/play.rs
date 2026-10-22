@@ -1081,8 +1081,8 @@ fn draw_hud(
                         textures.push(t);
                     }
                 }
-                // The pause's pages (rc_game::menus): the Options icons, the save slots' icons and picture.
-                let menu = (0..8).map(|f| (0xea9eu16, f)).chain([(rc_game::menus::ICON_SLOT, 2), (rc_game::menus::ICON_SLOT, 3), (rc_game::menus::ICON_SLOT, 4), (rc_game::menus::ICON_PICTURE, 0)]);
+                // The pause's pages (rc_game::menus): the Options and Help icons, the save slots' icons and picture.
+                let menu = (0..8).flat_map(|f| [(0xea9eu16, f), (0xea9d, f)]).chain([(rc_game::menus::ICON_SLOT, 2), (rc_game::menus::ICON_SLOT, 3), (rc_game::menus::ICON_SLOT, 4), (rc_game::menus::ICON_PICTURE, 0)]);
                 // The item records' icons (the Weapons page's cells, every upgrade's).
                 let menu = menu.chain(tables.items.iter().map(|r| (r.icon, 0)).filter(|&(i, _)| i != 0));
                 // The grids' own icons (the plain cells, `0xea85`, item 7's `0xea9a`).
