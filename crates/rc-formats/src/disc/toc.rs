@@ -151,9 +151,15 @@ impl<'a> Toc<'a> {
     }
 }
 
-/// `FUN_002efe68`: the movie row of a movie id (ids above 0xb0 count from 0x91; the story movies' language tables
-/// below that are not read here).
-pub fn movie_row(id: u32) -> Option<usize> { (id > 0xb0).then(|| (id - 0x91) as usize) }
+/// `FUN_002efe68`: the movie row of a movie id: the story movies below 0x20 are their row, ids above 0xb0 count from
+/// 0x91 (0x20..=0xb0 are in-engine scenes).
+pub fn movie_row(id: u32) -> Option<usize> {
+    match id {
+        0..0x20 => Some(id as usize),
+        0xb1.. => Some((id - 0x91) as usize),
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -164,6 +170,7 @@ mod tests {
         assert_eq!(movie_row(0xb2), Some(33));
         assert_eq!(movie_row(0xb9), Some(40));
         assert_eq!(movie_row(0x20), None);
+        assert_eq!(movie_row(0x15), Some(0x15));
     }
 
     #[test]

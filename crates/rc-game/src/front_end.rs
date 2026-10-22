@@ -38,6 +38,8 @@ pub mod button {
 
 /// The Insomniac logo movie.
 pub const MOVIE_LOGO: u32 = 0xb2;
+/// The new game's movie (`0x2f7328`: Ratchet and Clank at home, called in by Fizzwidget).
+pub const MOVIE_INTRO: u32 = 0x15;
 /// The menu's idle frames before the title comes back (`FUN_0026ede8`, mode 3).
 pub const IDLE_FRAMES: u32 = 0x708;
 /// "Press START" (`FUN_0027db38`).
@@ -83,6 +85,11 @@ enum Phase {
     Title,
     /// The main menu's sub-state (1..=4).
     Menu { sub: u8 },
+    /// The new game's movie (`0x2f7328`, skip mode 1: Start once the pad was seen released); its end starts the game
+    /// (`0x2f72d8`).
+    Intro,
+    /// The game asked for: black until the engine leaves the front end.
+    Started,
 }
 
 pub struct FrontEnd {
@@ -143,6 +150,7 @@ impl FrontEnd {
         match self.phase {
             Phase::Logo => Some(MOVIE_LOGO),
             Phase::Title => Some(self.playlist[self.playing] as u32),
+            Phase::Intro => Some(MOVIE_INTRO),
             _ => None,
         }
     }
@@ -212,6 +220,15 @@ impl FrontEnd {
                     self.movie_frames = 0;
                 }
             }
+            Phase::Intro => {
+                self.movie_frames += 1;
+                if held == 0 { self.released = true; }
+                if movie_ended || (self.released && pressed & button::START != 0) {
+                    req.push(Request::NewGame);
+                    self.phase = Phase::Started;
+                }
+            }
+            Phase::Started => {}
             Phase::Menu { sub } if sub < 4 => self.phase = Phase::Menu { sub: sub + 1 },
             Phase::Menu { .. } if self.menus.is_some() => {
                 if let (Some(m), Some(cx)) = (self.menus.as_mut(), cx) {
@@ -223,7 +240,7 @@ impl FrontEnd {
                                 self.close_menus();
                                 self.start_title();
                             }
-                            menus::Out::NewGame => req.push(Request::NewGame),
+                            menus::Out::NewGame => self.start_intro(),
                             menus::Out::Loaded { level } => req.push(Request::Load { level }),
                             menus::Out::Port(s, v) => req.push(Request::Port(s, v)),
                             menus::Out::Resume | menus::Out::Quit | menus::Out::Equip { .. } => {}
@@ -250,6 +267,8 @@ impl FrontEnd {
                             _ => None,
                         };
                         match opened {
+                            // Without the card: the game as it is, after its movie.
+                            None if r.kind == 4 => self.start_intro(),
                             Some((m, menus::Out::Sound(n))) => {
                                 self.menus = Some(m);
                                 req.push(Request::Sound(n));
@@ -266,6 +285,14 @@ impl FrontEnd {
         }
         self.held_before = held;
         req
+    }
+
+    /// `0x2f7328`: the pages close and the new game's movie plays.
+    fn start_intro(&mut self) {
+        self.close_menus();
+        self.phase = Phase::Intro;
+        self.movie_frames = 0;
+        self.released = false;
     }
 
     /// The main menu again: the pages close (their slot is kept).
@@ -293,8 +320,8 @@ impl FrontEnd {
                 };
                 if let Some(al) = alpha.filter(|&al| al > 0) { gui::fill(&mut out, [0, 0, 0, al as u8]); }
             }
-            Phase::Gap => gui::fill(&mut out, [0, 0, 0, 0x80]),
-            Phase::Logo => gui::picture(&mut out, Picture::Movie),
+            Phase::Gap | Phase::Started => gui::fill(&mut out, [0, 0, 0, 0x80]),
+            Phase::Logo | Phase::Intro => gui::picture(&mut out, Picture::Movie),
             Phase::Title => {
                 gui::picture(&mut out, Picture::Movie);
                 // `FUN_0027db38`: t = (n mod 100)·0.02 − 1, f = (cos(π·t) + 1) / 2.
