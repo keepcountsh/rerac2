@@ -440,7 +440,11 @@ mod tests {
         fe.tick(button::UP, false, &a, None);
         assert_eq!(fe.selected, 2);
         fe.tick(0, false, &a, None);
-        assert_eq!(fe.tick(button::CROSS, false, &a, None), [Request::Row { kind: 4, target: 0 }]);
+        // New Game without the card: its movie, then the game.
+        assert_eq!(fe.tick(button::CROSS, false, &a, None), []);
+        assert_eq!(fe.movie(), Some(MOVIE_INTRO));
+        assert_eq!(fe.tick(0, true, &a, None), [Request::NewGame]);
+        assert_eq!(fe.movie(), None);
     }
 
     #[test]
