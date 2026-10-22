@@ -61,3 +61,30 @@ fn gui_sprites_and_movies() {
     // The title's couch movies: rows 34..=40, all present.
     for id in 0xb3..=0xb9 { assert!(toc.movie(movie_row(id).unwrap()).unwrap().is_some(), "movie {id:#x}"); }
 }
+
+/// The save format against the disc: the boot ELF's chunk tables, the save blob (`MISC.WAD` part 2) and its blank
+/// save, whose header sizes equal the tables' (else every save would load as "out of date").
+#[test]
+fn save_blob_and_template() {
+    use rc_formats::disc::save_game::{card_dir_name, ChunkTables, SaveBlob, SaveFile, LEVEL_SLOTS};
+    let Some(hdr) = read("RC2.HDR") else { eprintln!("skipped: no RC2.HDR in the data folder"); return };
+    let toc = Toc::parse(&hdr).unwrap();
+    let elf = read("SCUS_972.68").unwrap();
+    let tables = ChunkTables::from_boot_elf(&BootElf::parse(&elf).unwrap()).unwrap();
+    let part = toc.misc_part(2).unwrap();
+    let misc = read("G/MISC.WAD").unwrap();
+    let blob = SaveBlob::parse(&misc[part.bytes()], tables.file_size()).unwrap();
+    let save = SaveFile::parse(&blob.template, tables.global_size()).unwrap();
+    println!(
+        "tables: {} global chunks ({:#x} bytes), {} level chunks ({:#x}); file {:#x}; static.ico {:#x}; template crcs ok {}",
+        tables.global.len(), tables.global_size(), tables.level.len(), tables.level_size(), tables.file_size(),
+        blob.static_ico.len(), save.all_crcs_ok()
+    );
+    assert_eq!(u32::from_le_bytes(blob.template[0..4].try_into().unwrap()) as usize, tables.global_size());
+    assert_eq!(u32::from_le_bytes(blob.template[4..8].try_into().unwrap()) as usize, tables.level_size());
+    assert_eq!(save.levels.len(), LEVEL_SLOTS);
+    assert_eq!(save.global.chunks.iter().map(|c| c.id).collect::<Vec<_>>(), tables.global.iter().map(|d| d.id).collect::<Vec<_>>());
+    assert_eq!(save.to_bytes(tables.global_size()), blob.template, "the template re-encodes byte for byte");
+    let cnf = read("SYSTEM.CNF").unwrap();
+    assert_eq!(card_dir_name(&cnf).unwrap(), "BASCUS-97268RATCHET");
+}
