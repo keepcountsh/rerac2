@@ -28,11 +28,12 @@
 //! priority applied each tick through the camera's setters) are [`CamTweaks`]; the hero-state tweaks `0x4239d0`
 //! follow the hero's groups (water, glide, Clank, the bounce, the Charge Boots, strafing).
 //!
-//! **Not ported** (no use on Aranos's opening yet, or no data source): the camera-collision grid (`0x427758`, `0x4219a0`; empty), the
-//! moby nudges of the avoidance (classes 0x8ba, 0xd07,
-//! 0x10d0, 0x477, 0xb), the focus moby `0x1b8e84` / `0x18b270`, the stick auto-centre `$gp+0x2540`, the body cameras
-//! (Clank, Giant Clank), the water settle (D+0x14e), the knock-down view (state 0x74, mode 11), the other camera types
-//! (first person `0x427bf8`, …), the blends between cameras and the shakes.
+//! **Not ported**: the body cameras (Giant Clank's branch of `0x4239d0`: the hero is never Giant Clank yet), the focus
+//! mobys `0x1b8e84` / `0x18b270` (nothing sets them on Aranos), the stick auto-centre (`$gp+0x2540` is 0 on the disc),
+//! the water settle (D+0x14e), the knock-down view (state 0x74, mode 11), the camera's own shift `0x1b8fc0`, the
+//! underwater test `0x2d9a58`; the other camera classes (first person `0x427bf8` needs Ratchet's camera mode 4 / 0x51,
+//! script 5, 6, the Swingshot's 7, 0x1b), the blends between cameras (`0x2d8168` / `0x2d8ab0` / `0x2d9488`), the
+//! shakes (`0x2d9528`: their users, the blast `0x320538` among them, are not ported) and the FOV blend `0x2d7b70`.
 
 use crate::hero::physics::{add, dot, len, scale, sub, V3};
 use crate::hero::Hero;
