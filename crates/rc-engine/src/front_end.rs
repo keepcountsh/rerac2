@@ -16,7 +16,9 @@
 //!   blend in display bytes); the splash screens, the backdrop and the movie are textures of the layer's atlas (the
 //!   movie's rewritten each picture), copied as the frame buffer holds them (alpha 0x80).
 //! * **Movies**: decoded on a worker thread (`rc_video`), the pictures in display order at the file's rate (picture
-//!   `⌊k·fps/60⌋` at frame k). **No sound yet**: the movie audio, the front end's sounds and music are not played.
+//!   `⌊k·fps/60⌋` at frame k), and their audio. The front end's own sounds and music are not played yet.
+//! * **The level underneath** is neither drawn (its cameras are off) nor heard (the front end feeds the audio output)
+//!   until New Game.
 //!
 //! Environment: `RC_PLAY_SCRIPT` (crate::input_map::Script) drives the pad by frame, `RC_SCREENSHOT` +
 //! `RC_SCREENSHOT_FRAME` capture a frame (crate::determinism), `RC_FRONT_END_TRACE=1` logs the front end's movies and rows.
@@ -273,7 +275,7 @@ impl Plugin for FrontEndPlugin {
         })
         .add_systems(Startup, setup)
         .add_systems(FixedUpdate, tick)
-        .add_systems(Update, (draw, finish).chain());
+        .add_systems(Update, (hide_world, draw, finish).chain());
     }
 }
 
@@ -300,6 +302,7 @@ fn tick(
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     gamepads: Query<&Gamepad>,
+    audio: Option<ResMut<crate::audio_out::AudioOut>>,
 ) {
     let r = &mut *fe;
     if r.done { return; }
@@ -334,7 +337,37 @@ fn tick(
             r.movie = None;
         }
     }
+    // The front end's sound: the movie's audio, else silence. The level's audio waits for New Game (its EE frames
+    // would start the level's music under the front end).
+    if let Some(mut out) = audio {
+        out.external = true;
+        let chunk = r.movie.as_ref().map_or([[0; 2]; 800], |m| m.audio_frame());
+        let mut buf = std::mem::take(&mut out.buf);
+        buf.clear();
+        out.system().mix_movie(&chunk, &mut buf);
+        out.buf = buf;
+        out.push_frame();
+    }
     r.ticks += 1;
+}
+
+/// Turned off while the front end shows (the original draws no level under it); [`finish`] turns them back on.
+#[derive(Component)]
+struct HiddenWorld;
+
+/// Every camera but the front end's own and the window's present camera stays off until New Game.
+fn hide_world(
+    mut commands: Commands,
+    fe: Res<FrontEndState>,
+    mut cams: Query<(Entity, &mut Camera), (Without<crate::display::PresentCamera>, Without<HiddenWorld>)>,
+) {
+    if fe.done { return; }
+    let own = [fe.camera, fe.layer.as_ref().map(|l| l.entities[0])];
+    for (e, mut cam) in &mut cams {
+        if own.contains(&Some(e)) || !cam.is_active { continue; }
+        cam.is_active = false;
+        commands.entity(e).insert(HiddenWorld);
+    }
 }
 
 fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>) {
@@ -359,9 +392,13 @@ fn draw(mut fe: ResMut<FrontEndState>, mut images: ResMut<Assets<Image>>, mut me
 }
 
 /// After New Game: the layer and its camera go, the movie stops; the level's cameras show.
-fn finish(mut commands: Commands, mut fe: ResMut<FrontEndState>) {
+fn finish(mut commands: Commands, mut fe: ResMut<FrontEndState>, mut hidden: Query<(Entity, &mut Camera), With<HiddenWorld>>) {
     let r = &mut *fe;
     if !r.done { return; }
+    for (e, mut cam) in &mut hidden {
+        cam.is_active = true;
+        commands.entity(e).remove::<HiddenWorld>();
+    }
     if let Some(layer) = r.layer.take() { layer.despawn(&mut commands); }
     if let Some(cam) = r.camera.take() { commands.entity(cam).despawn(); }
     r.movie = None;
