@@ -20,7 +20,7 @@
 //! `RC_FULLSCREEN=0|1` override the file at start; F11 toggles fullscreen and saves it.
 //!
 //! The frame's format is the window's swap-chain format (`Bgra8UnormSrgb`), so every pipeline is specialised as it
-//! was for the window; it can be copied (screenshots) and sampled (the present sprite, linear filtering).
+//! was for the window; it can be copied (screenshots) and sampled (the present quad, linear filtering, opaque).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
@@ -187,7 +187,8 @@ pub struct BoxedView;
 #[derive(Component)]
 pub struct PresentCamera;
 
-/// The frame's sprite on the present camera.
+/// The frame's quad on the present camera: opaque, so the frame's alpha (the GS's, which the TV never shows) does not
+/// blend it with the black behind.
 #[derive(Component)]
 struct PresentSprite;
 
@@ -224,9 +225,9 @@ fn redirect(add: On<Add, Camera>, frame: Res<GameFrame>, targets: Query<&RenderT
     }
 }
 
-/// The present camera and sprite live for the whole run: a level change keeps them (crate::level_switch despawns
+/// The present camera and quad live for the whole run: a level change keeps them (crate::level_switch despawns
 /// every other camera), else the window shows nothing after the first change.
-fn spawn_present(mut commands: Commands, frame: Res<GameFrame>) {
+fn spawn_present(mut commands: Commands, frame: Res<GameFrame>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<ColorMaterial>>) {
     commands.spawn((
         Camera2d,
         crate::level_switch::KeepAcrossLevels,
@@ -240,7 +241,9 @@ fn spawn_present(mut commands: Commands, frame: Res<GameFrame>) {
         Name::new("present camera (game frame → window)"),
     ));
     commands.spawn((
-        Sprite { image: frame.image.clone(), custom_size: Some(Vec2::new(1024.0, 768.0)), ..default() },
+        Mesh2d(meshes.add(Rectangle::new(1.0, 1.0))),
+        MeshMaterial2d(materials.add(ColorMaterial { texture: Some(frame.image.clone()), alpha_mode: bevy::sprite_render::AlphaMode2d::Opaque, ..default() })),
+        Transform::from_scale(Vec3::new(1024.0, 768.0, 1.0)),
         crate::level_switch::KeepAcrossLevels,
         RenderLayers::layer(PRESENT_LAYER),
         PresentSprite,
@@ -340,12 +343,12 @@ fn fly_view(settings: Res<DisplaySettings>, source: Option<Res<crate::game_camer
     for mut p in &mut cams { set_view_tans(&mut p, crate::game_camera::TAN_HALF_FOV_X, settings.aspect); }
 }
 
-/// The frame's sprite fills the window at the frame's aspect, centred (the camera clears the rest to black).
-fn fit_present(frame: Res<GameFrame>, window: Option<Single<&Window, With<PrimaryWindow>>>, mut sprites: Query<&mut Sprite, With<PresentSprite>>) {
+/// The frame's quad fills the window at the frame's aspect, centred (the camera clears the rest to black).
+fn fit_present(frame: Res<GameFrame>, window: Option<Single<&Window, With<PrimaryWindow>>>, mut quads: Query<&mut Transform, With<PresentSprite>>) {
     let Some(w) = window else { return };
-    let size = fit(frame.size, Vec2::new(w.width(), w.height()));
-    for mut s in &mut sprites {
-        if s.custom_size != Some(size) { s.custom_size = Some(size); }
+    let size = fit(frame.size, Vec2::new(w.width(), w.height())).extend(1.0);
+    for mut t in &mut quads {
+        if t.scale != size { t.scale = size; }
     }
 }
 
