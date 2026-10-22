@@ -83,8 +83,8 @@ pub fn update_0c66(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// radius [0x44]), bobs ([0x30] at [0x34] °/s about its start height), sways ([0x38]° at [0x3c] °/s) and turns
 /// [0x1c] °/s, carrying them. With [0x48] ≠ 0 a hidden target (0x0e9b, mode 0x5041) sits on its tie of class
 /// 0x0ab6; hit (flags 0x10000), it swells to 1.35 and blows the rock apart: 30..50 bolts (flag 2, 3..5 mobys), the
-/// sound 0 of the target, its ties gone, both deleted (the debris `0x32b858`, the burst `0x3c4230` / `0x3f8348` and
-/// the sound 0xe9b `0x360698` wait for the effects and sound passes).
+/// sound 0 of the target, its ties gone, both deleted (the debris `0x32b858`, the burst `0x3c4230` and
+/// the sound 0xe9b `0x360698` wait for the effects and sound passes); the blast `0x3f8348` (crate::moby::blast).
 pub fn update_09c7(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &w.mobys[id];
     let variant = m.pv_i(0x40);
@@ -131,6 +131,8 @@ pub fn update_09c7(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 w.mobys[t].scale = base * 1.35;
                 let limit = ctx.game.rng.rand_range(3, 5);
                 crate::moby::bolts::spawn(w, t, 0.0, 0x1e, 0x32, 2, limit, ctx);
+                let at = w.mobys[t].pos;
+                crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.85, bursts: [0x19, 0x14, 0x14], puffs: 0x14, streaks: 0x2d });
                 let tie = w.mobys[id].pv_i(0x10);
                 if let Some(g) = usize::try_from(tie).ok().and_then(|g| w.tie_groups.get(g)).cloned() {
                     for i in g {
