@@ -1,23 +1,24 @@
 //! Tie (instanced static prop) renderer: every gameplay tie instance, drawn with the class LOD `TieProc`
-//! picks for it this frame (crate::tie_lod), its own 4×4 matrix, the class textures (full mip chain, GS mip rule) and the 64-slot colour
-//! table the game's `LightTies` pass computes for it (crate::tie_light, docs/plan/tie_lighting.md).
+//! picks for it this frame (crate::tie_lod), its own 4×4 matrix, the class textures (full mip chain, GS mip rule) and the colours
+//! the game's light pass computes for its colour slots (`rc_formats::tie_light`).
 //!
 //! Geometry: per class, one mesh per (tie texture, CLAMP wrap state) holding the triangles of all three
 //! LODs (`tie::tie_triangles`), in class space (`position × scale / 1024`, game axes). Each vertex carries
-//! its UV, its morph delta (same scale; 0 for dinky vertices), one u32 with the light slot (bits 0..5)
-//! and the ad-gif's TEX1 K (s12 in 1/16, bits 20..31, as the tfrag renderer does), and one u32 with the
-//! fat vertex's two morph colour slots, a fat flag and its LOD (`ATTRIBUTE_TIE_MORPH`). The vertex shader
-//! drops the vertices of the LODs the instance does not use this frame, so the draw count is the same as
-//! with one LOD.
+//! its UV, its morph delta (same scale; 0 for dinky vertices), and the four colour slots whose average is its colour
+//! (`rc_formats::tie::TieVertex::colors`, by the class's colour program): one u32 with two of them (bits 0..9,
+//! 10..19) and the ad-gif's TEX1 K (s12 in 1/16, bits 20..31, as the tfrag renderer does), one u32 with the other two
+//! (bits 0..9, 16..25), a black flag (bit 10: the program zeroes the vertex), a fat flag and its LOD
+//! (`ATTRIBUTE_TIE_MORPH`). The vertex shader drops the vertices of the LODs the instance does not use this frame, so
+//! the draw count is the same as with one LOD.
 //!
 //! Instances: one entity per (instance, class part) with `MeshTag(instance index)`, so Bevy batches
 //! every instance of a part into one instanced draw. The vertex shader reads the instance's record
 //! from one storage buffer: the class→Bevy-world matrix (`game_to_bevy` applied after the game's
 //! column-major instance matrix, `[3][3]` = 1; it can hold scale, shear and mirroring, so the shader
-//! uses it instead of the entity transform), the bounding-sphere centre and radius, the draw distance,
-//! and the 64 lit colours (the baked `LightTies` result; the shader adds the point lights of the instance's
-//! nibble list, crate::world_lights, from the class normals the record also carries; the lists and the bank follow
-//! the per-frame LOD words, crate::tie_lod). The entity `Transform` is only for Bevy's frustum culling
+//! uses it instead of the entity transform), the bounding-sphere centre and radius, the draw distance, and where its
+//! colours start in a second buffer (binding 6): per instance its class's slots, lit at load, then the self-lit
+//! colour (slot 511's, which the level's light objects recolour, crate::tie_lod). The game also adds point lights per
+//! slot every frame (VU0 0x580); not ported. The entity `Transform` is only for Bevy's frustum culling
 //! (`Transform::from_matrix`; instances it cannot represent exactly, i.e. sheared ones, get
 //! `NoFrustumCulling`).
 //!
@@ -58,7 +59,8 @@ use bevy::shader::ShaderRef;
 use rc_formats::level::LevelCore;
 use rc_formats::texture::{self, LevelTexture, Texture, TextureTable};
 use rc_formats::tie::{self, LevelTieClass, TieAdGifs, TieInstance};
-use rc_formats::tie_light::{instance_centre, SLOTS};
+use rc_formats::tie::{BLACK, SELF_LIT};
+use rc_formats::tie_light::instance_centre;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -81,8 +83,8 @@ pub struct LevelTies {
     pub instances: Vec<TieInstance>,
     /// Per instance: its class (index into `classes`).
     pub class_of: Vec<Option<usize>>,
-    /// Per instance: `LightTies` output, indexed by light slot.
-    pub colors: Vec<[[u8; 4]; SLOTS]>,
+    /// Per instance: its lit colour slots, then the self-lit colour ([`colour_index`]; empty without a class).
+    pub colors: Vec<Vec<[u8; 4]>>,
     /// Tie texture index → mip chain (level 0 first).
     pub mips: HashMap<usize, Vec<Texture>>,
     /// Textures whose mip chain did not decode (drawn with level 0 only).
@@ -92,8 +94,16 @@ pub struct LevelTies {
     pub texture_time: Duration,
 }
 
-/// Parses the tie classes and instances, lights every instance and decodes the tie textures.
-pub fn load_ties(core: &LevelCore, core_data: &[u8], gs_ram: &[u8], gameplay: &[u8], textures: &[LevelTexture]) -> Result<LevelTies> {
+/// A vertex's colour slot as an index into its instance's colours: the class's slots, then the self-lit colour. Slot
+/// 511 is the self-lit colour when the class has one (the light pass writes it over the lit slot); a slot past the
+/// class's reads that last colour too (the game's scratchpad holds a previous tie's there).
+pub fn colour_index(slot: u16, c: &rc_formats::tie::TieColours) -> u32 {
+    if slot < c.slots && !(slot == SELF_LIT && c.self_lit.is_some()) { slot as u32 } else { c.slots as u32 }
+}
+
+/// Parses the tie classes and instances, lights every instance (`lights`: the level's light bank and the normal
+/// table; `None` leaves the slots at 0x80) and decodes the tie textures.
+pub fn load_ties(core: &LevelCore, core_data: &[u8], gs_ram: &[u8], gameplay: &[u8], textures: &[LevelTexture], lights: Option<&crate::moby_light::MobyLighting>) -> Result<LevelTies> {
     let t0 = Instant::now();
     let classes = tie::parse_level_ties(core, core_data).context("parsing tie classes")?;
     let instances = rc_formats::disc::gameplay::tie_instances(gameplay)
@@ -103,9 +113,23 @@ pub fn load_ties(core: &LevelCore, core_data: &[u8], gs_ram: &[u8], gameplay: &[
     let parse_time = t0.elapsed();
 
     let t0 = Instant::now();
-    // Going Commando lights its ties another way (per-vertex colours in the gameplay file, not mapped yet): neutral
-    // colours (docs/plan/bringup.md §6.3 D).
-    let colors = vec![[[0x80; 4]; SLOTS]; instances.len()];
+    let slot_colours = rc_formats::disc::gameplay::tie_colours(gameplay, instances.len()).context("parsing tie colours")?;
+    let colors = instances
+        .iter()
+        .zip(&class_of)
+        .zip(&slot_colours)
+        .map(|((inst, ci), sc)| {
+            let Some(c) = ci.map(|ci| &classes[ci].class) else { return Vec::new() };
+            match lights {
+                Some(l) => rc_formats::tie_light::light_instance(c, inst, sc.as_ref(), &l.bank, &l.table),
+                None => {
+                    let mut v = vec![[0x80; 4]; c.colours.slots as usize];
+                    v.push(c.colours.self_lit.unwrap_or([0; 4]));
+                    v
+                }
+            }
+        })
+        .collect();
     let light_time = t0.elapsed();
 
     // Tie textures get the same load-time ad-gif conversion as tfrags (boot fun_00203730: TEX0 from the
@@ -154,6 +178,9 @@ pub struct TieMaterial {
     /// One `vec4<u32>` per instance, rewritten every frame (`tie_lod::TieLodState`).
     #[storage(5, read_only, visibility(vertex))]
     pub lods: Handle<ShaderBuffer>,
+    /// The instances' colours, packed RGBA8 (`TieInst::misc.y` is an instance's first).
+    #[storage(6, read_only, visibility(vertex))]
+    pub colors: Handle<ShaderBuffer>,
     /// This draw's GS state (crate::gs_state).
     pub pass: GsPass,
 }
@@ -236,7 +263,9 @@ struct Part {
     skey: SamplerKey,
     mesh: Handle<Mesh>,
     triangles: [usize; 3],
-    slots: u64,
+    /// The colour indices its vertices read ([`colour_index`]), and whether a vertex is black.
+    slots: BTreeSet<u32>,
+    black: bool,
 }
 
 #[derive(Default)]
@@ -273,10 +302,12 @@ fn build_parts(c: &LevelTieClass, meshes: &mut Assets<Mesh>, untextured: &mut us
         idx: Vec<u32>,
         remap: HashMap<(usize, usize, u16, u32), u32>,
         tris: [usize; 3],
-        slots: u64,
+        slots: BTreeSet<u32>,
+        black: bool,
     }
     let mut by_key: BTreeMap<(usize, SamplerKey), B> = BTreeMap::new();
     let scale = c.class.header.scale;
+    let n = &c.class.colours;
     for (lod, packets) in c.class.lods.iter().enumerate() {
         for (pi, pk) in packets.iter().enumerate() {
             for tri in tie::tie_triangles(pk) {
@@ -291,11 +322,11 @@ fn build_parts(c: &LevelTieClass, meshes: &mut Assets<Mesh>, untextured: &mut us
                         b.pos.push(vx.class_position(scale));
                         b.delta.push(vx.class_morph_delta(scale));
                         b.uv.push(vx.uv());
-                        b.info.push(vx.color as u32 & 63 | k12 << 20);
-                        let [m1, m2] = vx.morph_colors.map(|s| s as u32 & 63);
-                        b.morph.push(m1 | m2 << 6 | (vx.is_fat() as u32) << 12 | (lod as u32) << 13);
-                        b.slots |= 1 << (vx.color & 63);
-                        if vx.is_fat() { b.slots |= 1 << m1 | 1 << m2; }
+                        let black = vx.colors[0] == BLACK;
+                        let [c0, c1, c2, c3] = if black { [0; 4] } else { vx.colors.map(|s| colour_index(s, n)) };
+                        b.info.push(c0 | c1 << 10 | k12 << 20);
+                        b.morph.push(c2 | (black as u32) << 10 | (vx.is_fat() as u32) << 12 | (lod as u32) << 13 | c3 << 16);
+                        if black { b.black = true; } else { b.slots.extend([c0, c1, c2, c3]); }
                         (b.pos.len() - 1) as u32
                     });
                     b.idx.push(v);
@@ -313,7 +344,7 @@ fn build_parts(c: &LevelTieClass, meshes: &mut Assets<Mesh>, untextured: &mut us
                 .with_inserted_attribute(ATTRIBUTE_TIE_MORPH, VertexAttributeValues::Uint32(b.morph))
                 .with_inserted_attribute(ATTRIBUTE_TIE_DELTA, b.delta)
                 .with_inserted_indices(Indices::U32(b.idx));
-            Part { texture, skey, mesh: meshes.add(mesh), triangles: b.tris, slots: b.slots }
+            Part { texture, skey, mesh: meshes.add(mesh), triangles: b.tris, slots: b.slots, black: b.black }
         })
         .collect()
 }
@@ -323,20 +354,11 @@ fn build_parts(c: &LevelTieClass, meshes: &mut Assets<Mesh>, untextured: &mut us
 pub(crate) fn axes() -> Mat4 { Mat4::from_mat3(Mat3::from_cols(Vec3::X, Vec3::NEG_Z, Vec3::Y)) }
 
 /// The static storage record (`TieInst` in tie.wgsl): model (16 f32), centre xyz + draw distance, misc
-/// (x = bounding radius), then the 64 colours as packed RGBA8, then the class's 64 normals `LightTies` lights with,
-/// packed as the raw s16 (x | y << 16, z), for the point lights (crate::world_lights; the centre is their origin).
-/// (Culling, LOD and fog come from the per-frame `tie_lod` buffer.) The normals travel in the record, not in a
-/// buffer of their own: a new binding changes the material layout, which reorders draws and so the pixels of
-/// frames without any light.
-fn write_record(out: &mut Vec<u8>, model: &Mat4, centre: Vec3, dist: f32, radius: f32, colors: &[[u8; 4]; SLOTS], normals: &[[i16; 4]]) {
+/// (x = bounding radius, y = the instance's first colour in the colour buffer, u32 bits). (Culling, LOD and fog come
+/// from the per-frame `tie_lod` buffer.)
+fn write_record(out: &mut Vec<u8>, model: &Mat4, centre: Vec3, dist: f32, radius: f32, first_colour: u32) {
     for v in model.to_cols_array() { out.extend_from_slice(&v.to_le_bytes()); }
-    for v in [centre.x, centre.y, centre.z, dist, radius, 0.0, 0.0, 0.0] { out.extend_from_slice(&v.to_le_bytes()); }
-    for c in colors { out.extend_from_slice(c); }
-    for j in 0..SLOTS {
-        let n = normals.get(j).copied().unwrap_or([0; 4]);
-        out.extend_from_slice(&(n[0] as u16 as u32 | (n[1] as u16 as u32) << 16).to_le_bytes());
-        out.extend_from_slice(&(n[2] as u16 as u32).to_le_bytes());
-    }
+    for v in [centre.x, centre.y, centre.z, dist, radius, f32::from_bits(first_colour), 0.0, 0.0] { out.extend_from_slice(&v.to_le_bytes()); }
 }
 
 fn spawn_system(
@@ -401,7 +423,9 @@ fn spawn_ties_on(
 
     // Per-instance storage records (index = instance index = MeshTag).
     let a = axes();
-    let mut bytes = Vec::with_capacity(ties.instances.len() * 864);
+    let mut bytes = Vec::with_capacity(ties.instances.len() * crate::tie_lod::RECORD_BYTES);
+    let mut colour_bytes = Vec::new();
+    let mut self_lit = Vec::with_capacity(ties.instances.len());
     let mut models = Vec::with_capacity(ties.instances.len());
     let mut lod_inputs = Vec::with_capacity(ties.instances.len());
     for (ii, inst) in ties.instances.iter().enumerate() {
@@ -431,14 +455,22 @@ fn spawn_ties_on(
             None => None,
         };
         lod_inputs.push(crate::tie_lod::TieLodInput { sphere, dist: lod_dist, dists, sway });
-        let normals = ties.class_of[ii].map_or(&[][..], |ci| &ties.classes[ci].class.normals[..]);
-        write_record(&mut bytes, &model, centre, dist, radius, &ties.colors[ii], normals);
+        let first = (colour_bytes.len() / 4) as u32;
+        for c in &ties.colors[ii] { colour_bytes.extend_from_slice(c); }
+        self_lit.push(ties.class_of[ii].and_then(|ci| {
+            let c = &ties.classes[ci].class.colours;
+            c.self_lit.map(|l| (first as usize + c.slots as usize, l[3]))
+        }));
+        write_record(&mut bytes, &model, centre, dist, radius, first);
         models.push(model);
     }
     let inst_buffer = buffers.add(ShaderBuffer::new(&bytes, RenderAssetUsages::default()));
     let mut lod_state = crate::tie_lod::TieLodState::new(lod_inputs, level.occlusion.objects.tie.clone(), level.fog, buffers);
     // The records stay in the main world too: the game's movers rewrite them (crate::tie_lod).
     lod_state.set_records(inst_buffer.clone(), bytes);
+    if colour_bytes.is_empty() { colour_bytes.resize(4, 0); }
+    let colour_buffer = buffers.add(ShaderBuffer::new(&colour_bytes, RenderAssetUsages::default()));
+    lod_state.set_colours(colour_buffer.clone(), colour_bytes, self_lit);
     let lod_buffer = lod_state.buffer.clone();
     let tint = if crate::tie_lod::tint_enabled() { 1.0 } else { 0.0 };
 
@@ -503,8 +535,8 @@ fn spawn_ties_on(
         let mut spawned = Vec::new();
         for (pi, part) in parts[&ci].iter().enumerate() {
             for l in 0..3 { st.triangles[l] += part.triangles[l]; }
-            // Af of every slot the part reads (fat-vertex morph colours are blends of two of them).
-            let vertex_alpha = AlphaRange::of((0..SLOTS).filter(|&s| part.slots & (1 << s) != 0).map(|s| colors[s][3]));
+            // Af of every slot the part reads (a vertex's is an average of four of them; 0 for a black vertex).
+            let vertex_alpha = AlphaRange::of(part.slots.iter().map(|&s| colors.get(s as usize).map_or(0, |c| c[3])).chain(part.black.then_some(0)));
             let (image, texel_alpha, mxl) = image_for(part.texture, part.skey, images);
             for pass in gs_state::draws(gs_state::AREF_WORLD, texel_alpha, vertex_alpha) {
                 let mat = mats
@@ -516,6 +548,7 @@ fn spawn_ties_on(
                             params: TieParams { misc: Vec4::new(crate::game_camera::NEAR, mxl as f32, tint, 0.0) },
                             instances: inst_buffer.clone(),
                             lods: lod_buffer.clone(),
+                            colors: colour_buffer.clone(),
                             pass,
                         })
                     })
@@ -540,8 +573,8 @@ fn spawn_ties_on(
     commands.insert_resource(lod_state);
     for (ii, c) in ties.colors.iter().enumerate() {
         let Some(ci) = ties.class_of[ii] else { continue };
-        let slots = parts[&ci].iter().fold(0u64, |m, p| m | p.slots);
-        st.clamped_slots += (0..SLOTS).filter(|&s| slots & (1 << s) != 0 && c[s][..3].contains(&243)).count();
+        let slots: BTreeSet<u32> = parts[&ci].iter().flat_map(|p| p.slots.iter().copied()).collect();
+        st.clamped_slots += slots.iter().filter(|&&s| c.get(s as usize).is_some_and(|c| c[..3].contains(&243))).count();
     }
     st.draw_batches = batches.len();
     st.images = image_cache.len();

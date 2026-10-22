@@ -178,7 +178,8 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let collision = rc_formats::collision::parse_collision(&core, &core_data)
         .map_err(|e| eprintln!("level {index}: collision not parsed ({e})"))
         .ok();
-    let ties = crate::tie_render::load_ties(&core, &core_data, gs_ram, &gameplay, &textures).context("loading ties")?;
+    let lights = crate::moby_light::load(root, &gameplay).context("loading the light bank")?;
+    let ties = crate::tie_render::load_ties(&core, &core_data, gs_ram, &gameplay, &textures, lights.as_ref()).context("loading ties")?;
     let shrubs = crate::shrub_render::load_shrubs(&core, &core_data, gs_ram, &gameplay, &textures).context("loading shrubs")?;
     // The shells turn by the game's own rotations (rc_game::sky).
     let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?;

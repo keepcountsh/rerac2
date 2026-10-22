@@ -120,6 +120,36 @@ pub fn tie_instances(gameplay: &[u8]) -> Result<Vec<TieInstance>> {
         .collect()
 }
 
+/// One tie instance's colour slots (section `tie_colors`): the light pass (`0x36f0a8`) expands each RGBA5551 slot
+/// with PEXT5, shifts each pair of slots (one doubleword) right by `shift` and adds `bias` (saturating; alpha + 0x80).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TieInstanceColours {
+    pub bias: [u8; 3],
+    pub shift: u8,
+    pub slots: Vec<u16>,
+}
+
+/// The tie instances' colour slots, by instance (`None`: not listed). The section is a list of `{i16 instance,
+/// i16 n, u16[n]}`, −1 ends it; the level loader copies the `n` halfwords into the instance's block of its class
+/// (L00 `0x3012a0` from `0x301cac`): a word `bias | shift << 24`, then the slots.
+pub fn tie_colours(gameplay: &[u8], instances: usize) -> Result<Vec<Option<TieInstanceColours>>> {
+    let mut out = vec![None; instances];
+    let Some(s) = section(gameplay, "tie_colors")? else { return Ok(out) };
+    let b = Buf(s);
+    let mut at = 0;
+    loop {
+        let i = b.u16(at)? as i16;
+        if i == -1 { break; }
+        let n = b.u16(at + 2)? as usize;
+        if n < 2 { return invalid("tie colour entry without its header word"); }
+        let w = b.u32(at + 4)?;
+        let slots = (2..n).map(|k| b.u16(at + 4 + 2 * k)).collect::<Result<Vec<_>>>()?;
+        if let Some(o) = out.get_mut(i as usize) { *o = Some(TieInstanceColours { bias: [w as u8, (w >> 8) as u8, (w >> 16) as u8], shift: (w >> 24) as u8, slots }); }
+        at += 4 + 2 * n;
+    }
+    Ok(out)
+}
+
 /// The shrub instances: R&C1's 0x70-byte record, unchanged.
 pub fn shrub_instances(gameplay: &[u8]) -> Result<Vec<ShrubInstance>> {
     match section(gameplay, "shrub_instances")? { Some(s) => shrub::parse_shrub_instance_section(s), None => Ok(Vec::new()) }

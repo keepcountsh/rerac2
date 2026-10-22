@@ -147,8 +147,10 @@ branch is taken on `rc_formats::Game::Rac2` only, and R&C1's default paths stay 
   - The **core index** has R&C1's header and tables, unchanged: 833 tfrags, 351 textures, shrubs, sky (6 shells),
     collision and occlusion parse with R&C1's readers as they are.
   - **Ties**: the class header holds R&C1's fields in another order (`tie::read_tie_header`); the packets, strips and
-    GS packets are R&C1's (73 of 74 classes walk). There are no per-vertex colour indices (count 0) and the region
-    at +0x34 is not a fixed 64-normal table: R&C2 lights ties another way (to map: R&C2's tie draw).
+    GS packets are R&C1's (73 of 74 classes walk). There are no per-vertex colour indices (count 0): each instance
+    has its own colour slots (gameplay `tie_colors`), lit per instance by `0x36f0a8` (R&C1's `LightTies` maths, normals
+    from the angle table) and averaged into vertex colours by per-LOD colour programs at +0x34 (`rc_formats::tie`,
+    `rc_formats::tie_light`); slot 511 is the class's self-lit colour. Not ported: the per-slot point lights (VU0 0x580).
   - **Moby classes**: R&C1's class header and packets; only the vertex table header differs, eight u16s (0x10
     bytes) with no RGBA multiplier blob. R&C2's relocation (L00 `0x2ffe70`) converts an "old format" class — R&C1's
     eight u32s — to that form. `moby::parse_moby_class_for` reads every class of every level checked (127–208 per

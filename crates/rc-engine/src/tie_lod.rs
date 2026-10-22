@@ -9,9 +9,9 @@
 //! x = LOD (0..2, [`LOD_CULLED`] = not drawn) | F << 8 (the GS fog value `TieProc` puts in qw 5.w),
 //! y = k (f32 bits), z = qw4.w = 256·k, w = qw4.z = 256 − 256·k (the VU colour weights, f32 bits); the
 //! second word is the wind shear (x, y = sx, sy, f32 bits; 0 without sway). The vertex shader drops the
-//! vertices of the other LODs, draws fat vertices at `position + k·delta` and blends their colour with the
-//! VU's float arithmetic (`vu_fat_color`); a swaying instance also shears the morphed position by its
-//! `(sx, sy)` exactly like `ShrubProc` does for shrubs (`rc_formats::tie::wind_sway`).
+//! vertices of the other LODs and draws fat vertices at `position + k·delta` (Going Commando's light pass gives every
+//! vertex one colour, so the qw4 colour weights blend nothing); a swaying instance also shears the morphed position
+//! by its `(sx, sy)` exactly like `ShrubProc` does for shrubs (`rc_formats::tie::wind_sway`).
 //!
 //! **CPU culling.** An instance `TieProc` does not draw (occluded or culled) also gets `Visibility::Hidden` on
 //! its part entities, written only when its state changes, so Bevy does not queue it and the GPU does not
@@ -110,49 +110,6 @@ pub fn fog_value(depth: f32, fog: &LevelFog) -> u32 {
     f32::from_bits(f).clamp(0.0, 255.0) as u32
 }
 
-/// One colour lane of a fat vertex exactly as VU1 computes it (program 13507 L25..L39, lines 564–700;
-/// 224979 lines 588–670): the palette lanes are `0x4b000000 + byte` (V4_8 USN with STMOD 1, STROW
-/// 2^23, boot 0x1de8e0), `mulay/maddy` (× 0.5, `addi.y vf27, vf00, I`) averages the second and third
-/// slots, `mulaw / maddz` weights `avg·w + c0·z`, every step truncated; the GS takes the low byte
-/// (PACKED RGBAQ). `w`, `z` are the qw4 bits of [`TieLodPick`]. The shader's `vu_fat_lane` is this
-/// with [`vu_mul`] / [`vu_add`].
-#[cfg_attr(not(test), allow(dead_code))] // CPU reference for tie.wgsl, exercised by the tests
-pub fn vu_fat_color(c0: u8, c1: u8, c2: u8, w: u32, z: u32) -> u8 {
-    let pal = |c: u8| 0x4b00_0000 | c as u32;
-    let avg = ps2::add(ps2::mul(pal(c1), 0x3f00_0000), ps2::mul(pal(c2), 0x3f00_0000));
-    ps2::add(ps2::mul(avg, w), ps2::mul(pal(c0), z)) as u8
-}
-
-/// `ps2::mul` for non-negative operands in 32-bit integer arithmetic (the WGSL `vu_mul`, line for line).
-#[cfg_attr(not(test), allow(dead_code))] // CPU reference for tie.wgsl, exercised by the tests
-pub fn vu_mul(a: u32, b: u32) -> u32 {
-    let (ea, eb) = (((a >> 23) & 0xff) as i32, ((b >> 23) & 0xff) as i32);
-    if ea == 0 || eb == 0 { return 0; }
-    let (ma, mb) = ((a & 0x7f_ffff) | 0x80_0000, (b & 0x7f_ffff) | 0x80_0000);
-    let (ah, al, bh, bl) = (ma >> 12, ma & 0xfff, mb >> 12, mb & 0xfff);
-    let mid = ah * bl + al * bh;
-    let low = ((mid & 0xfff) << 12) + al * bl;
-    let top = ah * bh + (mid >> 12) + (low >> 24); // floor(ma·mb / 2^24)
-    let (m, e) = if top >= 0x80_0000 { (top, ea + eb - 126) } else { ((top << 1) | ((low >> 23) & 1), ea + eb - 127) };
-    if e < 1 { return 0; }
-    if e > 255 { return 0x7fff_ffff; }
-    ((e as u32) << 23) | (m & 0x7f_ffff)
-}
-
-/// `ps2::add` for non-negative operands (the WGSL `vu_add`).
-#[cfg_attr(not(test), allow(dead_code))] // CPU reference for tie.wgsl, exercised by the tests
-pub fn vu_add(a: u32, b: u32) -> u32 {
-    let (ea, eb) = ((a >> 23) as i32, (b >> 23) as i32);
-    if ea == 0 { return b; }
-    if eb == 0 { return a; }
-    let (hi, lo, eh, el) = if ea >= eb { (a, b, ea, eb) } else { (b, a, eb, ea) };
-    let d = (eh - el) as u32;
-    if d >= 25 { return hi; }
-    let s = ((hi & 0x7f_ffff) | 0x80_0000) + (((lo & 0x7f_ffff) | 0x80_0000) >> d);
-    if s >= 0x100_0000 { return (((eh + 1) as u32) << 23) | ((s >> 1) & 0x7f_ffff); }
-    ((eh as u32) << 23) | (s & 0x7f_ffff)
-}
-
 /// Per-instance inputs of the replay.
 #[derive(Clone, Copy, Debug)]
 pub struct TieLodInput {
@@ -196,10 +153,15 @@ pub struct TieLodState {
     /// the instances the game moves (Going Commando's carriers: `MobyWorld::moved_ties`); rewritten when dirty.
     records: Option<(Handle<ShaderBuffer>, Vec<u8>)>,
     records_dirty: bool,
+    /// The instances' lit colours (crate::tie_render's colour buffer) and their bytes, and per instance the word of its
+    /// self-lit colour with the class's alpha (`None`: its class has none), for the level's light objects.
+    colours: Option<(Handle<ShaderBuffer>, Vec<u8>)>,
+    self_lit: Vec<Option<(usize, u8)>>,
+    colours_dirty: bool,
 }
 
-/// One static instance record of crate::tie_render (`TieInst`: model, centre + distance, misc, 64 colours, 64 normals).
-pub const RECORD_BYTES: usize = 864;
+/// One static instance record of crate::tie_render (`TieInst`: model, centre + distance, misc).
+pub const RECORD_BYTES: usize = 96;
 
 impl TieLodState {
     pub fn new(inputs: Vec<TieLodInput>, occl: Vec<OcclBits>, fog: LevelFog, buffers: &mut Assets<ShaderBuffer>) -> Self {
@@ -218,6 +180,7 @@ impl TieLodState {
         TieLodState {
             buffer, inputs, occl, fog, force_lod0, last_hist: [usize::MAX; 6], entities: vec![Vec::new(); n], shown: vec![true; n], cpu_cull, sway: sway_enabled(), tail,
             hidden: vec![false; n], records: None, records_dirty: false,
+            colours: None, self_lit: Vec::new(), colours_dirty: false,
         }
     }
 
@@ -245,14 +208,22 @@ impl TieLodState {
         if let Some(h) = self.hidden.get_mut(ii) { *h = hidden; }
     }
 
-    /// Instance `ii` recoloured by the level's objects (Going Commando's `0x3701d0`): every one of its record's 64
-    /// colours becomes `rgb` (alpha 0x80).
+    /// The lit colours (crate::tie_render) and each instance's self-lit word, for [`TieLodState::set_colour`].
+    pub fn set_colours(&mut self, buffer: Handle<ShaderBuffer>, bytes: Vec<u8>, self_lit: Vec<Option<(usize, u8)>>) {
+        self.colours = Some((buffer, bytes));
+        self.self_lit = self_lit;
+    }
+
+    /// Instance `ii` recoloured by the level's objects (Going Commando's `0x3701d0`): its self-lit colour (the vertices
+    /// of the class's self-lit lists) becomes `rgb` with its two low bits dropped (the game keeps `rgb >> 2` in the
+    /// low bits of the record's sphere words and the light pass shifts it back), the class's alpha kept. An instance
+    /// whose class has no self-lit colour does not change.
     pub fn set_colour(&mut self, ii: usize, rgb: [u8; 3]) {
-        let Some((_, bytes)) = self.records.as_mut() else { return };
-        let at = ii * RECORD_BYTES + 96;
-        let Some(cols) = bytes.get_mut(at..at + 4 * rc_formats::tie_light::SLOTS) else { return };
-        for c in cols.chunks_exact_mut(4) { c.copy_from_slice(&[rgb[0], rgb[1], rgb[2], 0x80]); }
-        self.records_dirty = true;
+        let Some(Some((word, alpha))) = self.self_lit.get(ii).copied() else { return };
+        let Some((_, bytes)) = self.colours.as_mut() else { return };
+        let Some(c) = bytes.get_mut(4 * word..4 * word + 4) else { return };
+        c.copy_from_slice(&[rgb[0] & !3, rgb[1] & !3, rgb[2] & !3, alpha]);
+        self.colours_dirty = true;
     }
 
     /// Instance `ii` moved to the game matrix `m` (columns: the rows and the position, `[3][3]` = 1): its record's
@@ -378,6 +349,9 @@ pub fn update_tie_lods(
     if std::mem::take(&mut state.records_dirty) {
         if let Some((b, bytes)) = &state.records { crate::asset_write::set_buffer(&mut buffers, b, bytes); }
     }
+    if std::mem::take(&mut state.colours_dirty) {
+        if let Some((b, bytes)) = &state.colours { crate::asset_write::set_buffer(&mut buffers, b, bytes); }
+    }
     if hist != state.last_hist && time.elapsed_secs() - *last_print >= 1.0 {
         *last_print = time.elapsed_secs();
         state.last_hist = hist;
@@ -445,57 +419,5 @@ mod tests {
         assert_eq!(fog_value(120.0, &fog), 178); // 255 − 76.5, truncated
         assert_eq!(fog_value(240.0, &fog), 102);
         assert_eq!(fog_value(700.0, &fog), 102);
-    }
-
-    #[test]
-    fn integer_vu_ops_match_the_float_model() {
-        let mut s = 0x1234_5678u32;
-        let mut rnd = || { s ^= s << 13; s ^= s >> 17; s ^= s << 5; s };
-        for i in 0..200_000 {
-            let (mut a, mut b) = (rnd() & 0x7fff_ffff, rnd() & 0x7fff_ffff);
-            if i % 3 == 0 { a = 0x4b00_0000 | (a & 0xff); b = (b & 0x007f_ffff) | 0x4300_0000; } // palette × weight range
-            if i % 7 == 0 { b = 0; }
-            if (a >> 23) & 0xff < 64 || (b >> 23) & 0xff < 64 || (a >> 23) & 0xff > 190 || (b >> 23) & 0xff > 190 { continue; }
-            assert_eq!(vu_mul(a, b), ps2::mul(a, b), "mul {a:08x} {b:08x}");
-            assert_eq!(vu_add(a, b), ps2::add(a, b), "add {a:08x} {b:08x}");
-        }
-        let lane = |c0: u8, c1: u8, c2: u8, w: u32, z: u32| {
-            let pal = |c: u8| 0x4b00_0000 | c as u32;
-            let avg = vu_add(vu_mul(pal(c1), 0x3f00_0000), vu_mul(pal(c2), 0x3f00_0000));
-            vu_add(vu_mul(avg, w), vu_mul(pal(c0), z)) as u8
-        };
-        for depth in [10.0f32, 10.001, 11.0, 13.3, 15.0, 17.77, 19.99, 20.0] {
-            let p = tie_lod(depth, D);
-            for (c0, c1, c2) in [(0u8, 0u8, 0u8), (7, 200, 13), (128, 128, 128), (255, 0, 255), (60, 61, 62)] {
-                assert_eq!(lane(c0, c1, c2, p.w.to_bits(), p.z.to_bits()), vu_fat_color(c0, c1, c2, p.w.to_bits(), p.z.to_bits()));
-            }
-        }
-    }
-
-    #[test]
-    fn fat_colour_blend() {
-        let at = |depth: f32| { let p = tie_lod(depth, D); (p.w.to_bits(), p.z.to_bits()) };
-        // k = 0 (static LOD) gives the first slot exactly; k = 1 the truncated average of the other two.
-        for (c0, c1, c2) in [(0u8, 0u8, 0u8), (7, 200, 13), (255, 254, 255), (128, 0, 1)] {
-            let (w, z) = at(5.0);
-            assert_eq!(vu_fat_color(c0, c1, c2, w, z), c0);
-            let (w, z) = at(20.0);
-            assert_eq!(vu_fat_color(c0, c1, c2, w, z), ((c1 as u32 + c2 as u32) / 2) as u8);
-        }
-        // Halfway: 0.5·c0 + 0.5·avg, truncated (possibly one lower from the truncated products).
-        let (w, z) = at(15.0);
-        let v = vu_fat_color(100, 200, 200, w, z);
-        assert!(v == 150 || v == 149, "{v}");
-        // 256 − 256k goes through the VU adder, which drops the bits of 256k more than one below 256's LSB
-        // before subtracting: w + z is never below 256 (up to 2^-16 above), so a lane never falls under
-        // 2^31 (where the low byte would wrap) and black stays black.
-        for depth in [10.001f32, 10.3, 12.345, 19.999] {
-            let (w, z) = at(depth);
-            let sum = f64::from(f32::from_bits(w)) + f64::from(f32::from_bits(z));
-            assert!((256.0..256.0 + 1.0 / 65536.0).contains(&sum), "{depth}: {sum}");
-            assert_eq!(vu_fat_color(0, 0, 0, w, z), 0);
-            // The truncated products can cost one step: white may dim to 254 while morphing.
-            assert!(matches!(vu_fat_color(255, 255, 255, w, z), 254 | 255));
-        }
     }
 }

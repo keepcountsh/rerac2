@@ -12,10 +12,10 @@
 //! * the GIF unit then reads ad-gif blocks (placed at 0 and `ad_gif_dest[k-1]`) and strip GIF
 //!   tags with `NLOOP = vertex_count` in address order, EOP on the last strip.
 //!
-//! Lighting inputs are kept, not dropped: every vertex carries its light slot ([`TieVertex::color`],
-//! 0..63), which indexes the class's 64 normals ([`TieClass::normals`]) and the instance's 64
-//! RGBA5551 ambient colours ([`TieInstance::ambient_rgbas`]); `LightTies` (boot 0x2ab218) lights the
-//! 64 slots per instance and VU1 looks each vertex's colour up by slot.
+//! Lighting inputs are kept, not dropped. Going Commando's packets carry no colour indices: each instance has its
+//! own colour slots (the gameplay file's `tie_colors`, [`TieColours`]), its light pass (`0x36f0a8`) lights them and
+//! then runs the class's per-LOD colour program, which gives every vertex the average of four slots
+//! ([`TieVertex::colors`]).
 
 use crate::buf::{invalid, Buf, Result};
 use crate::level::{ClassEntry, LevelCore};
@@ -44,7 +44,7 @@ pub(crate) struct TieLodInfo {
 pub struct TieClassHeader {
     /// 0x00: packet-header table of LOD 0 (highest detail), 1, 2.
     pub(crate) packets: [i32; 3],
-    /// 0x0c: 64 light-slot normals (`[i16; 4]`, 0x200 bytes), immediately before the ad-gifs.
+    /// 0x0c (Going Commando: +0x34): the colour slots' normals, then the colour programs ([`TieColours`]).
     pub(crate) normals: u32,
     /// 0x10: LOD distance thresholds.
     pub near_dist: f32,
@@ -100,7 +100,7 @@ pub(crate) struct TiePacketHeader {
     pub(crate) vert_ofs: u8,
     /// 0x9
     pub(crate) vert_size: u8,
-    /// 0xa: colour-index region: two copies (VU buffers A and B) of `color_count` x 4 bytes, each padded to a quadword.
+    /// 0xa: colour-index region (R&C1's; `color_count` is 0 on Going Commando's classes).
     pub(crate) color_ofs: u8,
     /// 0xb
     pub(crate) color_count: u8,
@@ -232,14 +232,19 @@ pub struct TieVertex {
     pub(crate) gs_slot: u16,
     /// Second slot in the double-write phases, 0 otherwise.
     pub(crate) gs_slot_2: u16,
-    /// Light slot 0..63: the instance ambient colour / class normal this vertex uses.
-    pub color: u8,
-    /// Fat: the two slots whose average VU1 blends in as the vertex morphs; equal to `color` for dinky.
-    pub morph_colors: [u8; 2],
+    /// The four colour slots whose average is this vertex's colour (the class's colour program, [`TieColours`]):
+    /// slot 511 is the class's self-lit colour, [`BLACK`] a zeroed colour.
+    pub colors: [u16; 4],
     /// 1 for a fat vertex.
     pub(crate) fat: u8,
+    pub(crate) pad: u8,
 }
-const _: () = assert!(std::mem::size_of::<TieVertex>() == 26);
+const _: () = assert!(std::mem::size_of::<TieVertex>() == 32);
+
+/// [`TieVertex::colors`]: the colour program zeroes the vertex (`0x36f0a8`'s last list).
+pub const BLACK: u16 = 0xffff;
+/// [`TieVertex::colors`]: the slot the light pass fills with the class's self-lit colour (scratchpad `0x27fc`).
+pub const SELF_LIT: u16 = 511;
 
 impl TieVertex {
     pub fn is_fat(&self) -> bool { self.fat != 0 }
@@ -290,10 +295,6 @@ pub struct TiePacket {
     pub(crate) strips: Vec<TieStrip>,
     pub(crate) dinky: Vec<TieDinkyVertex>,
     pub(crate) fat: Vec<TieFatVertex>,
-    /// Colour-index bytes for VU buffer A: one per dinky vertex, then (c0, c1, c2, 0xff) per fat vertex from the next 4-byte boundary.
-    pub(crate) colors: Vec<u8>,
-    /// The same for buffer B (every used index + 0x40, the second palette).
-    pub(crate) colors_b: Vec<u8>,
     /// Raw `slot_table_size` quadwords (per-strip-vertex GS slot steps; not decoded).
     pub(crate) slot_table: Vec<u8>,
     /// Resolved vertices in VU1 processing order.
@@ -308,8 +309,8 @@ pub struct TieClass {
     pub header: TieClassHeader,
     /// Bytes 0x80 .. first packet table: bbox min / max (vec4, w = 1) then, when present, 8 corner points.
     pub header_ext: Vec<u8>,
-    /// 64 light-slot normals (x, y, z, 0), unit length in 1/32767.
-    pub normals: Vec<[i16; 4]>,
+    /// The colour slots its instances light ([`TieVertex::colors`]).
+    pub colours: TieColours,
     pub lods: [Vec<TiePacket>; 3],
     pub ad_gifs: Vec<TieAdGifs>,
 }
@@ -350,25 +351,21 @@ fn resolve_vertices(pk: &mut TiePacket) -> Result<()> {
         f_single = j6 + 1;
         if find(pk.fat.iter().map(|v| v.gs_slot), f_single, u.fat_double_end) != Some(f - 1) { return fail("fat double-write marker is not the last fat vertex"); }
     }
-    let fat_base = d.div_ceil(4) * 4;
-    if fat_base + 4 * f > pk.colors.len() || d > pk.colors.len() { return fail("colour indices too short"); }
     let mut out = Vec::with_capacity(d + f);
     for (i, v) in pk.dinky.iter().enumerate() {
         let dbl = i >= d_single;
         if dbl && v.gs_slot_2 == 0 { return fail("double-write dinky vertex with gs_slot_2 = 0"); }
-        let c = pk.colors[i];
         out.push(TieVertex {
             position: [v.x, v.y, v.z], morph_delta: [0; 3], st: [v.s, v.t], q: v.q,
-            gs_slot: v.gs_slot, gs_slot_2: if dbl { v.gs_slot_2 } else { 0 }, color: c, morph_colors: [c, c], fat: 0,
+            gs_slot: v.gs_slot, gs_slot_2: if dbl { v.gs_slot_2 } else { 0 }, colors: [BLACK; 4], fat: 0, pad: 0,
         });
     }
     for (j, v) in pk.fat.iter().enumerate() {
         let dbl = j >= f_single;
         if dbl && v.gs_slot_2 == 0 { return fail("double-write fat vertex with gs_slot_2 = 0"); }
-        let c = &pk.colors[fat_base + 4 * j..fat_base + 4 * j + 3];
         out.push(TieVertex {
             position: [v.x, v.y, v.z], morph_delta: [v.dx, v.dy, v.dz], st: [v.s, v.t], q: v.q,
-            gs_slot: v.gs_slot, gs_slot_2: if dbl { v.gs_slot_2 } else { 0 }, color: c[0], morph_colors: [c[1], c[2]], fat: 1,
+            gs_slot: v.gs_slot, gs_slot_2: if dbl { v.gs_slot_2 } else { 0 }, colors: [BLACK; 4], fat: 1, pad: 0,
         });
     }
     pk.vertices = out;
@@ -441,17 +438,9 @@ fn read_packet(blob: Buf, lod_table: usize, ph: TiePacketHeader) -> Result<TiePa
     pk.dinky = blob.pod_slice(vert_start, d, "tie dinky vertices")?;
     pk.fat = blob.pod_slice(vert_start + d * 0x10, f, "tie fat vertices")?;
 
-    let color_start = base + ph.color_ofs as usize * 0x10;
-    let color_bytes = ph.color_count as usize * 4;
-    let color_qw = (ph.color_count as usize).div_ceil(4);
-    pk.colors = blob.sub(color_start, color_bytes, "tie colour indices")?.bytes().to_vec();
-    pk.colors_b = blob.sub(color_start + color_qw * 0x10, color_bytes, "tie colour indices B")?.bytes().to_vec();
     pk.slot_table = blob.sub(base + ph.slot_table_ofs as usize * 0x10, ph.slot_table_size as usize * 0x10, "tie slot table")?.bytes().to_vec();
-    // Going Commando's packets carry no colour indices (`color_count` 0): its tie colours are per instance in the
-    // gameplay file (`disc::gameplay`, section `tie_colors`). Index 0 stands in until they are mapped.
-    let need = d.div_ceil(4) * 4 + 4 * f;
-    pk.colors.resize(need.max(pk.colors.len()), 0);
-    pk.colors_b.resize(need.max(pk.colors_b.len()), 0);
+    // Going Commando's packets carry no colour indices (`color_count` 0): [`TieVertex::colors`] comes from the
+    // class's colour programs ([`read_colours`]).
 
     resolve_vertices(&mut pk)?;
     walk_gs_packet(&mut pk)?;
@@ -469,12 +458,12 @@ fn read_packet(blob: Buf, lod_table: usize, ph: TiePacketHeader) -> Result<TiePa
 /// | 0x10 | near, mid, far LOD distances | 0x10 |
 /// | 0x1c | ad-gif table (`texture_count` × 0x50: TEX0, TEX1, MIPTBP1, CLAMP, ALPHA) | 0x2c |
 /// | 0x20 | 0 on the disc (taken as the render-mode bits) | 0x24 |
-/// | 0x34 | the 64 light-slot normals | 0x0c |
+/// | 0x34 | the colour slots' normals and programs ([`TieColours`]) | (0x0c: 64 normals) |
 /// | 0x40 | scale, class number, distance | 0x40 |
 /// | 0x50 | bounding sphere | 0x30 |
 ///
-/// Not mapped (kept in `header_ext`'s place, raw, in the blob): 0x24..0x30, 0x38..0x3c, 0x4c (0x80787878 on most
-/// classes), 0x60..0x80, and the region between the normals and the ad-gifs.
+/// Read by [`read_colours`]: 0x24..0x30 (colour words per LOD, program offsets), 0x38 (slots), 0x3c (flags), 0x4c (the
+/// self-lit colour), 0x78 (the self-lit vertex lists `0x3701d0` walks). Not mapped: 0x60..0x78.
 fn read_tie_header(b: Buf) -> Result<TieClassHeader> {
     let f = |o: usize| b.f32(o);
     Ok(TieClassHeader {
@@ -505,8 +494,6 @@ pub(crate) fn parse_tie_class(blob: &[u8]) -> Result<TieClass> {
     let mut tc = TieClass {
         header: h,
         header_ext: b.sub(0x80, first - 0x80, "tie header extension")?.bytes().to_vec(),
-        // The +0x34 region is not R&C1's 64-normal table (its size varies by class); not read until the tie lighting
-        // is mapped.
         ..Default::default()
     };
     for lod in 0..3 {
@@ -517,7 +504,94 @@ pub(crate) fn parse_tie_class(blob: &[u8]) -> Result<TieClass> {
         for ph in phs { tc.lods[lod].push(read_packet(b, table, ph)?); }
     }
     if h.texture_count != 0 { tc.ad_gifs = b.pod_slice(h.ad_gif_ofs as usize, h.texture_count as usize, "tie ad-gifs")?; }
+    read_colours(b, &mut tc)?;
     Ok(tc)
+}
+
+/// Going Commando's tie colours, per class: every instance has `slots` colours (RGBA5551 in the gameplay file's
+/// `tie_colors`), which its light pass (`0x36f0a8`) lights with the slots' normals. Each LOD then has a colour
+/// program that turns the lit slots into one colour per vertex (written to the instance's colour cache, one word per
+/// vertex, each packet padded to 4): a copy, `(a + b) / 2`, `(3a + b) / 4`, `(2a + b + c) / 4`, `(a + b + c + d) / 4`
+/// or zero; all are the average of four slots ([`TieVertex::colors`]).
+#[derive(Clone, Debug, Default)]
+pub struct TieColours {
+    /// +0x38: slots per instance.
+    pub slots: u16,
+    /// Per slot (8 bytes in the +0x34 region): the normal's azimuth and elevation, [`crate::tfrag_light::NormalTable`]
+    /// indices (bytes 6 and 7; bytes 0..6 are the slot's class-space position, which the point lights use).
+    pub normals: Vec<[u8; 2]>,
+    /// +0x4c when +0x3c & 0x10: [`SELF_LIT`]'s colour (RGBA), which the level's light objects recolour (`0x3701d0`).
+    pub self_lit: Option<[u8; 4]>,
+}
+
+/// Reads [`TieColours`] and runs each LOD's colour program into its vertices' [`TieVertex::colors`]. A program is
+/// at `+0x34 region + u16 (+0x2a + 2·lod)`: 0x20 bytes of chunk sizes (quadwords, 0 ends), then the chunks. A chunk's
+/// first quadword counts the bytes of its six lists and the quadwords it writes; the lists follow in order (offsets
+/// are bytes: a source `s` is slot `s / 4`, a destination `d` the chunk's output word `d / 4`).
+fn read_colours(b: Buf, tc: &mut TieClass) -> Result<()> {
+    let slots = b.u16(0x38)?;
+    if slots == 0 { return Ok(()); }
+    let region = b.u32(0x34)? as usize;
+    let normals = (0..slots as usize).map(|j| Ok([b.u8(region + 8 * j + 6)?, b.u8(region + 8 * j + 7)?])).collect::<Result<Vec<_>>>()?;
+    let self_lit = if b.u16(0x3c)? & 0x10 != 0 { Some(b.u32(0x4c)?.to_le_bytes()) } else { None };
+    tc.colours = TieColours { slots, normals, self_lit };
+    for lod in 0..3 {
+        let packets = &mut tc.lods[lod];
+        if packets.is_empty() { continue; }
+        let mut starts = Vec::with_capacity(packets.len());
+        let mut total = 0;
+        for p in packets.iter() {
+            starts.push(total);
+            total += p.vertices.len().div_ceil(4) * 4;
+        }
+        let mut put = |word: usize, c: [u16; 4]| -> Result<()> {
+            let p = starts.partition_point(|&s| s <= word) - 1;
+            if let Some(v) = packets[p].vertices.get_mut(word - starts[p]) { v.colors = c; }
+            Ok(())
+        };
+        let prog = region + b.u16(0x2a + 2 * lod)? as usize;
+        let mut chunk = prog + 0x20;
+        let mut out = 0;
+        for k in 0..0x20 {
+            let qw = b.u8(prog + k)? as usize;
+            if qw == 0 { break; }
+            let n = |i: usize| b.u16(chunk + 2 * i).map(|x| x as usize);
+            let [n_copy, n_half, n_quarter, n_mix3, n_mix4, n_zero, words] = [n(0)?, n(1)?, n(2)?, n(3)?, n(4)?, n(5)?, n(6)?];
+            let mut at = chunk + 0x10;
+            let word = |d: usize| -> Result<usize> { if d / 4 < words * 4 { Ok(out + d / 4) } else { invalid("tie colour program writes past its chunk") } };
+            let slot = |s: u32| (s >> 2) as u16;
+            for e in (at..at + n_copy).step_by(4) { put(word(b.u16(e + 2)? as usize)?, [slot(b.u16(e)? as u32); 4])?; }
+            at += n_copy;
+            for e in (at..at + n_half).step_by(4) {
+                let w = b.u32(e)?;
+                let (x, y) = (slot((w >> 21) & 0x7fc), slot((w >> 12) & 0x7fc));
+                put(word((w & 0x3ffc) as usize)?, [x, x, y, y])?;
+            }
+            at += n_half;
+            for e in (at..at + n_quarter).step_by(4) {
+                let w = b.u32(e)?;
+                let (x, y) = (slot((w >> 12) & 0x7fc), slot((w >> 21) & 0x7fc));
+                put(word((w & 0x3ffc) as usize)?, [x, x, x, y])?;
+            }
+            at += n_quarter;
+            for e in (at..at + n_mix3).step_by(8) {
+                let (x, y, z) = (slot(b.u16(e)? as u32), slot(b.u16(e + 2)? as u32), slot(b.u16(e + 4)? as u32));
+                put(word(b.u16(e + 6)? as usize)?, [x, x, y, z])?;
+            }
+            at += n_mix3;
+            for e in (at..at + n_mix4).step_by(8) {
+                let w = b.u32(e)?;
+                let c = [slot(w & 0x7fc), slot((w >> 9) & 0x7fc), slot((w >> 18) & 0x7fc), slot(b.u16(e + 4)? as u32)];
+                put(word(b.u16(e + 6)? as usize)?, c)?;
+            }
+            at += n_mix4;
+            for e in (at..at + n_zero).step_by(2) { put(word(b.u16(e)? as usize)?, [BLACK; 4])?; }
+            out += words * 4;
+            chunk += qw * 16;
+        }
+        if out != total { return invalid(format!("tie colour program of LOD {lod} writes {out} words for {total}")); }
+    }
+    Ok(())
 }
 
 /// Triangulates a packet's strips: for strip vertex `i >= 2`, `(i-2, i-1, i)` when `i % 2 == winding`,
@@ -706,7 +780,6 @@ mod tests {
         // 8 dinky, no fat: single marker at index 0 -> indices 0..3 single, 4..7 double; double marker at index 5 (= 8 - 3).
         let mut pk = TiePacket {
             unpack: TieUnpackHeader { dinky_single_end: 40, dinky_double_end: 45, no_fat: 1, ..Default::default() },
-            colors: vec![0; 8],
             ..Default::default()
         };
         pk.dinky = (0..8u16).map(|i| TieDinkyVertex { gs_slot: 40 + i, gs_slot_2: 100 + i, ..Default::default() }).collect();

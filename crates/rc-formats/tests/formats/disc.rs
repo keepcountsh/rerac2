@@ -144,3 +144,31 @@ fn zz_print_texts() {
     let en = FrontEnd::parse(rc_formats::wad::decompress(&misc[part.bytes()]).unwrap()).unwrap().strings(0).unwrap();
     for id in ids.split(',') { let i = u32::from_str_radix(id, 16).unwrap(); eprintln!("{i:#x}: {:?}", String::from_utf8_lossy(en.get(i))); }
 }
+
+/// Aranos's ties: every vertex of every LOD gets its colour from its class's colour program (none left black, none
+/// reading past the class's slots), and every instance has its colour slots.
+#[test]
+fn tie_colour_programs() {
+    use rc_formats::disc::level::{LevelWad, Lump, Part};
+    use rc_formats::tie::{BLACK, SELF_LIT};
+    let Some(file) = read("G/LEVEL0.WAD") else { return };
+    let w = LevelWad::parse(&file).unwrap();
+    let gp = rc_formats::wad::decompress(w.part_bytes(Part::Gameplay).unwrap().unwrap()).unwrap();
+    let core_data = rc_formats::wad::decompress(w.lump(Lump::CoreData).unwrap().unwrap()).unwrap();
+    let core = rc_formats::level::parse_level_core(w.lump(Lump::CoreIndex).unwrap().unwrap(), core_data.len()).unwrap();
+    let classes = rc_formats::tie::parse_level_ties(&core, &core_data).unwrap();
+    let (mut all, mut self_lit) = (0, 0);
+    for c in &classes {
+        for v in c.class.lods.iter().flatten().flat_map(|p| &p.vertices) {
+            all += 1;
+            assert_ne!(v.colors, [BLACK; 4], "class {}", c.o_class);
+            assert!(v.colors.iter().all(|&s| s == SELF_LIT || s < c.class.colours.slots), "class {}: {:?}", c.o_class, v.colors);
+            if v.colors.contains(&SELF_LIT) { self_lit += 1; }
+        }
+    }
+    assert_eq!((all, self_lit), (93418, 3298));
+    let insts = rc_formats::disc::gameplay::tie_instances(&gp).unwrap();
+    let cols = rc_formats::disc::gameplay::tie_colours(&gp, insts.len()).unwrap();
+    assert!(cols.iter().all(Option::is_some));
+    assert_eq!(cols[0].as_ref().map(|c| (c.bias, c.shift, c.slots.len())), Some(([0x18, 0x18, 0x18], 3, 92)));
+}
