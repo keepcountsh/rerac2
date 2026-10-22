@@ -487,6 +487,7 @@ impl Rac2Mobys {
             groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("rac2: moby groups: {e}")).unwrap_or_default(),
             ties: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
             tie_classes: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.o_class).collect(),
+            tie_spheres: tie_spheres(lv),
             shrubs: g2::shrub_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
             tie_groups: g2::instance_groups(&lv.gameplay, "tie_groups").map_err(|e| eprintln!("rac2: tie groups: {e}")).unwrap_or_default(),
             shrub_groups: g2::instance_groups(&lv.gameplay, "shrub_groups").map_err(|e| eprintln!("rac2: shrub groups: {e}")).unwrap_or_default(),
@@ -552,6 +553,25 @@ pub fn take_snapshot(world: &MobyWorld, coll: &HashMap<i16, MobyCollision>, host
         })
         .collect();
     (Snapshot { mobys, joints }, Arc::new(world.grid.clone()))
+}
+
+/// The ties' world bounding spheres (`$gp+0x34a4`): the class sphere (× the class scale) through the instance matrix,
+/// its radius by the longest row (crate::tie_lod::TieLodState::move_instance's rule).
+fn tie_spheres(lv: &crate::level_load::LoadedLevel) -> Vec<[f32; 4]> {
+    let t = &lv.ties;
+    t.instances
+        .iter()
+        .enumerate()
+        .map(|(ii, inst)| {
+            let Some(Some(ci)) = t.class_of.get(ii) else { return [0.0; 4] };
+            let h = &t.classes[*ci].class.header;
+            let b = h.bsphere.map(|x| x * h.scale);
+            let m = inst.world_matrix();
+            let c: [f32; 3] = std::array::from_fn(|k| m[0][k] * b[0] + m[1][k] * b[1] + m[2][k] * b[2] + m[3][k]);
+            let len = |v: [f32; 4]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            [c[0], c[1], c[2], b[3] * len(m[0]).max(len(m[1])).max(len(m[2]))]
+        })
+        .collect()
 }
 
 /// The scene from the snapshot's parts (a free function, so the world can be borrowed mutably beside it).

@@ -6,9 +6,13 @@
 //! | Callback | Moby | Draws |
 //! |---|---|---|
 //! | `0x3d8340` | 0x0b0a | its three glows ([`glow`]: the pilot light at `+0x3a0`, the nozzle `+0x3b0` and the mouth `+0x3c0`); climbing, its wire (`0x3d8498`) |
-//!
 //! | `0x3dc220` | 0x0b0b | its three glows ([`glow`]: the visor at joint 4, the chest at joint 5, below it joint 6 at (0.25, 0, 0)) |
+//! | `0x3f4998` | 0x0ce9 in glow mode | a glow at each tie of its group ([`crate::moby::classes::tie_lights::draw`]) |
 //! | `0x3e4050` | the Lancer's shot | its trail's newest point and the trail ([`crate::moby::classes::shot::draw_trail`]) |
+//!
+//! The frame's first list (`0x2e7718`, run by `0x2e7768` before the particles, `0x3311e0`) holds on Aranos only the
+//! arrival ship's draw (`0x362b40`, which the engine's created-moby draw does) and class 0xd0's ribbon (`0x39ac30`, not
+//! placed); its other users are other levels' classes (G-REN-003).
 //!
 //! Not ported: 0x0b0a's emerge flash
 //! (`0x3d8920` → `0x2ee190`, FX 0x3b), 0x0b0b's wire (`0x3db790`), the group branch of `0x3dc220` (a grouped 0x0b0b
@@ -89,12 +93,15 @@ fn draw_0b0b(w: &MobyWorld, host: &dyn crate::moby::MobyHost, id: usize, rng: &m
     glow(out, rng, 0.15, c, GLOW_0B0B[1], 0x10, 0x30, cam);
 }
 
-/// The frame's callbacks after the tick: the mobys the loop ran (they registered theirs), in the loop's order.
-pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, cam: V3) -> Vec<FxQuad> {
+/// The frame's callbacks after the tick: the mobys the loop ran (they registered theirs), in the loop's order. `view`:
+/// the frame's camera for the callbacks' sphere checks (`0x2f0080`).
+pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, level: &crate::level::LevelData, view: &rc_game::particles::BSphereView, cam: V3) -> Vec<FxQuad> {
+    use crate::moby::classes::tie_lights;
     let mut out = Vec::new();
     for id in w.run_list(cam) {
         if 0x80 <= w.mobys[id].state { continue; }
         match w.mobys[id].o_class {
+            0x0ce9 if w.mobys[id].state == 2 && tie_lights::active(w, id, level, cam) => tie_lights::draw(w, id, view, cam, &mut out),
             0x0b0a => draw_0b0a(w, id, &mut game.rng, cam, &mut out),
             0x0b0b => draw_0b0b(w, host, id, &mut game.rng, cam, &mut out),
             crate::moby::classes::shot::SHOT_CLASS => crate::moby::classes::shot::draw_trail(&mut w.mobys[id], cam, &mut game.trail_phase, &mut out),

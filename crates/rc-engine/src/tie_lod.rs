@@ -245,6 +245,16 @@ impl TieLodState {
         if let Some(h) = self.hidden.get_mut(ii) { *h = hidden; }
     }
 
+    /// Instance `ii` recoloured by the level's objects (Going Commando's `0x3701d0`): every one of its record's 64
+    /// colours becomes `rgb` (alpha 0x80).
+    pub fn set_colour(&mut self, ii: usize, rgb: [u8; 3]) {
+        let Some((_, bytes)) = self.records.as_mut() else { return };
+        let at = ii * RECORD_BYTES + 96;
+        let Some(cols) = bytes.get_mut(at..at + 4 * rc_formats::tie_light::SLOTS) else { return };
+        for c in cols.chunks_exact_mut(4) { c.copy_from_slice(&[rgb[0], rgb[1], rgb[2], 0x80]); }
+        self.records_dirty = true;
+    }
+
     /// Instance `ii` moved to the game matrix `m` (columns: the rows and the position, `[3][3]` = 1): its record's
     /// model, its bounding sphere (the class sphere `bsphere` through `m`, `tie_light::instance_centre`'s rule) for
     /// the culls and the record, its sway origin. Returns the new model (the entities' transform) and its entities.

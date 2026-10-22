@@ -11,6 +11,7 @@ pub mod lancer;
 pub mod props;
 pub mod shot;
 pub mod spawn_point;
+pub mod tie_lights;
 pub mod wrench;
 
 use super::UpdateFn;
@@ -50,6 +51,8 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0c63 => Some(props::update_0c63),
         0x0c5c => Some(props::update_0c5c),
         0x0cda => Some(props::update_0cda),
+        0x0ce9 => Some(tie_lights::update),
+        0x0340 => Some(props::update_0340),
         0x0ac8 => Some(props::update_0ac8),
         0x0d1e => Some(props::update_0d1e),
         0x12f9 => Some(props::update_12f9),

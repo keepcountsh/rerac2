@@ -396,7 +396,10 @@ fn tick(
     {
         // The callbacks read joints (0x0b0b's glows) through the loop's host, as the draw reads the mobys' poses.
         let host = crate::rac2_mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
-        p.fx_quads = rc_game2::fx::callbacks(&mut mobys.world, &host, &mut p.game, p.camera.pos);
+        let (tx, ty) = crate::game_camera::projection_tans(None);
+        let [fwd, left, up] = p.camera.rows;
+        let view = rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty);
+        p.fx_quads = rc_game2::fx::callbacks(&mut mobys.world, &host, &mut p.game, &mobys.level, &view, p.camera.pos);
     }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
@@ -945,8 +948,8 @@ fn draw_created(
     draw.update(mobys, &level.0, &mut commands, &mut meshes, &mut images, &mut materials, &mut buffers, &mut transforms, view);
 }
 
-/// The ties and shrubs the level's objects moved or hid (`MobyWorld::moved_ties` / `moved_shrubs` / `hidden_ties`)
-/// to the tie and shrub renderers: the new matrix with the class sphere (scaled as the loaders' instance centre).
+/// The ties and shrubs the level's objects moved, hid or recoloured (`MobyWorld::moved_ties` / `moved_shrubs` /
+/// `hidden_ties` / `tie_colours`) to the tie and shrub renderers: the new matrix with the class sphere (scaled as the loaders' instance centre).
 #[allow(clippy::too_many_arguments)]
 fn move_instances(
     mut commands: Commands,
@@ -973,6 +976,7 @@ fn move_instances(
                 for e in es.to_vec() { commands.entity(e).insert(t); }
             }
         }
+        for (ii, rgb) in std::mem::take(&mut world.tie_colours) { ties.set_colour(ii, rgb); }
         if world.hidden_ties != *hidden {
             for &ii in hidden.difference(&world.hidden_ties) { ties.set_hidden(ii, false); }
             for &ii in &world.hidden_ties { ties.set_hidden(ii, true); }

@@ -106,6 +106,20 @@ pub fn update_0c63(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     ctx.game.set_mission(mission, sub, 1);
 }
 
+/// 0x0340 (`0x3a2030`, on 18 levels): the remote's range. Its alpha 0xff every tick; with Ratchet steering a remote
+/// (state 0x1c) it finds the remote moby (class 0xac), counts `+0x68`[0x50] up while the remote is outside every
+/// region of its list (records `{area −1 / path index, low, high, cuboid}` from `[0]`: below `low`, or under `high`
+/// inside the path `0x1fda00[i]` (`0x31cf68`), or inside the cuboid, is in range: the count back to 0), draws the
+/// static over the screen while counting (`0x3a1e28`: texture 0x1e in 32-pixel tiles at random offsets, fading in
+/// over 90 ticks) and at 91 gives the remote up (`0x392728`). Not ported: that branch — the port has no state 0x1c
+/// and no remote on Aranos (G-HERO-008); here the count stays 0.
+pub fn update_0340(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    m.alpha = 0xff;
+    if ctx.hero.state == 0x1c { return; }
+    m.set_pv_i(0x140, 0);
+}
+
 /// 0x0c5c (`0x3ec140`): drifting smoke in bursts. It waits (`+0x68`[0]: 50..120 ticks), then for `+0x68`[1] ticks
 /// (20 the first time, then 10..25) sends two grey drift particles a tick (crate::particles::drift: 0.1..3, 300
 /// ticks, 0x40808080) 0.417 a tick toward its yaw − 90° (`0x2ef448` / `0x2ef460`: the VU0 cosine and sine), from its

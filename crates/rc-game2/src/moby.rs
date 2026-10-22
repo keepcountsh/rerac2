@@ -413,6 +413,11 @@ pub struct MobyWorld {
     pub shrub_groups: Vec<Vec<u16>>,
     /// The ties' o_class (the runtime tie's class byte `+0x1d` through `0x226880`).
     pub tie_classes: Vec<i32>,
+    /// The ties' world bounding spheres (`$gp+0x34a4`, 0x20 each: centre, radius).
+    pub tie_spheres: Vec<[f32; 4]>,
+    /// The ties the level's objects recoloured since the engine last took them (`0x3701d0(tie, r, g, b)`: every
+    /// colour the tie's vertices use becomes the one flat colour, each channel's low 2 bits dropped).
+    pub tie_colours: Vec<(usize, [u8; 3])>,
     /// The carriers' members by carrier ([`attach`]), and the ties / shrubs a carrier moved since the engine last
     /// took them.
     pub attached: std::collections::HashMap<usize, attach::Carrier>,
@@ -437,6 +442,7 @@ pub struct SpawnData {
     pub tie_groups: Vec<Vec<u16>>,
     pub shrub_groups: Vec<Vec<u16>>,
     pub tie_classes: Vec<i32>,
+    pub tie_spheres: Vec<[f32; 4]>,
 }
 
 impl MobyWorld {
@@ -513,6 +519,7 @@ impl MobyWorld {
         self.tie_groups = data.tie_groups.clone();
         self.shrub_groups = data.shrub_groups.clone();
         self.tie_classes = data.tie_classes.clone();
+        self.tie_spheres = data.tie_spheres.clone();
     }
 
     /// `CreateMoby(o_class)` `0x311320`: the first free slot (state ≥ 0xfe), initialised, with zeroed pvars.
