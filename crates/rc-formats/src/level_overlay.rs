@@ -2,15 +2,15 @@
 //! level, the function or data a level-01 (reference) address names, by matching the code
 //! (docs/plan/level_generalisation.md X1/X2).
 //!
-//! **Layout.** Every level overlay (`extracted/levels/NN/overlay.bin`, [`crate::font::parse_overlay_sections`])
-//! has seven sections in the same order on all 19 levels: `.lit` (0x15ef00), `.bss`, `.data`, `lvl.vtbl`,
-//! `lvl.camvtbl`, `lvl.sndvtbl`, `.text` (checked against the Lombyte section tables). `lvl.vtbl` is the class
+//! **Layout.** Every level overlay (the level WAD's overlay lump, [`crate::font::parse_overlay_sections`]) has
+//! seven sections in the same order on all 27 levels: `.lit` (0x1a7c80), `.bss`, `.data`, `lvl.vtbl`,
+//! `lvl.camvtbl`, `lvl.sndvtbl`, `.text`. `lvl.vtbl` is the class
 //! → update table: 12-byte records `{i32 o_class, u32 update, u32 _}` ending at `o_class == -1`
 //! ([`LevelOverlay::vtbl`]).
 //!
 //! **Code identity across overlays.** The engine code is the same object code in every overlay, linked at other
 //! addresses, so the same function differs only in relocated fields. [`mask`] hides exactly those: `j`/`jal`
-//! targets, `lui` immediates of main-RAM addresses (0x0010..0x0040, so float and small-integer `lui`s stay
+//! targets, `lui` immediates of main-RAM addresses (0x0010..0x0050, so float and small-integer `lui`s stay
 //! compared), and the 16-bit immediates of the instructions that complete such a `lui` (`%lo`, tracked per
 //! register, also through `move`) or address `$gp` ([`GP`], the same on every level). Two functions are "the same code" when their masked words
 //! are equal over the reference function's extent (from its start to the next known function start: `jal`
@@ -19,22 +19,22 @@
 //! a false negative (a real copy not recognised) only loses a port, a false positive would need two functions
 //! identical up to their relocations.
 //!
-//! **Relocation.** [`Relocation`] maps a reference (level-01) function to its copy in the target overlay
+//! **Relocation.** [`Relocation`] maps a reference (level-00, Aranos) function to its copy in the target overlay
 //! ([`Relocation::func`]), and a reference data address to the target's by finding a reference function that
 //! forms the address with `lui`/`%lo` and reading the same instruction pair in that function's copy
 //! ([`Relocation::data`]). The port keeps its level-01 addresses as labels and asks the relocator for the loaded
 //! level's.
 
 use crate::font::{parse_overlay_sections, read_overlay, OverlaySection};
+use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 
 /// Index of `lvl.vtbl` in the overlay's section list (the same on all 19 levels).
 pub(crate) const VTBL_SECTION: usize = 3;
 /// Index of `.text`.
 pub const TEXT_SECTION: usize = 6;
-/// `$gp` in every level (the boot ELF sets it once; the small data is addressed from it: `0x15f5c4` is
-/// `-0x763c($gp)` in all 19 overlays).
-pub(crate) const GP: u32 = 0x166c00;
+/// `$gp` in every level (the boot ELF sets it once).
+pub(crate) const GP: u32 = 0x1aeff0;
 /// Longest function extent compared (bytes); a longer reference extent is cut here.
 pub(crate) const MAX_EXTENT: u32 = 0x8000;
 
@@ -67,7 +67,7 @@ fn is_branch(o: u32) -> bool { matches!(o, 1 | 4..=7 | 0x14..=0x17) }
 /// I-type instructions that write GPR `rt`.
 fn writes_rt(o: u32) -> bool { matches!(o, 8..=15 | 0x18..=0x1b | 0x1e | 0x20..=0x27 | 0x37) }
 /// `lui` of a main-RAM address (the only ones a relink changes).
-fn lui_is_address(w: u32) -> bool { (0x0010..0x0040).contains(&(w & 0xffff)) }
+fn lui_is_address(w: u32) -> bool { (0x0010..0x0050).contains(&(w & 0xffff)) }
 
 /// Per-register "holds a `lui` of an address" state while walking code in address order. Calls and branches
 /// do not reset it (a `lui` in a branch's delay slot is used at the branch target, after code that may call):
@@ -252,13 +252,15 @@ pub struct Relocation<'a> {
     identity: bool,
     /// Target `.text` positions by the masked key of their first 4 words.
     index: HashMap<[u32; 4], Vec<u32>>,
+    /// The reference's address references: address → (function, word offset), built on the first [`Self::data`].
+    xrefs: OnceCell<HashMap<u32, Vec<(u32, usize)>>>,
 }
 
 impl<'a> Relocation<'a> {
     /// Identity when the target is the reference itself (same bytes).
     pub fn new(reference: &'a LevelOverlay, target: &'a LevelOverlay) -> Relocation<'a> {
         let identity = reference.text_start == target.text_start && reference.text == target.text && reference.sections == target.sections;
-        let mut r = Relocation { reference, target, identity, index: HashMap::new() };
+        let mut r = Relocation { reference, target, identity, index: HashMap::new(), xrefs: OnceCell::new() };
         if identity { return r; }
         let t = &target.text;
         for p in 0..t.len().saturating_sub(3) {
@@ -290,6 +292,39 @@ impl<'a> Relocation<'a> {
         }
     }
 
+    /// The target's address of the reference data address `ref_addr`: a reference function that forms it
+    /// (`lui`/`%lo` or `$gp`), its copy in the target, the address the same instruction forms there.
+    pub fn data(&self, ref_addr: u32) -> Option<u32> {
+        if self.identity { return Some(ref_addr); }
+        let xrefs = self.xrefs.get_or_init(|| {
+            let mut x: HashMap<u32, Vec<(u32, usize)>> = HashMap::new();
+            for &f in &self.reference.starts {
+                let Some(code) = self.reference.extent(f).and_then(|n| self.reference.code(f, n)) else { continue };
+                for (off, a) in address_refs(code) { x.entry(a).or_default().push((f, off)); }
+            }
+            x
+        });
+        let sites = xrefs.get(&ref_addr)?;
+        for &(f, off) in sites {
+            let Some(g) = self.func(f) else { continue };
+            let n = self.reference.extent(f)?;
+            let refs = address_refs(self.target.code(g, n)?);
+            if let Some(&(_, a)) = refs.iter().find(|(o, _)| *o == off) { return Some(a); }
+        }
+        // No copy of a whole referencing function (its extent runs into level code): the code around one of the
+        // references, from its function start up to 16 words past it, found once in the target.
+        for &(f, off) in sites {
+            let n = (off + 16).min(self.reference.extent(f)?);
+            let m = mask(self.reference.code(f, n)?);
+            if m.len() < 4 { continue; }
+            let Some(cands) = self.index.get(&[m[0], m[1], m[2], m[3]]) else { continue };
+            let hits: Vec<u32> = cands.iter().copied().filter(|&c| self.target.code(c, n).is_some_and(|w| mask(w) == m)).collect();
+            if let [g] = hits.as_slice() {
+                if let Some(&(_, a)) = address_refs(self.target.code(*g, n)?).iter().find(|(o, _)| *o == off) { return Some(a); }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

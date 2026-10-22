@@ -19,6 +19,7 @@ pub mod gadget;
 pub mod gameplay;
 pub mod gui_sprite;
 pub mod level;
+pub mod menu_tables;
 pub mod save_game;
 pub mod scene;
 pub mod space;

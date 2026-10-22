@@ -88,3 +88,21 @@ fn save_blob_and_template() {
     let cnf = read("SYSTEM.CNF").unwrap();
     assert_eq!(card_dir_name(&cnf).unwrap(), "BASCUS-97268RATCHET");
 }
+
+/// The pause tables of a level found from Aranos's addresses: the same Weapons grid on Oozla, the Lancer's record.
+#[test]
+fn menu_tables_relocate_across_levels() {
+    use rc_formats::disc::level::{LevelWad, Lump};
+    use rc_formats::disc::menu_tables::MenuTables;
+    let overlay = |i: u32| -> Option<Vec<u8>> {
+        let f = read(&format!("G/LEVEL{i}.WAD"))?;
+        Some(LevelWad::parse(&f).ok()?.lump(Lump::Overlay).ok()??.to_vec())
+    };
+    let (Some(a), Some(o)) = (overlay(0), overlay(1)) else { eprintln!("skipped: no disc data"); return };
+    let (m0, m1) = (MenuTables::read(&a, &a).unwrap(), MenuTables::read(&o, &a).unwrap());
+    assert_eq!(m0.weapon_grid.len(), 24);
+    assert_eq!(m0.weapon_grid, m1.weapon_grid);
+    let lancer = m0.items[0x1e];
+    assert_eq!((lancer.icon, lancer.max_ammo, lancer.uses_ammo), (0xea64, 200, true));
+    assert_eq!(m1.items[0x1e], lancer);
+}
