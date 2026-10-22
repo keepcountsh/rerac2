@@ -198,6 +198,28 @@ mod help_items {
     pub const HELP: u32 = 0x2beb;
 }
 
+/// The Help Moves page (`0x2841b0`): the frame (`0x34f2b8`: sprites 0x96..0x98 at (256, 206), "Moves", "△ Exit"),
+/// the moves' list (`0x350398` / `0x352f88`, flags 0x410: font 1, rows centred on the rect's centre 22 apart, the
+/// selection yellow, scrolling 4 pixels a frame to keep it in), its description (`0x34f478`, rect 2) and picture
+/// (rect 4: the Moves table's row after the move's).
+mod moves {
+    pub const AT: [f32; 2] = [256.0, 206.0];
+    pub const SPRITES: [(u32, u32); 3] = [(0x96, 0x6044_2d00), (0x97, 0x6024_1700), (0x98, 0x55f0_c070)];
+    pub const TITLE: (u32, [f32; 2]) = (0x2bf8, [-130.0, -181.0]);
+    pub const EXIT_AT: [f32; 2] = [215.0, 157.0];
+    /// The list's rect (centre x, top, height): rows from 9 below the top, 22 apart (a line of 14 and 8), clipped 4 in.
+    pub const LIST: [i32; 3] = [100, 65, 310];
+    pub const FIRST: i32 = 9;
+    pub const PITCH: i32 = 22;
+    pub const LINE: i32 = 14;
+    pub const SELECTED: u32 = 0x8020_ffff;
+    pub const DESCRIPTION: [i32; 4] = [268, 227, 210, 128];
+    pub const PICTURE: [f32; 4] = [243.0, 56.0, 226.0, 153.0];
+    /// The rows (`0x2842e0`) and their descriptions (`0x1aad98`).
+    pub const ROWS: [u32; 15] = [0x32d5, 0x32cf, 0x32d2, 0x2c0c, 0x2c0d, 0x2c0e, 0x2c0f, 0x2c10, 0x2c11, 0x2c12, 0x32d1, 0x32d0, 0x32d6, 0x2c14, 0x2c13];
+    pub const DESCRIPTIONS: [u32; 15] = [0x2c15, 0x2c16, 0x2c17, 0x2c18, 0x2c19, 0x2c1a, 0x2c1b, 0x2c1c, 0x2c1d, 0x2c1e, 0x2c1f, 0x2c21, 0x2c20, 0x2c26, 0x2c25];
+}
+
 /// The Help item list's state (`+0x14` the selected item, `+0x18` scrolling, `+0x1c` upwards, `+0x90` the offset).
 #[derive(Clone, Copy, Debug, Default)]
 struct HelpList {
@@ -683,6 +705,9 @@ pub struct Menus {
     /// The Help list's row; the Help item list.
     help_row: usize,
     help_list: HelpList,
+    /// The Moves list's row and scroll (`+0x40`, `+0x44`).
+    moves_row: usize,
+    moves_scroll: i32,
 }
 
 /// The game's reset to the blank save (`0x299bf8`): the options (`0x1a7b98`, 0x28 bytes) kept, the level 0, no slot.
@@ -743,6 +768,8 @@ impl Menus {
             description_scroll: 0,
             help_row: 0,
             help_list: HelpList::default(),
+            moves_row: 0,
+            moves_scroll: 0,
         }
     }
 
@@ -854,6 +881,10 @@ impl Menus {
             Page::Items => {
                 self.items_tick(pressed, &mut out);
                 self.description_tick(self.items_description(cx.tables, cx.save), items::DESCRIPTION[3], cx.held);
+            }
+            Page::HelpTopic(HelpTopic::Moves) => {
+                self.moves_tick(pressed, &mut out);
+                self.description_tick(moves::DESCRIPTIONS[self.moves_row], moves::DESCRIPTION[3], cx.held);
             }
             Page::HelpTopic(t) => {
                 self.help_items_tick(pressed, cx, &mut out);
@@ -1226,6 +1257,7 @@ impl Menus {
                 let row = if self.items_section == 3 { items::COUNTER_PICTURES[c + r * 2] } else { of(cell(s.grid, c + r * s.cols))? };
                 Some((PictureTable::Items, row))
             }
+            Page::HelpTopic(HelpTopic::Moves) => Some((PictureTable::HelpMoves, self.moves_row as u16 + 1)),
             Page::HelpTopic(t) => {
                 let items = help_items_of(t, v.tables, v.save);
                 let item = *self.help_list.sel.and_then(|i| items.get(i))?;
@@ -1317,8 +1349,38 @@ impl Menus {
                     self.help_list = HelpList::default();
                     self.go(Page::HelpTopic(t), out);
                 }
+                HelpTopic::Moves => {
+                    (self.moves_row, self.moves_scroll) = (0, 0);
+                    self.go(Page::HelpTopic(HelpTopic::Moves), out);
+                }
                 _ => out.push(Out::Sound(5)),
             }
+        }
+    }
+
+    /// The Moves list (`0x350398`): Up / Down (sound 3, no wrap); the list scrolls 4 pixels a frame toward the
+    /// selected row (`0x352f88`). △ back to the Help list.
+    fn moves_tick(&mut self, keys: u16, out: &mut Vec<Out>) {
+        use moves::*;
+        if keys & pad::TRIANGLE != 0 {
+            return self.back(out);
+        }
+        if keys & (pad::START | pad::SELECT) != 0 {
+            return self.close(out);
+        }
+        let row = self.moves_row;
+        if keys & pad::UP != 0 && 0 < row {
+            self.moves_row -= 1;
+        } else if keys & pad::DOWN != 0 && row + 1 < ROWS.len() {
+            self.moves_row += 1;
+        }
+        if self.moves_row != row { out.push(Out::Sound(3)); }
+        let [_, top, h] = LIST;
+        let y = top + FIRST + PITCH * self.moves_row as i32 - self.moves_scroll;
+        if y < top + 4 {
+            self.moves_scroll -= 4;
+        } else if top + h - 4 < y + LINE {
+            self.moves_scroll += 4;
         }
     }
 
@@ -1816,6 +1878,7 @@ impl Menus {
             Page::Pause => return self.draw_pause(out, a),
             Page::PauseOptions => return self.draw_pause_options(out, a, icon),
             Page::Help => return self.draw_help(out, a, icon),
+            Page::HelpTopic(HelpTopic::Moves) => return self.draw_moves(out, a, v),
             Page::HelpTopic(t) => return self.draw_help_items(out, a, v, icon, t),
             Page::Sound | Page::Camera | Page::Controls => return self.draw_setting(out, a, v),
             Page::Weapons => return self.draw_weapons(out, a, v, icon),
@@ -2136,6 +2199,28 @@ impl Menus {
     fn draw_help(&self, out: &mut Vec<Quad>, a: &Assets, icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) {
         let rows: Vec<(u32, u16)> = HelpTopic::ALL.iter().enumerate().map(|(i, t)| (t.text(), i as u16)).collect();
         self.draw_list(out, a, icon, list::HELP_TEXT, 0.0, list::HELP_ICON, &rows, self.help_row);
+    }
+
+    /// The Moves page (see [`moves`]).
+    fn draw_moves(&self, out: &mut Vec<Quad>, a: &Assets, v: &View) {
+        use moves::*;
+        for (id, c) in SPRITES {
+            if let Some(s) = a.sprites.get(&id) { gui::sprite(out, s, AT, 0.0, [1.0, 1.0], gui::rgba(c)); }
+        }
+        let text = |out: &mut Vec<Quad>, t: &[u8], [x, y]: [f32; 2], align: i32, colour: u32| {
+            let w = gui::text_width(&a.glyphs, t, 1.0);
+            gui::text(out, &a.glyphs, 1, t, x - (w * align / 2) as f32, y, 1.0, gui::rgba(colour));
+        };
+        text(out, a.strings.get(TITLE.0), [AT[0] + TITLE.1[0], AT[1] + TITLE.1[1]], 1, 0x80f0_f0f0);
+        text(out, a.strings.get(options::EXIT_TEXT), [AT[0] + EXIT_AT[0], AT[1] + EXIT_AT[1]], 2, 0x80f0_f0f0);
+        let [cx, top, h] = LIST;
+        for (i, &t) in ROWS.iter().enumerate() {
+            let y = top + FIRST + PITCH * i as i32 - self.moves_scroll;
+            if y < top + 4 || top + h - 4 < y + LINE { continue; }
+            text(out, a.strings.get(t), [cx as f32, y as f32], 1, if i == self.moves_row { SELECTED } else { 0x80f0_f0f0 });
+        }
+        self.draw_description(out, a, DESCRIPTION);
+        self.draw_picture(out, v, PICTURE);
     }
 
     /// A Help item page (`0x43a820` and the page's panels): see [`help_items`].
