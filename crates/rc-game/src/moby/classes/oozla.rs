@@ -6,6 +6,7 @@
 //! * 0x0c58 (`0x3ed598`): moves once to a cuboid's place when poked ([`update_0c58`]).
 //! * 0x0a17 (`0x3bcdd8`): the swamp's water level ([`update_0a17`]).
 //! * 0x0a92 / 0x0a93 (`0x3cfcc0`): float on that water ([`update_float`]).
+//! * 0x0a53 (`0x41def0`): the lily pads, tilting under Ratchet or sinking with him ([`update_0a53`]).
 //!
 //! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
 //! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
@@ -453,4 +454,84 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         _ => return,
     }
     teleporter_pads(w, id, ctx);
+}
+
+/// 0x0a53 (`0x41def0`, 4 placed): a lily pad on the swamp. Once there is water (above 100) it keeps its height over the
+/// water (`+0x6c`, the lowest `+0x64` = 3 under it), its angles (`+0x80..`) and two rocking phases (`+0x78` / `+0x7c`);
+/// `+0xa0` set makes it a sinker (1), else it tilts (2).
+///
+/// * 1, the sinker: with Ratchet grounded on it, it sinks toward the lowest at 0.4 a second eased out over the 3
+///   (`0x31b918`: `1 − (1 − x)²` of what is left); without him it rises back at 0.6 a second the same way.
+/// * 2, the tilting pad: with Ratchet grounded on it, his offset along its rows springs its roll to −0.01 × the side
+///   offset and its pitch to 0.025 × the forward one (`0x31f0c8`: 0.01, 0.3, at most 0.1); without him both spring
+///   back to 0.
+///
+/// Both rock 1.15° on the water (`0x31a3c0`: 30 and 40 °/s, the tunables `$gp+0x2adc..0x2ae4`), the tilt on top, and
+/// carry him (`0x322668`, the block `+0x20`).
+///
+/// Not ported: the zone test `0x321a78` (the scheduler's distances stand in), the sinker giving way under a swimming
+/// Ratchet (his state 0x19 under it: its collision off), the pad's colour pulse when drawn (`+0x78` of the moby,
+/// `+0xac` 3°/tick), the unused carried point `0x317e68`.
+pub fn update_0a53(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::physics::{dot, turn_spring};
+    const STEP: f32 = 0.000_290_888_25;
+    const DEPTH: f32 = 3.0;
+    let water = ctx.game.water_z;
+    let on = ctx.hero.ground_moby == Some(id) && ctx.hero.air_ticks == 0;
+    let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
+    let m = &mut w.mobys[id];
+    let (old, old_yaw) = (m.pos, m.rot[2]);
+    match m.state {
+        0 => {
+            if water <= 100.0 { return; }
+            let (a, b) = (ctx.game.rng.rand_angle(), ctx.game.rng.rand_angle());
+            m.set_pv_f(0x78, a);
+            m.set_pv_f(0x7c, b);
+            m.set_pv_f(0x68, 0.0);
+            let h = m.pos[2] - water;
+            m.set_pv_f(0x6c, h);
+            m.set_pv_f(0x60, h);
+            m.set_pv_f(0x64, h - DEPTH);
+            let rot = m.rot;
+            m.set_pv_v(0x80, rot);
+            m.set_pv_v(0x90, [0.0; 3]);
+            let s = if m.pv_i(0xa0) == 0 { 2 } else { 1 };
+            m.set_state(s, -1);
+            return;
+        }
+        1 => {
+            m.has_collision = solid;
+            let sunk = m.pv_f(0x6c) - m.pv_f(0x64);
+            let ease_out = |x: f32| 1.0 - (1.0 - x) * (1.0 - x);
+            let v = if on { -(0.4 / 60.0) * ease_out(sunk / DEPTH) } else { 0.6 * ease_out((DEPTH - sunk) / DEPTH) / 60.0 };
+            m.set_pv_f(0x68, v);
+            let h = m.pv_f(0x6c) + v;
+            m.set_pv_f(0x6c, h);
+            m.pos[2] = water + h;
+            super::props::sway(m, 0.020_071_289, 30.0 * STEP, 40.0 * STEP, 0x78, 0x7c);
+        }
+        2 => {
+            let (mut rx, mut vx, mut ry, mut vy) = (m.pv_f(0x80), m.pv_f(0x90), m.pv_f(0x84), m.pv_f(0x94));
+            if on {
+                let d = sub(ctx.hero.pos, m.pos);
+                let (fwd, side) = (dot(d, m.rows[0]), dot(d, m.rows[1]));
+                turn_spring(-0.01 * side, 0.01, 0.3, 0.1, &mut rx, &mut vx, 0);
+                turn_spring(0.025 * fwd, 0.01, 0.3, 0.1, &mut ry, &mut vy, 0);
+            } else {
+                turn_spring(0.0, 0.01, 0.3, 0.1, &mut rx, &mut vx, 0);
+                turn_spring(0.0, 0.01, 0.3, 0.1, &mut ry, &mut vy, 0);
+            }
+            m.set_pv_f(0x80, rx);
+            m.set_pv_f(0x90, vx);
+            m.set_pv_f(0x84, ry);
+            m.set_pv_f(0x94, vy);
+            m.pos[2] = water + m.pv_f(0x6c);
+            super::props::sway(m, 0.020_071_289, 30.0 * STEP, 40.0 * STEP, 0x78, 0x7c);
+            m.rot[0] = add_rot(rx, m.rot[0]);
+            m.rot[1] = add_rot(ry, m.rot[1]);
+        }
+        _ => return,
+    }
+    let (pos, yaw) = (m.pos, m.rot[2]);
+    carry_hero(ctx, id, old, old_yaw, pos, yaw);
 }
