@@ -107,19 +107,44 @@ fn pause_tick(
             // `0x344dd0`: leaving the menu asks for the hand item the pages took (`0x18c0e8`) when it is not the one held
             // (0: none, 0x77). Only the items the hero can hold (rc_game::hero::items::ROWS); the feet and back slots
             // (the boots, the packs) are not ported.
-            Out::Equip { slot: 0, item } => {
-                let item = if item == 0 { 0x77 } else { item };
-                if item == p.game.held {
-                    p.hero.items.request = 0;
-                } else if item == 0x77 || rc_game::hero::items::row(item).is_some() {
-                    p.hero.items.request = item;
-                } else {
-                    eprintln!("play: item {item:#x} cannot be held yet");
-                }
-            }
+            Out::Equip { slot: 0, item } => equip(p.game.held, &mut p.hero, item),
             Out::Equip { .. } => {}
             Out::Sound(_) => {}
         }
+    }
+}
+
+/// The quick select's screen and ring for a frame (`0x2f84e8`, then the ring's part of `0x443c08`): the item it asks
+/// for is taken as the pause's Weapons page's ([`equip`]).
+#[allow(clippy::too_many_arguments)]
+fn quick_select_frame(qs: &mut rc_game::quick_select::QuickSelect, paused: &mut bool, pad: &PadState, game: &mut rc_game::game::GameState, hero: &mut Hero, records: &[rc_formats::disc::menu_tables::ItemRecord], pause: bool) {
+    let slots = rc_game::quick_select::slots(game, records);
+    for o in qs.update(pad, &slots, pause, *paused) {
+        match o {
+            rc_game::quick_select::Out::Equip(item) => {
+                // Its ammo cut to the most.
+                if let Some(r) = rc_game::hero::items::row(item).filter(|r| r.ammo) {
+                    if let Some(a) = game.ammo.get_mut(item as usize) { *a = (*a).min(r.max_ammo); }
+                }
+                equip(game.held, hero, item);
+            }
+            rc_game::quick_select::Out::Resume => *paused = false,
+            rc_game::quick_select::Out::Sound(_) => {}
+        }
+    }
+    qs.ring_tick(&slots);
+}
+
+/// `0x18c0e8`: the hand item asked for when it is not the one held (0: none, 0x77). Only the items the hero can hold
+/// (rc_game::hero::items::ROWS).
+fn equip(held: i32, hero: &mut Hero, item: i32) {
+    let item = if item == 0 { 0x77 } else { item };
+    if item == held {
+        hero.items.request = 0;
+    } else if item == 0x77 || rc_game::hero::items::row(item).is_some() {
+        hero.items.request = item;
+    } else {
+        eprintln!("play: item {item:#x} cannot be held yet");
     }
 }
 
@@ -188,6 +213,9 @@ pub(crate) struct Play {
     pause_opened: bool,
     /// The death's fade to black, its frame (the game stopped; [`DEATH_FADE`] frames, then [`death_reset`]).
     death_fade: Option<u32>,
+    /// The quick select (rc_game::quick_select), and the game stopped in its mode (Quick Select Pause on).
+    qs: rc_game::quick_select::QuickSelect,
+    qs_paused: bool,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -376,6 +404,16 @@ fn tick(
             return;
         }
         _ => {}
+    }
+    // The quick select's part of the main loop (`0x3706f0`, rc_game::quick_select): with Quick Select Pause on, the
+    // game stops in the ring's mode until △ lets go; only the ring and its screen run then.
+    let qs_pause = card.as_deref().is_some_and(|c| c.save.u8(rc_game::save::Scope::Global, rc_game::menus::opt::QS_PAUSE) != 0);
+    let qs_ok = !p.qs_paused && 7 < p.game.frame && !matches!(p.hero.state, 0x6f | 0x31) && p.hero.items.flying != 2 && p.hero.mode < 2;
+    if p.qs.main_loop(&p.pad, qs_pause, qs_ok) { p.qs_paused = true; }
+    if p.qs_paused {
+        if let Some(m) = p.mobys.as_ref() { quick_select_frame(&mut p.qs, &mut p.qs_paused, &p.pad, &mut p.game, &mut p.hero, &m.level.items, qs_pause); }
+        p.ticks += 1;
+        return;
     }
     // Start (level 00 `0x3706f0`: mode 3 kind 1, after the level's first 8 frames, not while dying or in a vehicle's
     // states 0x6f / 0x31).
@@ -616,6 +654,12 @@ fn tick(
     if let Some(on) = cam.letterbox { p.game.scenes.letterbox = on; }
     if cam.follow_reset { p.camera = FollowCamera::new(&cam_input(&p.hero, Some(coll), [0.0; 2])); }
     p.game.scenes.bars_step();
+    // △ opens the quick select's screen with Quick Select Pause off (the hero's transitions `0x2cb650`), then its frame
+    // (the GUI screens' pass) before the HUD's.
+    if !qs_pause && p.pad.pressed & rc_game::pad::button::TRIANGLE != 0 && 7 < p.game.frame && p.hero.no_menu == 0 && p.hero.items.no_use == 0 && p.hero.items.flying != 2 {
+        p.qs.open();
+    }
+    quick_select_frame(&mut p.qs, &mut p.qs_paused, &p.pad, &mut p.game, &mut p.hero, &mobys.level.items, qs_pause);
     // The HUD (`0x443c08`) with this tick's requests.
     let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
     // `0x2fa770`: the held item when it has ammo (not with the items off, `0x18c0d4`).
@@ -1205,7 +1249,13 @@ fn draw_hud(
             let alive = |id: usize| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id)).is_some_and(|m| m.state != 0xfe && m.state != 0xfd);
             quads.extend(rc_game::hud::marker_quads(&markers, p.camera.pos, p.camera.rows, crate::play_camera::GAME_TAN_HALF_FOV, &tex, &alive));
         }
-        let draws = p.hud.draw(p.game.bolts);
+        let mut draws = p.hud.draw(p.game.bolts);
+        // The quick select's ring and texts (rc_game::quick_select).
+        if let Some(m) = p.mobys.as_ref() {
+            let slots = rc_game::quick_select::slots(&p.game, &m.level.items);
+            let strings = &hud.data.assets().strings;
+            p.qs.draw(&slots, &p.pad, &|id| strings.get(id).to_vec(), &mut draws);
+        }
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
         quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
         let a = hud.data.assets();
@@ -1481,7 +1531,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
-        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None,
+        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None, qs: Default::default(), qs_paused: false,
         help: Default::default(), boxes: Default::default(), glyphs: None, texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })

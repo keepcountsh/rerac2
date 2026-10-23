@@ -166,14 +166,14 @@ pub struct Fader {
 }
 
 impl Fader {
-    fn colour(keys: [(f32, u32); 3], count: usize) -> Fader {
+    pub(crate) fn colour(keys: [(f32, u32); 3], count: usize) -> Fader {
         Fader { keys: keys.map(|(t, c)| (t, [0.0; 2], c)), count, tangents: [[0.0, 0.0], [1.0, 1.0]], t: 0.0, dir: -1, speed: 0.116_666_6, active: false, colour_mode: true, repeat: 0 }
     }
-    fn floats(keys: [(f32, [f32; 2]); 3], count: usize) -> Fader {
+    pub(crate) fn floats(keys: [(f32, [f32; 2]); 3], count: usize) -> Fader {
         Fader { keys: keys.map(|(t, v)| (t, v, 0)), count, tangents: [[0.0, 0.0], [1.0, 1.0]], t: 0.0, dir: -1, speed: 0.116_666_6, active: false, colour_mode: false, repeat: 0 }
     }
     /// `0x440388(f, dir)`.
-    fn run(&mut self, dir: i32) {
+    pub(crate) fn run(&mut self, dir: i32) {
         self.dir = dir;
         if !self.active {
             self.t = if dir == 1 { 0.0 } else { 1.0 };
@@ -181,7 +181,7 @@ impl Fader {
         }
     }
     /// `0x4403d8(f, 1)`.
-    fn step(&mut self) {
+    pub(crate) fn step(&mut self) {
         if !self.active { return; }
         self.t += self.speed * self.dir as f32;
         let done = if self.dir == 1 { 1.0 < self.t } else { self.t < 0.0 };
@@ -196,7 +196,7 @@ impl Fader {
         }
     }
     /// The value at t: the segment's lerp along its curve.
-    fn sample(&self) -> ([f32; 2], u32) {
+    pub(crate) fn sample(&self) -> ([f32; 2], u32) {
         let n = self.count.max(1);
         let mut k = 0;
         while k + 1 < n - 1 && self.keys[k + 1].0 <= self.t { k += 1; }
@@ -217,8 +217,16 @@ pub enum Draw {
     Sprite { id: u32, pos: [f32; 2], scale: [f32; 2], frame: f32, colour: u32 },
     /// A HUD icon (`0x2faa98` + `0x2faf68`): icon id and frame, top-left, size.
     Icon { id: u16, frame: u16, pos: [f32; 2], size: [f32; 2], colour: u32 },
-    /// Text (`0x2ea068` / `0x2e9f68`): right-aligned at `pos` when `right`.
-    Text { text: String, pos: [f32; 2], scale: f32, colour: u32, right: bool },
+    /// Text in font 1 (`0x2ea068` / `0x2e9f68`; `0x2ea570` centred) at `pos`, aligned as `align`.
+    Text { text: String, pos: [f32; 2], scale: f32, colour: u32, align: Align },
+}
+
+/// Where a [`Draw::Text`]'s `pos` is on the line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    Left,
+    Centre,
+    Right,
 }
 
 /// The bolt counter.
@@ -280,7 +288,7 @@ impl BoltCounter {
             if i != 0 && (digits.len() - i) % 3 == 0 { text.push(separator); }
             text.push(c);
         }
-        out.push(Draw::Text { text, pos: self.text.pos(), scale: self.text.size()[0], colour: self.text.colour(), right: true });
+        out.push(Draw::Text { text, pos: self.text.pos(), scale: self.text.size()[0], colour: self.text.colour(), align: Align::Right });
         out.push(Draw::Icon { id: 0x7567, frame: 0, pos: self.icon.pos(), size: self.icon.size(), colour: self.icon.colour() });
     }
 }
@@ -351,7 +359,7 @@ impl WeaponPanel {
         out.push(Draw::Sprite { id: 1, pos: self.back.pos(), scale: self.back.size(), frame, colour: self.back.colour() });
         out.push(Draw::Sprite { id: 2, pos: self.outline.pos(), scale: self.outline.size(), frame, colour: self.outline.colour() });
         if self.icon_id != 0 { out.push(Draw::Icon { id: self.icon_id, frame: 0, pos: self.icon.pos(), size: self.icon.size(), colour: self.icon.colour() }); }
-        out.push(Draw::Text { text, pos: self.text.pos(), scale: self.text.size()[0], colour: self.text.colour(), right: false });
+        out.push(Draw::Text { text, pos: self.text.pos(), scale: self.text.size()[0], colour: self.text.colour(), align: Align::Left });
     }
 }
 
@@ -541,10 +549,10 @@ pub fn quads(draws: &[Draw], sprites: &HashMap<u32, Sprite>, glyphs: &[Glyph; 25
                 let [w, h] = *size;
                 out.push(Quad { pos: [[x, y], [x + w, y], [x, y + h], [x + w, y + h]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], rgba: rgba(*colour), tex });
             }
-            Draw::Text { text, pos, scale, colour, right } => {
+            Draw::Text { text, pos, scale, colour, align } => {
                 if colour >> 24 == 0 { continue; }
-                let w = gui::text_width(glyphs, text.as_bytes(), *scale) as f32;
-                let x = if *right { pos[0] - w } else { pos[0] };
+                let w = gui::text_width(glyphs, text.as_bytes(), *scale);
+                let x = match align { Align::Left => pos[0], Align::Centre => pos[0] - (w >> 1) as f32, Align::Right => pos[0] - w as f32 };
                 gui::text(&mut out, glyphs, 1, text.as_bytes(), x, pos[1], *scale, rgba(*colour));
             }
         }

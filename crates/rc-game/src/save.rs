@@ -8,7 +8,7 @@
 //! limit, the wrench-out and Thruster-Pack bytes `0x1a7a10` / `0x1a7a11`, the XP `0x1a7a14`, its bank `0x1a7a18`, the
 //! bolt bank `0x1a7a1c`, the nanotech bytes `0x1a7a30..`); the items had `0x1a7b00` (0x38, one byte per item: Clank
 //! 2, the Gravity Boots 0x13, the Grind Boots 0x14, the Charge Boots 0x36) and their "ever had" copy `0x1a7b38`; the
-//! ammo `0x139688` (0xe0); the quick-select list `0x139948` (0x70); the hand item `0x1a7398`; the scenes seen
+//! ammo `0x139688` (0xe0); the quick-select list `0x139948` (0x70); the hand item `0x1a7398`; the quick select's slots `0x1a73b8` (8 items); the scenes seen
 //! `0x139768` (0x100: scene `n` is bit `n & 31` of the word at byte `n & !3`, as the scene code indexes it); the save
 //! clock `0x1a7360` (8 bytes, BCD); and others not typed yet.
 //! **Level chunks** (boot `0x2562e8`, 10 per level, at `addr + level·size`): visited `0x1a7bf0` (1), the map mask
@@ -150,6 +150,7 @@ mod at {
     pub const QUICK_SELECT: u32 = 0x139948;
     pub const QUICK_SELECT_LEN: usize = 28;
     pub const HELD: u32 = 0x1a7398;
+    pub const RING: u32 = 0x1a73b8;
     pub const SCENES: u32 = 0x139768;
     pub const SAVE_CLOCK: u32 = 0x1a7360;
     pub const PLAY_TIME: u32 = 0x1a7bc8;
@@ -191,6 +192,7 @@ impl GameState {
         for i in 0..at::AMMO_LEN { s.set_i32(G, at::AMMO + 4 * i as u32, self.ammo.get(i).copied().unwrap_or(0)); }
         for i in 0..at::QUICK_SELECT_LEN { s.set_i32(G, at::QUICK_SELECT + 4 * i as u32, self.quick_select.get(i).copied().unwrap_or(0)); }
         s.set_i32(G, at::HELD, self.held);
+        for (i, &item) in self.ring.iter().enumerate() { s.set_i32(G, at::RING + 4 * i as u32, item); }
         s.set_i32(G, at::PLAY_TIME, self.play_time);
         for (n, &seen) in self.scenes_seen.iter().enumerate() {
             let (w, bit) = scene_bit(n);
@@ -237,6 +239,13 @@ impl GameState {
             if let Some(q) = self.quick_select.get_mut(i) { *q = s.i32(G, at::QUICK_SELECT + 4 * i as u32); }
         }
         self.held = s.i32(G, at::HELD);
+        for (i, item) in self.ring.iter_mut().enumerate() { *item = s.i32(G, at::RING + 4 * i as u32); }
+        // Port-only: the port's saves before the quick select left its slots empty; the items had get theirs.
+        if self.ring == [0; 8] {
+            for &item in &crate::game::RING_ITEMS {
+                if self.items.get(item as usize).is_some_and(|&b| b != 0) { self.ring_add(item); }
+            }
+        }
         self.play_time = s.i32(G, at::PLAY_TIME);
         for n in 0..self.scenes_seen.len() {
             let (w, bit) = scene_bit(n);

@@ -24,6 +24,8 @@ pub const WRENCH: i32 = 10;
 /// The Lancer: item 0x1e, class 0x5d2 (`0x262504` of its row; a gadget, `G/GADGET.WAD`).
 pub const LANCER: i32 = 0x1e;
 pub const LANCER_CLASS: i16 = 0x5d2;
+/// The Gravity Bomb (item 0x2a).
+pub const GRAVITY_BOMB: i32 = 0x2a;
 
 /// An item record (`0x262500 + 0xe0·row`, row `0x139568[item]` = the item): the fields the port reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
