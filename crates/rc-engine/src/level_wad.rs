@@ -188,7 +188,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     // The shells turn by the game's own rotations (rc_game::sky).
     let sky = crate::sky_render::load(&core, &core_data, index).context("loading the sky")?;
     let mut textures = textures;
-    let mut mobys = crate::moby_render::load_mobys(root, &core, &core_data, &gameplay, collision.as_ref()).context("loading mobys")?;
+    let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
     if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("level: Ratchet's armour not attached ({e:#}); he has no mesh"); }
     if let Err(e) = attach_armour_row(root, &core, &mut mobys, &mut textures, 0x47, rc_formats::disc::armor::WRENCH_ROW) { eprintln!("level: the wrench's mesh not attached ({e:#})"); }
     for g in GADGETS {

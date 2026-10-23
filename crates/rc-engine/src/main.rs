@@ -41,7 +41,6 @@ mod moby_anim;
 mod moby_light;
 mod moby_lod;
 mod moby_render;
-mod metal_env;
 mod no_clusters;
 mod occlusion;
 mod particle_render;
@@ -145,7 +144,6 @@ fn main() -> anyhow::Result<()> {
     .add_plugins(occlusion::OcclusionPlugin)
     .add_plugins(tfrag_lod::TfragLodPlugin)
     .add_plugins(moby_render::MobyRenderPlugin)
-    .add_plugins(metal_env::MetalEnvPlugin)
     .add_plugins(pre_shadow::PreShadowPlugin)
     .add_plugins(frame_log::FrameLogPlugin)
     .add_plugins(tie_render::TieRenderPlugin)

@@ -76,7 +76,7 @@ use rc_formats::moby::{self, LevelMobyClass, MobySubmesh};
 use rc_formats::moby_anim::{AnimState, MobyAnimClass};
 use rc_formats::moby_light::MobyLights;
 use rc_formats::occlusion::OcclBits;
-use rc_formats::texture::TextureTable;
+use rc_formats::texture::{Texture, TextureTable};
 use rc_formats::tfrag_light::ps2;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -102,7 +102,7 @@ const MODE_UNLIT: u32 = 2;
 /// Texture key of texture −1 packets: the reserved 8×8 texture at GS block 0x3ffb that `init_once` fills with
 /// 0x80808080 (docs/plan/moby_untextured.md).
 const GREY: usize = usize::MAX;
-/// Metal packet textures (TEX0 data_lo): the effect textures −2 / −3, the chrome and glass maps (crate::metal_env).
+/// Metal packet textures (TEX0 data_lo): the level's chrome and glass maps.
 const TEX_CHROME: i32 = -2;
 const TEX_GLASS: i32 = -3;
 
@@ -119,6 +119,8 @@ pub struct LevelMobys {
     /// (class, per packet per vertex RGBA); `Placed::colors` indexes it.
     pub colors: Vec<(usize, Vec<Vec<[u8; 4]>>)>,
     pub cpu_light: bool,
+    /// The metal pass's environment maps: chrome (128×128) and glass (64×64) from gs_ram ([`decode_env_maps`]).
+    pub env_maps: [Option<Texture>; 2],
     pub parse_time: Duration,
     pub light_time: Duration,
 }
@@ -138,14 +140,35 @@ pub struct Placed {
 
 fn env_on(name: &str) -> bool { std::env::var(name).is_ok_and(|v| v.trim() == "1") }
 
-/// Parses the classes, their sequences and the instances, and builds every instance's light block.
-pub fn load_mobys(root: &Path, core: &LevelCore, core_data: &[u8], gameplay_file: &[u8], mesh: Option<&rc_formats::collision::Collision>) -> Result<LevelMobys> {
+/// The chrome (128×128) and glass (64×64) maps, as the level core loader (L00 `0x304660`) builds their TEX0 words
+/// (`0x1b1c70` / `0x1b1c88`, which the class load `0x2ff500` puts in the metal packets' ad-gifs for −2 / −3):
+/// TBP0 = (`0x1a7304` + core `[0x90]` / `[0x98]` · 4) >> 8 and CBP = (`0x1a72f4` + core `[0x94]` / `[0x9c]`) >> 8,
+/// PSMT8H 128×128 / 64×64 (`0x1db08000` / `0x19b04000`), CT32 CLUT, TCC 1, MODULATE. `0x2ff978` uploads the gs_ram
+/// table to `0x1a72f4` as the lump lays it out, then the GS stash (the table's word-0x84 more entries) from
+/// `0x1a7304` at 4 bytes a texel: the texture word is a texel offset into the stash's images, which sit 1 byte a texel
+/// from the stash address in the lump; the CLUT word a byte offset into the lump.
+fn decode_env_maps(core: &LevelCore, gs_ram: &[u8]) -> [Option<Texture>; 2] {
+    let h = &core.header;
+    let stash = core.moby_stash_addr;
+    let one = |tex: i32, pal: i32, side: u32| -> Option<Texture> {
+        let (t, p) = (stash? + usize::try_from(tex).ok()?, usize::try_from(pal).ok()?);
+        let px = gs_ram.get(t..t + (side * side) as usize)?;
+        let clut = gs_ram.get(p..p + 1024)?;
+        rc_formats::texture::decode_indexed8(px, side, side, clut).ok()
+    };
+    [one(h.chrome_map_texture, h.chrome_map_palette, 128), one(h.glass_map_texture, h.glass_map_palette, 64)]
+}
+
+/// Parses the classes, their sequences and the instances, and builds every instance's light block, with the level's
+/// GS image (its env maps).
+pub fn load_mobys_with_gs(root: &Path, core: &LevelCore, core_data: &[u8], gameplay_file: &[u8], gs_ram: &[u8], mesh: Option<&rc_formats::collision::Collision>) -> Result<LevelMobys> {
     let t0 = Instant::now();
     let classes = moby::parse_level_mobys(core, core_data).context("parsing moby classes")?;
     let anim = moby_anim::load_anim_classes(core, core_data, &classes);
     let _ = mesh;
     // Not done: the loader's ground snap of the rooted records (G-CLS-004).
     let instances = rc_formats::disc::gameplay::moby_instances(gameplay_file).map(|v| v.into_iter().map(|m| m.base).collect::<Vec<_>>()).context("parsing moby instances")?;
+    let env_maps = decode_env_maps(core, gs_ram);
     let parse_time = t0.elapsed();
 
     let t0 = Instant::now();
@@ -187,7 +210,7 @@ pub fn load_mobys(root: &Path, core: &LevelCore, core_data: &[u8], gameplay_file
             colors.len(), check_sum.0, check_sum.1, check_sum.2, check_sum.3
         );
     }
-    Ok(LevelMobys { classes, anim, instances, placed, lighting, colors, cpu_light, parse_time, light_time: t0.elapsed() })
+    Ok(LevelMobys { classes, anim, instances, placed, lighting, colors, cpu_light, env_maps, parse_time, light_time: t0.elapsed() })
 }
 
 /// Moby material: texture × vertex colour (GS MODULATE), tfrag fog; skinning and lighting in the vertex
@@ -679,9 +702,10 @@ fn spawn_system(
     println!(
         "mobys: parse {:.1} ms, light blocks {:.1} ms, mesh build {:.1} ms; {} animated instances ({} static: 1 sequence of <= 1 frame, {} classes without sequence 0), \
          palette {} matrices; {} instance positions outside the tfrag sphere bounds; {} vertices skinned to a joint past the class joint count; \
-         LOD {} (RC_MOBY_LOD), metal pass {} (RC_MOBY_METAL)",
+         env maps: chrome {}, glass {}; LOD {} (RC_MOBY_LOD), metal pass {} (RC_MOBY_METAL)",
         m.parse_time.as_secs_f64() * 1e3, m.light_time.as_secs_f64() * 1e3, s.build.as_secs_f64() * 1e3,
         s.animated, s.static_, s.no_seq0, s.palette, s.outside, s.joint_past_count,
+        m.env_maps[0].is_some(), m.env_maps[1].is_some(),
         if moby_lod::lod_enabled() && !m.cpu_light { "on" } else { "off" }, if moby_lod::metal_enabled() { "on" } else { "off" }
     );
 }
@@ -906,9 +930,19 @@ fn gs_image(w: u32, h: u32, rgba: &mut [u8], mode: ImageAddressMode) -> Image {
     img
 }
 
-/// The chrome (−2) or glass (−3) map (crate::metal_env, painted each frame), its texel alpha 0 or 0x80 (TEXA).
-fn metal_image(kind: i32) -> (Handle<Image>, AlphaRange) {
-    (if kind == TEX_CHROME { crate::metal_env::CHROME } else { crate::metal_env::GLASS }, AlphaRange { min: 0, max: 0x80 })
+/// The chrome (−2) or glass (−3) map: TEX1 MXL 0 / MMAG linear, CLAMP_1 = 5 (`0x2ff500`). A level whose map does not
+/// decode gets a magenta 1×1.
+fn metal_image(level: &LoadedLevel, kind: i32, images: &mut Assets<Image>) -> (Handle<Image>, AlphaRange) {
+    let map = if kind == TEX_CHROME { 0 } else { 1 };
+    let (w, h, mut rgba) = match &level.mobys.env_maps[map] {
+        Some(t) => (t.width, t.height, t.rgba.clone()),
+        None => {
+            warn!("moby metal texture {kind}: no env map decoded; drawing magenta");
+            (1, 1, vec![255, 0, 255, 0xff])
+        }
+    };
+    let img = gs_image(w, h, &mut rgba, ImageAddressMode::ClampToEdge);
+    (images.add(img), AlphaRange::of(rgba.iter().skip(3).step_by(4).copied()))
 }
 
 /// Per class: (high parts, highest high joint), low parts, (metal parts, highest metal joint).
@@ -1076,7 +1110,7 @@ fn spawn_mobys(
             let mut ents = Vec::new();
             for part in metal.iter() {
                 if part.kind == TEX_CHROME { st.chrome += part.triangles } else { st.glass += part.triangles }
-                let (image, texel_alpha) = metal_imgs.entry(part.kind).or_insert_with(|| metal_image(part.kind)).clone();
+                let (image, texel_alpha) = metal_imgs.entry(part.kind).or_insert_with(|| metal_image(level, part.kind, images)).clone();
                 for pass in metal_passes(texel_alpha) {
                     let mat = metal_mats
                         .entry((part.kind, pass, part.caster))
@@ -1640,6 +1674,7 @@ impl ExtraMobys {
     fn spawn_metal(
         &mut self,
         commands: &mut Commands,
+        level: &LoadedLevel,
         class: &LevelMobyClass,
         slot: u32,
         transform: Transform,
@@ -1647,11 +1682,12 @@ impl ExtraMobys {
         name: &str,
         tracked: Option<ExtraMetal>,
         meshes: &mut Assets<Mesh>,
+        images: &mut Assets<Image>,
     ) -> Vec<Entity> {
         let metal = self.metal_parts.entry(class.o_class).or_insert_with(|| build_metal_parts(class, meshes).0).clone();
         let mut out = Vec::new();
         for part in &metal {
-            let (image, texel_alpha) = self.metal_images.entry(part.kind).or_insert_with(|| metal_image(part.kind)).clone();
+            let (image, texel_alpha) = self.metal_images.entry(part.kind).or_insert_with(|| metal_image(level, part.kind, images)).clone();
             for pass in metal_passes(texel_alpha) {
                 let pass = if self.cache.ordered { ordered_pass(pass) } else { pass };
                 let mat = MobyMetalMaterial {
@@ -1759,7 +1795,7 @@ impl ExtraMobys {
                 }
             } else {
                 let name = format!("dynamic moby slot {slot}");
-                let ents = self.spawn_metal(commands, class, slot, t, Visibility::Inherited, &name, None, meshes);
+                let ents = self.spawn_metal(commands, level, class, slot, t, Visibility::Inherited, &name, None, meshes, images);
                 self.slot_metal.insert((slot, oc), ents);
             }
             self.slot_metal_shown.insert(slot, oc);
