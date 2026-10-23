@@ -4,13 +4,14 @@
 //! * 0x0f14 (`0x4108b0`): on its first tick state 1, update distance 0xff.
 //! * 0x0a6a / 0x0a6b / 0x0aa0 / 0x0aa1 (`0x3ca620`): movers between two poses ([`update_mover`]).
 //! * 0x0c58 (`0x3ed598`): moves once to a cuboid's place when poked ([`update_0c58`]).
+//! * 0x0a17 (`0x3bcdd8`): the swamp's water level ([`update_0a17`]).
+//! * 0x0a92 / 0x0a93 (`0x3cfcc0`): float on that water ([`update_float`]).
 //!
-//! Not ported here: 0x0ab3 (`0x3d4098`, deleted once the level byte `0x1a7b2e` is set: not mapped), 0x0e89
-//! (`0x406860`, the 0x0c58 mover started by the level bytes `0x1a7b13` / `0x1a7b32`), 0x0ca0 (`0x3ee1d0`, the
-//! switch that pokes them: the use system, G-UI-001), 0x0a92 / 0x0a93 (`0x3cfcc0`, floating on the water height
-//! of 0x0a17, G-REN-009).
+//! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
+//! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
+//! `0x1a7b13` / `0x1a7b32`), 0x0ca0 (`0x3ee1d0`, the switch that pokes them: the use system, G-UI-001).
 
-use crate::hero::physics::{add, add_rot, scale, sub, sub_rot, V3};
+use crate::hero::physics::{add, add_rot, dist2, scale, sub, sub_rot, V3};
 use crate::moby::attach::rows_of;
 use crate::moby::{carry_hero, Ctx, MobyWorld};
 use std::f32::consts::PI;
@@ -167,4 +168,86 @@ pub fn update_0c58(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     let m = &w.mobys[id];
     if m.state < 3 { carry_hero(ctx, id, old, old_yaw, m.pos, m.rot[2]); }
+}
+
+/// 0x0a17 (`0x3bcdd8`): the swamp's water. Its level (`game.water_base`, L01 `$gp+0xdec`) is its `+0x14`, or with
+/// Ratchet in one of its eight cuboids `+0x40..+0x60` that cuboid's centre height + 0.15; with him in one of the two
+/// cuboids `+0x30` / `+0x34` (dry ground) it is left as it was. While the camera is above `+0x20` the water is
+/// drawn (`0x3bc3c0`, through the first draw-callback list, with its texture scroll: not ported, G-REN-009) and its
+/// height (`game.water_z`, `$gp+0xde8`, what `0x3bc3b8` gives the floating objects) waves 0.1 about the level,
+/// `sin(frame mod 360 · 0.017444445 − 3.14)`. Not ported: the camera test of the dry cuboids when `0x18c0b4` is 0x1c,
+/// and the flag `0x18a01e` (0 in the dry cuboids, else 2).
+pub fn update_0a17(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    if m.state == 0 {
+        m.update_dist = 0xff;
+        m.state = 1;
+        ctx.game.water_base = m.pv_f(0x14);
+        return;
+    }
+    let hero = ctx.hero.pos;
+    if (0..2).any(|k| ctx.level.in_cuboid(m.pv_i(0x30 + 4 * k), hero)) { return; }
+    ctx.game.water_base = (0..8)
+        .map(|k| m.pv_i(0x40 + 4 * k))
+        .find(|&c| ctx.level.in_cuboid(c, hero))
+        .and_then(|c| ctx.level.cuboid_place(c))
+        .map_or(m.pv_f(0x14), |(centre, _)| centre[2] + 0.15);
+    if m.pv_f(0x20) < ctx.host.camera_pos()[2] {
+        let phase = (ctx.game.frame % 360) as f32 * 0.017_444_445 - 3.14;
+        ctx.game.water_z = ctx.game.water_base + phase.sin() * 0.1;
+    }
+}
+
+/// `0x3cfc30(home, gain, damping, radius, &x, &v)`: one axis of a floater's drift about its home, the pull growing
+/// with the square of the distance up to `radius`.
+fn drift(home: f32, gain: f32, damping: f32, radius: f32, x: &mut f32, v: &mut f32) {
+    let r2 = radius * radius;
+    *v *= 1.0 - damping;
+    let pull = (*x - home).powi(2).min(r2) * gain / r2;
+    if home < *x { *v -= pull } else { *v += pull }
+    *x += *v;
+}
+
+/// 0x0a92 / 0x0a93 (`0x3cfcc0`): float on the water. Once there is water (`game.water_z` above 0) it keeps its
+/// place (`+0x00`) and random sway phases (`+0x20` / `+0x24`, the float height `+0x28` = 0.02). Then each tick it
+/// sways (0.04, 30 and 40 °/s: `$gp+0x13d0..0x13d8`), drifts about its place across (`+0x10` / `+0x14` the
+/// velocities: 10/3600, damping 0.1, within 3), is pushed off by Ratchet within 1.2 across unless he is 0.8 above it
+/// (by 0.08 of the overlap), and rises or sinks to the water + 0.02, at most 0.05 a tick.
+pub fn update_float(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    const STEP: f32 = 0.000_290_888_25;
+    let water = ctx.game.water_z;
+    match w.mobys[id].state {
+        0 => {
+            if water <= 0.0 { return; }
+            let (a, b) = (ctx.game.rng.rand_angle(), ctx.game.rng.rand_angle());
+            let m = &mut w.mobys[id];
+            m.set_pv_f(0x20, a);
+            m.set_pv_f(0x24, b);
+            m.set_pv_f(0x28, 0.02);
+            let pos = m.pos;
+            m.set_pv_v(0, pos);
+            m.set_state(1, -1);
+        }
+        1 => {
+            let m = &mut w.mobys[id];
+            super::props::sway(m, 0.0402, 30.0 * STEP, 40.0 * STEP, 0x20, 0x24);
+            let gain = 10.0 / 3600.0;
+            for k in 0..2 {
+                let (mut x, mut v) = (m.pos[k], m.pv_f(0x10 + 4 * k));
+                drift(m.pv_f(4 * k), gain, 0.1, 3.0, &mut x, &mut v);
+                m.pos[k] = x;
+                m.set_pv_f(0x10 + 4 * k, v);
+            }
+            let hero = ctx.hero.pos;
+            let d = dist2(m.pos, hero);
+            if d < 1.2 && hero[2] < m.pos[2] + 0.8 {
+                let away = sub(m.pos, hero);
+                let push = scale([away[0], away[1], 0.0], (1.2 - d) * 0.08);
+                m.pos = add(m.pos, push);
+            }
+            let dz = (water + m.pv_f(0x28) - m.pos[2]).clamp(-0.05, 0.05);
+            m.pos[2] += dz;
+        }
+        _ => {}
+    }
 }
