@@ -715,16 +715,20 @@ impl Hero {
         self.eff_len_xy = len2(self.eff);
         let (s, c) = self.rot[2].sin_cos();
         self.fwd_speed = (self.eff[0] * c + self.eff[1] * s).max(0.0);
-        self.disp = sub(self.pos, old);
-        if 0.004 < self.eff_len_xy { self.slope_ratio = (self.disp[2] / self.eff_len_xy).clamp(-0.5, 0.5); }
         if pushed {
+            // `0x189f70`: the push's step as resolved joins the carry (the slide's exit keeps it as momentum).
+            let before = self.pos;
             self.pos = add(self.pos, self.push);
             self.push = [0.0; 3];
             self.capsule_resolve(env);
             self.ground_probe(env);
             self.disp = sub(self.pos, old);
             self.step_snap();
+            self.carry = add(self.carry, sub(self.pos, before));
         }
+        // The displacement once more after the push's snap (the slide's fall reads it).
+        self.disp = sub(self.pos, old);
+        self.slope_ratio = if 0.004 < self.eff_len_xy { (self.disp[2] / self.eff_len_xy).clamp(-0.5, 0.5) } else { 0.0 };
         let cap = 52.0 * DT;
         if cap < self.eff_len {
             self.disp = scale(self.disp, cap / self.eff_len);
