@@ -64,6 +64,14 @@ pub const HEAD_CLASS: i16 = 0x50a;
 pub const HEAD_JOINTS: [u8; 2] = [8, 10];
 /// The head item's attachment (its row's word 0; `HERO_LISTS[4]`: joints 0..7, the head).
 pub const HEAD_ATTACH: usize = 4;
+/// The worn feet item (slot 1, `0x18b090` / `0x18b094`): `0x1a739c`, 0 for the default 0x34 (its row: attachment 2,
+/// class 0xa73 for both feet).
+pub const FEET_ITEM: i32 = 0x34;
+/// `0x2b09e0`: the second foot sits at attachment 3 whatever the row says.
+pub const FEET_SECOND_ATTACH: usize = 3;
+/// `0x1a7d18` + 4 / `0x1a7d30` + 4: the joints of Ratchet whose pose each foot's joints 1..4 take (`0x2aa278`): his
+/// left foot 100..103, his right 94..97.
+pub const FEET_JOINTS: [[u8; 4]; 2] = [[100, 101, 102, 103], [94, 95, 96, 97]];
 
 /// A throw request (`0x2ba610`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,6 +90,8 @@ pub struct ItemBlock {
     pub item: i32,
     /// `0x18b0e0`: the head item's moby ([`head_pass`]).
     pub head: Option<usize>,
+    /// `0x18b090` / `0x18b094`: the worn feet's mobys ([`feet_pass`]).
+    pub feet: [Option<usize>; 2],
     /// `0x18c250`: the thrown wrench's loop sound (its class sound 0xb).
     pub throw_sound: Option<i32>,
     /// `0x18b064`: 2 = in the hand, ready.
@@ -226,6 +236,7 @@ pub fn item_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     }
     let away = in_water || h.group == 3 || matches!(h.state, 0x31 | 0x12 | 0x82);
     head_pass(world, ctx);
+    feet_pass(world, ctx);
     look_kind(world, ctx);
     create_hand(world, ctx);
     let Some(id) = ctx.hero.items.hand else {
@@ -409,6 +420,49 @@ fn switch(world: &mut MobyWorld, ctx: &mut Ctx) {
     // A new stance type (`0x18c0db` against the new item's row `+0x0c`): the holding layers go for good (`+0x34`).
     if row(it.selected).map_or(0, |r| r.stance) != it.stance {
         for l in h.layers.hold.iter_mut().flatten() { l.kill = true; }
+    }
+}
+
+/// The worn feet (slot 1): `0x2afc68` creates both when there are none — the item [`FEET_ITEM`]'s row's classes
+/// `+0x04` / `+0x08` (draw distance 0x20, drawn, lit as Ratchet, ready) — not on armour 4 or with the cheats' bodies
+/// (the port wears armour 0). `0x2b09e0` then puts the first at the row's attachment and the second at
+/// [`FEET_SECOND_ATTACH`], each posed from his feet ([`FEET_JOINTS`], `0x2aa278`: the engine draws them so). While they
+/// are worn his own feet are scaled to 0.01 (`0x2ac218`, crate::hero::posture).
+///
+/// Not ported: the Charge Boots' feet (the item `0x1a739c` = 0x36).
+pub fn feet_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
+    let Some(row) = ctx.level.items.get(FEET_ITEM as usize).copied() else { return };
+    let it = &mut ctx.hero.items;
+    for (k, slot) in it.feet.iter_mut().enumerate() {
+        let class = row.classes[k] as i16;
+        if slot.is_some_and(|id| world.mobys.get(id).is_none_or(|m| m.state >= 0xfe || m.o_class != class)) { *slot = None; }
+    }
+    if it.feet[0].is_none() {
+        for k in 0..2 {
+            let class = row.classes[k] as i16;
+            if class == 0 || world.class(class).is_none() { continue; }
+            let id = world.create(class);
+            let m = &mut world.mobys[id];
+            m.draw_dist = 0x20;
+            m.drawn = 1;
+            it.feet[k] = Some(id);
+        }
+    }
+    let light = ctx.hero_moby.and_then(|h| world.mobys.get(h)).map(|h| (h.light, h.ambient));
+    for k in 0..2 {
+        let Some(id) = ctx.hero.items.feet[k] else { continue };
+        let attach = if k == 1 { FEET_SECOND_ATTACH } else { row.attach.max(0) as usize };
+        let Some((rows, pos)) = ctx.host.hero_attach(attach) else { continue };
+        {
+            let m = &mut world.mobys[id];
+            m.parent = ctx.hero_moby;
+            (m.pos, m.rows) = (pos, rows);
+            m.mode = (m.mode | mode::NO_UPDATE | mode::NO_MATRIX | mode::KEEP_ROWS) & !1;
+            let f = rows[0];
+            m.rot = [0.0, -f[2].atan2((f[0] * f[0] + f[1] * f[1]).sqrt()), f[1].atan2(f[0])];
+            if let Some((l, a)) = light { (m.light, m.ambient) = (l, a); }
+        }
+        world.rebuild(id, &*ctx.host);
     }
 }
 

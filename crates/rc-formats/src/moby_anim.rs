@@ -922,6 +922,26 @@ pub fn quat_product(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// Joint `j`'s local rotation `q` with the modifier list's rotations on it, as [`apply_modifiers`] turns it (for a
+/// pose built from another moby's: the worn items, `0x2aa278` reading the posed records).
+pub fn modified_quat(mods: &[JointModifier], j: u8, q: [f32; 4]) -> [f32; 4] {
+    let mut q = q;
+    for m in mods.iter().filter(|m| m.joint == j) {
+        q = if m.mode == 0 {
+            quat_product(q, m.quat)
+        } else {
+            let (w, u) = (m.weight, 1.0 - m.weight);
+            let a = q.map(|x| x * u);
+            let b = m.quat.map(|x| x * w);
+            let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+            let v: [f32; 4] = std::array::from_fn(|k| if d < 0.0 { a[k] - b[k] } else { a[k] + b[k] });
+            let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] + v[3] * v[3]).sqrt();
+            v.map(|x| x / n)
+        };
+    }
+    q
+}
+
 /// The joint-modifier list (§6.4) on the local records `[q, inherited scale, translation, _]`, in list order (head
 /// first), after the pose layers and before the matrices (`MobyProc` 0x267fc0 at 0x268b00, `MobyAnimEvalChain`
 /// 0x268ee8). Native `f32` arithmetic on the record values (the game's rules, not its VU0 rounding):

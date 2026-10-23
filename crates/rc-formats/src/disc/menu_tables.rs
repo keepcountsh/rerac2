@@ -83,6 +83,10 @@ pub struct ItemRecord {
     pub pickup_class: i16,
     /// `+0x2a` / `+0x28`: the pickup's message for one and for more (text ids).
     pub pickup_text: [i16; 2],
+    /// `+0x00`: Ratchet's attachment the item's moby sits at; `+0x04` / `+0x08`: its mobys' classes (the worn feet
+    /// items have two, one a foot).
+    pub attach: i32,
+    pub classes: [i32; 2],
 }
 
 /// A level's pause tables.
@@ -123,6 +127,8 @@ impl MenuTables {
                     pickup_ammo: i16_at(b + 0x7c).unwrap_or(0) as u16,
                     pickup_class: i16_at(b + 0x2e).unwrap_or(0),
                     pickup_text: [i16_at(b + 0x2a).unwrap_or(0), i16_at(b + 0x28).unwrap_or(0)],
+                    attach: i32_at(b).unwrap_or(0),
+                    classes: [i32_at(b + 4).unwrap_or(0), i32_at(b + 8).unwrap_or(0)],
                 });
             }
         }

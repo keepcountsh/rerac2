@@ -545,7 +545,7 @@ fn tick(
     }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
-        for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {
+        for id in [p.hero.items.hand, p.hero.items.head, p.hero.items.feet[0], p.hero.items.feet[1]].into_iter().flatten() {
             if let Some(m) = mobys.world.mobys.get_mut(id) { (m.light, m.ambient) = (light, ambient); }
         }
     }
@@ -554,7 +554,7 @@ fn tick(
         let mods = p.hero.posture.modifiers(&mobys.hero_targets);
         let hl = mobys.hero_layers(&p.hero.layers);
         let pose = crate::mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
-        mobys.skin_head(lv, p.hero.items.head, Some(&pose));
+        mobys.skin_worn(lv, &crate::mobys::Mobys::worn(&p.hero.items), Some(&pose));
     }
     if mobys.world.changed {
         let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
@@ -913,9 +913,8 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     // `0x2d51f8` → `0x2d4fc8`: the head item on the scene's Ratchet (at his track with the scene's sequence and
     // his head's scale), else on Ratchet as he stands.
     {
-        let head = mobys.hero_targets.get(24).copied().filter(|&t| t != 0xff);
         let (pos, rows, state, snapshot, mods) = match hero_pose {
-            Some((pos, state)) => (pos, identity, state, None, head.map(|t| vec![rc_formats::moby_anim::JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..rc_formats::moby_anim::JointModifier::compose(t) }]).unwrap_or_default()),
+            Some((pos, state)) => (pos, identity, state, None, scene_hero_mods(&mobys.hero_targets, p.hero.items.feet[0].is_some())),
             None => (p.hero.pos, p.hero.rows, p.anim.state, p.anim.snapshot.clone(), p.hero.posture.modifiers(&mobys.hero_targets)),
         };
         let hl = mobys.hero_layers(&p.hero.layers);
@@ -926,13 +925,14 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
             let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
             rc_game::hero::items::head_pass(&mut mobys.world, &mut ctx);
+            rc_game::hero::items::feet_pass(&mut mobys.world, &mut ctx);
             // The ship's parts on the scene's ship, the one drawn, at itself (as the original's frames show them).
             let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
             if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
         }
         let hl = mobys.hero_layers(&p.hero.layers);
         let pose = crate::mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
-        mobys.skin_head(lv, p.hero.items.head, Some(&pose));
+        mobys.skin_worn(lv, &crate::mobys::Mobys::worn(&p.hero.items), Some(&pose));
     }
     if let Some(o) = occl.as_mut() {
         for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
@@ -954,10 +954,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             if let Some(i) = a.instances.get_mut(k) { i.state = s; }
             if hero_pose.is_some() {
                 if let Some(slot) = a.snapshots.get_mut(k) { *slot = None; }
-                let head = mobys.hero_targets.get(24).copied().filter(|&t| t != 0xff);
-                if let Some(mods) = a.mods.get_mut(k) {
-                    *mods = head.map(|t| vec![rc_formats::moby_anim::JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..rc_formats::moby_anim::JointModifier::compose(t) }]).unwrap_or_default();
-                }
+                if let Some(mods) = a.mods.get_mut(k) { *mods = scene_hero_mods(&mobys.hero_targets, p.hero.items.feet[0].is_some()); }
             }
         }
     }
@@ -971,6 +968,16 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye, &mut p.game.rng); }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: p.game.view_far * 1024.0 });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
+}
+
+/// The scene's Ratchet's joint modifiers: his head's scale (list 24: 0.849 × 0.849 × 0.875) and, under the worn feet,
+/// his feet hidden (`0x2ac218`'s 0.01 on the feet records, lists 22 / 23).
+fn scene_hero_mods(targets: &[u8], feet: bool) -> Vec<rc_formats::moby_anim::JointModifier> {
+    use rc_formats::moby_anim::JointModifier;
+    let t = |l: usize| targets.get(l).copied().filter(|&t| t != 0xff);
+    let mut mods: Vec<JointModifier> = t(24).map(|j| JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..JointModifier::compose(j) }).into_iter().collect();
+    if feet { mods.extend([22, 23].into_iter().filter_map(t).map(|j| JointModifier { scale: [0.01; 3], ..JointModifier::compose(j) })); }
+    mods
 }
 
 fn scene_view(c: &rc_game::scene_camera::SceneCamera) -> CameraView {

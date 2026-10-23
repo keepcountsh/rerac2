@@ -275,10 +275,15 @@ impl Hero {
     /// `0x2adff8`: the states that keep the feet as they are (the groups 0x11 / 0x12, 0x67, 0x7f, 0x72, 0x73).
     fn feet_kept(&self) -> bool { matches!(self.group, 0x11 | 0x12) || matches!(self.state, 0x67 | 0x7f | 0x72 | 0x73) }
 
-    /// `0x2ac218`: the feet pitch and roll with the ground under them and the legs reach for it: each leg turns
-    /// `atan2(height, 0.2)·1.2` (the left −10°..45°, the right −45°..10°), the foot its roll less that, when a foot
-    /// is more than 0.015 off or tilted more than 1° (not on a magnetic walkway).
+    /// `0x2ac218`: the feet hidden under the worn feet; the feet pitch and roll with the ground under them and the
+    /// legs reach for it: each leg turns `atan2(height, 0.2)·1.2` (the left −10°..45°, the right −45°..10°), the foot
+    /// its roll less that, when a foot is more than 0.015 off or tilted more than 1° (not on a magnetic walkway).
     fn feet_tilt(&mut self) {
+        // His feet hidden in the worn feet (crate::hero::items::feet_pass): 0.01, every tick.
+        if self.items.feet[0].is_some() {
+            self.posture.recs[rec::FOOT_L].scale = 0.01;
+            self.posture.recs[rec::FOOT_R].scale = 0.01;
+        }
         if self.feet_kept() { return; }
         let f = self.posture.feet;
         let deg = 0.017_453_294;
