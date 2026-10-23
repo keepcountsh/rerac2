@@ -1039,7 +1039,7 @@ impl ItemPictures {
 }
 
 /// Level `index`'s pause tables, found from Aranos's (rc_formats::disc::menu_tables); none on a failure.
-fn menu_tables(root: &std::path::Path, index: u32) -> rc_formats::disc::menu_tables::MenuTables {
+pub(crate) fn menu_tables(root: &std::path::Path, index: u32) -> rc_formats::disc::menu_tables::MenuTables {
     let read = || -> anyhow::Result<_> {
         let level = crate::level_wad::overlay(root, index)?;
         let aranos = if index == 0 { level.clone() } else { crate::level_wad::overlay(root, 0)? };

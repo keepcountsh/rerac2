@@ -535,7 +535,11 @@ impl Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("mobys: grind paths: {e}")).unwrap_or_default();
-        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: {
+            let mut l = rc_game::level::LevelData::load(&lv.gameplay);
+            l.items = crate::play::menu_tables(&crate::level_load::extracted_root(), crate::level_load::level_index()).items;
+            l
+        }, footstep_base: footstep_base(&lv.gameplay) }
     }
 
 }

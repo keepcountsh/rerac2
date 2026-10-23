@@ -11,8 +11,8 @@
 //! The break throws the crate's pieces (crate::moby::shards) and plays its sound.
 //!
 //! Not ported: the stack's fall and settle (`0x39dfd8`), the TNT crate 0x1f9 and the class 0x1f6's flag test beyond
-//! the damage, the dust puffs (`0x334528`), the other classes' break sounds (`0x360698`), the pickups of the
-//! non-bolt crates (`0x31aa10` / `0x3d2d30`: the ammo and nanotech pickups), the respawn's stacking search
+//! the damage, the dust puffs (`0x334528`), the other classes' break sounds (`0x360698`), the nanotech
+//! crates' pickups, the respawn's stacking search
 //! (`0x31c9d8`).
 
 use crate::moby::{bolts, mode, shards, Ctx, MobyWorld};
@@ -176,7 +176,8 @@ fn break_crate(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 
 /// `0x39d948`: a bolt crate (no ammo amount, not 501 / 0x200) drops its bolts with `rand(2)` + 2 / 1 / 0 bolt mobys
-/// (by the recent breaks: below 11 / 21 / more); the others drop their pickups (not ported) and no bolts.
+/// (by the recent breaks: below 11 / 21 / more); an ammo crate drops ammo pickups (crate::moby::classes::pickup), and
+/// no bolts.
 fn reward(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &w.mobys[id];
     let plain = m.pv_s(0xc6) == 0 && m.o_class != 0x1f5 && m.o_class != 0x200;
@@ -186,6 +187,7 @@ fn reward(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let n = ctx.game.rng.randi(2);
         bolts::drop(w, id, 0x100, n + k, ctx);
     } else {
+        if !matches!(w.mobys[id].o_class, 0x1f5 | 0x200) { super::pickup::drop_ammo(w, id, ctx); }
         if w.mobys[id].bolts != 0 { w.mobys[id].bolts = 0; }
         bolts::drop(w, id, 0x100, 0, ctx);
     }

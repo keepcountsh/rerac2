@@ -17,6 +17,8 @@ pub struct LevelData {
     pub areas: Vec<rc_formats::disc::gameplay::Area>,
     /// The light regions (`0x1c58c0`, crate::light).
     pub light_regions: Vec<rc_formats::disc::gameplay::LightRegion>,
+    /// The item records (`0x262500`, by row; the overlay's: rc_formats::disc::menu_tables), set by the engine.
+    pub items: Vec<rc_formats::disc::menu_tables::ItemRecord>,
 }
 
 impl LevelData {
@@ -31,6 +33,7 @@ impl LevelData {
             paths: g::paths(gameplay).unwrap_or_default(),
             areas: g::areas(gameplay).map_err(|e| eprintln!("level: areas: {e}")).unwrap_or_default(),
             light_regions: g::light_regions(gameplay).map_err(|e| eprintln!("level: light regions: {e}")).unwrap_or_default(),
+            items: Vec::new(),
         }
     }
 

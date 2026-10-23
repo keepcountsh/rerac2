@@ -77,6 +77,12 @@ pub struct ItemRecord {
     /// `+0x78` ≠ 0: it uses ammo; `+0x7e`: the most.
     pub uses_ammo: bool,
     pub max_ammo: u16,
+    /// `+0x7c`: the ammo one pickup gives (the crates' `0x3d2d30`).
+    pub pickup_ammo: u16,
+    /// `+0x2e`: the class of its ammo pickup.
+    pub pickup_class: i16,
+    /// `+0x2a` / `+0x28`: the pickup's message for one and for more (text ids).
+    pub pickup_text: [i16; 2],
 }
 
 /// A level's pause tables.
@@ -114,6 +120,9 @@ impl MenuTables {
                     xp_max: i32_at(b + 0x5c).unwrap_or(0),
                     uses_ammo: i16_at(b + 0x78).unwrap_or(0) != 0,
                     max_ammo: i16_at(b + 0x7e).unwrap_or(0) as u16,
+                    pickup_ammo: i16_at(b + 0x7c).unwrap_or(0) as u16,
+                    pickup_class: i16_at(b + 0x2e).unwrap_or(0),
+                    pickup_text: [i16_at(b + 0x2a).unwrap_or(0), i16_at(b + 0x28).unwrap_or(0)],
                 });
             }
         }
