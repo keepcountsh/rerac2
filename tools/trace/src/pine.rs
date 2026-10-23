@@ -2,14 +2,19 @@
 //! game without a savestate. Enable it in PCSX2: Settings > Advanced > "Enable PINE" (slot 28011).
 //!
 //! Transport on macOS/Linux: Unix socket `$TMPDIR/pcsx2.sock` (macOS; `$XDG_RUNTIME_DIR` on
-//! Linux, `/tmp` fallback), with `.<slot>` appended when the slot is not 28011.
+//! Linux, `/tmp` fallback), with `.<slot>` appended when the slot is not 28011. On Windows: TCP on
+//! `127.0.0.1:<slot>`.
 //! Message: `u32 total_len` then commands back to back (`u8 opcode, args`). Reply: `u32 total_len,
 //! u8 status (0 ok, 0xff fail)`, then each command's result in order. Limits: request < 650000
 //! bytes, reply < 450000 bytes, so reads are batched as up to 50000 `MsgRead64` per message.
 
 use anyhow::{bail, ensure, Context, Result};
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
+#[cfg(not(unix))]
+use std::net::TcpStream as Stream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream as Stream;
+#[cfg(unix)]
 use std::path::PathBuf;
 
 pub const DEFAULT_SLOT: u16 = 28011;
@@ -22,8 +27,9 @@ const MSG_ID: u8 = 0xc;
 const MSG_STATUS: u8 = 0xf;
 const READS_PER_MSG: usize = 50_000;
 
-pub struct Pine { s: UnixStream }
+pub struct Pine { s: Stream }
 
+#[cfg(unix)]
 pub fn socket_path(slot: u16) -> PathBuf {
     let dir = std::env::var_os(if cfg!(target_os = "macos") { "TMPDIR" } else { "XDG_RUNTIME_DIR" }).map(PathBuf::from).unwrap_or_else(|| "/tmp".into());
     let mut name = "pcsx2.sock".to_string();
@@ -31,11 +37,22 @@ pub fn socket_path(slot: u16) -> PathBuf {
     dir.join(name)
 }
 
+/// Where PCSX2 serves `slot`, for messages: the socket file on Unix, the loopback port on Windows.
+pub fn endpoint(slot: u16) -> String {
+    #[cfg(unix)]
+    return socket_path(slot).display().to_string();
+    #[cfg(not(unix))]
+    return format!("127.0.0.1:{slot}");
+}
+
 impl Pine {
     pub fn connect(slot: u16) -> Result<Pine> {
-        let p = socket_path(slot);
-        let s = UnixStream::connect(&p).with_context(|| {
-            format!("connecting to PINE socket {} (is PCSX2 running with Settings > Advanced > Enable PINE, slot {slot}?)", p.display())
+        #[cfg(unix)]
+        let s = Stream::connect(socket_path(slot));
+        #[cfg(not(unix))]
+        let s = Stream::connect(("127.0.0.1", slot));
+        let s = s.with_context(|| {
+            format!("connecting to PINE at {} (is PCSX2 running with Settings > Advanced > Enable PINE, slot {slot}?)", endpoint(slot))
         })?;
         Ok(Pine { s })
     }
@@ -129,16 +146,34 @@ impl Pine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixListener;
 
-    /// A fake PINE server answering MsgRead64 with the address itself, to check framing and batching.
-    #[test]
-    fn batched_read_framing() {
-        let dir = std::env::temp_dir().join(format!("rc-trace-pine-{}", std::process::id()));
+    /// A listener for a fake PINE server and the address to connect to: a socket file on Unix, a loopback port
+    /// elsewhere.
+    #[cfg(unix)]
+    fn listen(tag: &str) -> (std::os::unix::net::UnixListener, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("rc-trace-pine{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("pcsx2.sock");
         let _ = std::fs::remove_file(&path);
-        let l = UnixListener::bind(&path).unwrap();
+        (std::os::unix::net::UnixListener::bind(&path).unwrap(), path)
+    }
+    #[cfg(not(unix))]
+    fn listen(_tag: &str) -> (std::net::TcpListener, std::net::SocketAddr) {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let a = l.local_addr().unwrap();
+        (l, a)
+    }
+    #[cfg(unix)]
+    fn cleanup(path: &std::path::Path) { std::fs::remove_dir_all(path.parent().unwrap()).ok(); }
+    #[cfg(not(unix))]
+    fn cleanup(_addr: &std::net::SocketAddr) {}
+
+    /// A fake PINE server answering MsgRead64 with the address itself, to check framing and batching.
+    #[test]
+    // The Unix socket path is used again after the connect; the Windows address is `Copy` (clippy flags the borrow there).
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    fn batched_read_framing() {
+        let (l, path) = listen("");
         let server = std::thread::spawn(move || {
             let (mut s, _) = l.accept().unwrap();
             let mut msgs = 0;
@@ -162,7 +197,7 @@ mod tests {
             }
             msgs
         });
-        let mut c = Pine { s: UnixStream::connect(&path).unwrap() };
+        let mut c = Pine { s: Stream::connect(&path).unwrap() };
         let n = 120_000 * 8;
         let r = c.read(0x10_0000, n).unwrap();
         drop(c);
@@ -170,17 +205,15 @@ mod tests {
         for (i, w) in r.chunks(8).enumerate() {
             assert_eq!(u64::from_le_bytes(w.try_into().unwrap()), 0x10_0000 + 8 * i as u64);
         }
-        std::fs::remove_dir_all(&dir).ok();
+        cleanup(&path);
     }
 
     /// `read_many`: one message, the replies in request order.
     #[test]
+    // The Unix socket path is used again after the connect; the Windows address is `Copy` (clippy flags the borrow there).
+    #[allow(clippy::needless_borrows_for_generic_args)]
     fn read_many_framing() {
-        let dir = std::env::temp_dir().join(format!("rc-trace-pine-many-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("pcsx2.sock");
-        let _ = std::fs::remove_file(&path);
-        let l = UnixListener::bind(&path).unwrap();
+        let (l, path) = listen("-many");
         let server = std::thread::spawn(move || {
             let (mut s, _) = l.accept().unwrap();
             let mut h = [0u8; 4];
@@ -193,12 +226,12 @@ mod tests {
             reply[..4].copy_from_slice(&n.to_le_bytes());
             s.write_all(&reply).unwrap();
         });
-        let mut c = Pine { s: UnixStream::connect(&path).unwrap() };
+        let mut c = Pine { s: Stream::connect(&path).unwrap() };
         let addrs = [0x15f5c8u32, 0x13f3d0, 0x100];
         let r = c.read_many(&addrs).unwrap();
         server.join().unwrap();
         for (a, w) in addrs.iter().zip(&r) { assert_eq!(u64::from_le_bytes(*w), !(*a as u64)); }
         assert!(c.read_many(&[3]).is_err());
-        std::fs::remove_dir_all(&dir).ok();
+        cleanup(&path);
     }
 }
