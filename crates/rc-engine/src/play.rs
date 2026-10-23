@@ -430,7 +430,7 @@ fn tick(
                 let a = m.instance.and_then(|ii| occl.as_ref()?.anim_index(ii)).and_then(|k| anim.as_ref()?.instances.get(k)).map(|i| i.state);
                 let a = a.map_or(String::new(), |s| format!(" seq {}/{} f {}/{} t {:.2} speed {:.2} rate {:.3} flags {}", s.seq_a, s.seq_b, s.frame_a, s.frame_b, s.t, s.speed, s.rate, s.flags));
                 let pv: Vec<String> = std::env::var("RC_MOBY_PV").unwrap_or_default().split(',').filter_map(|x| usize::from_str_radix(x.trim(), 16).ok()).map(|o| format!("+{o:#x}={}", m.pv_i(o))).collect();
-                println!("moby trace tick {}: #{} class {:#06x} state {} sub {} mode {:#x} upd {} drawn {} pos ({:.1}, {:.1}, {:.1}) hero at {:.1}{a} {}", p.ticks, m.index, m.o_class, m.state, m.sub_state, m.mode, m.update_dist, m.drawn, m.pos[0], m.pos[1], m.pos[2], d, pv.join(" "));
+                println!("moby trace tick {}: #{} class {:#06x} state {} sub {} mode {:#x} upd {} drawn {} group {} pvars #{} pos ({:.1}, {:.1}, {:.1}) hero at {:.1}{a} {}", p.ticks, m.index, m.o_class, m.state, m.sub_state, m.mode, m.update_dist, m.drawn, m.group, m.pvar_index, m.pos[0], m.pos[1], m.pos[2], d, pv.join(" "));
             }
         }
     }

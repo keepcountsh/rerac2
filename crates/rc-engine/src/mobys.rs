@@ -497,6 +497,13 @@ impl Mobys {
             tie_groups: g2::instance_groups(&lv.gameplay, "tie_groups").map_err(|e| eprintln!("mobys: tie groups: {e}")).unwrap_or_default(),
             shrub_groups: g2::instance_groups(&lv.gameplay, "shrub_groups").map_err(|e| eprintln!("mobys: shrub groups: {e}")).unwrap_or_default(),
         };
+        // `RC_PVAR_FIXUPS=12,40`: those pvar blocks' pointer fixups and moby links (byte offsets; a dev trace).
+        if let Ok(list) = std::env::var("RC_PVAR_FIXUPS") {
+            for k in list.split(',').filter_map(|x| x.trim().parse::<usize>().ok()) {
+                let offs = |v: &[(usize, usize)]| v.iter().filter(|f| f.0 == k).map(|f| format!("{:#x}", f.1)).collect::<Vec<_>>().join(" ");
+                println!("pvars #{k}: {} bytes, pointer fixups [{}], moby links [{}]", data.pvars.get(k).map_or(0, |p| p.len()), offs(&data.fixups), offs(&data.links));
+            }
+        }
         let ground = |p: [f32; 3]| -> Option<f32> {
             let coll = lv.collision.as_ref()?;
             rc_game::collision::coll_line(coll, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.01], rc_game::collision::QueryFlags(2)).map(|o| o.point[2])
