@@ -455,6 +455,16 @@ pub fn move_toward(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, offset: f32, goa
     move_step(w, id, ctx, yaw, goal)
 }
 
+/// The enemies' scene rule (`0x1a8f00` = 2, after their checks): no collision, hidden and not a target
+/// (`+0x98` = 0, mode `& 0xefff | 0x41`), and nothing more this tick. Outside a scene their update shows them again.
+/// Returns whether a scene plays.
+pub fn scene_hide(m: &mut super::Moby, ctx: &Ctx) -> bool {
+    if ctx.game.scenes.mode != crate::scene::SCENE { return false; }
+    m.has_collision = false;
+    m.mode = (m.mode & 0xefff) | 0x41;
+    true
+}
+
 /// `0x32ce98(m)`: the frame's move in place, facing as it is (it slows to a stop).
 pub fn hold(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> i32 {
     let (yaw, pos) = (w.mobys[id].rot[2], w.mobys[id].pos);

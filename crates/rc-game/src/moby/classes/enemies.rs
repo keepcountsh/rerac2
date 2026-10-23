@@ -548,6 +548,10 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         w.delete(id);
         return;
     }
+    if ai::scene_hide(&mut w.mobys[id], ctx) {
+        w.changed = true;
+        return;
+    }
     let coll = w.class(0x0b0a).is_some_and(|c| c.has_collision);
     let m = &mut w.mobys[id];
     m.mode = (m.mode & 0xffbe) | crate::moby::mode::TARGET;
@@ -1092,6 +1096,15 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         return;
     }
     if w.mobys[id].state != 0xc && w.mobys[id].sub_state != 2 { ai::hold(w, id, ctx); }
+    if ai::scene_hide(&mut w.mobys[id], ctx) {
+        // Its parts with it, while it has both.
+        let ps = parts(w, id, 0x2a0);
+        if ps.iter().all(|p| p.is_some()) {
+            for p in ps.into_iter().flatten() { ai::scene_hide(&mut w.mobys[p], ctx); }
+        }
+        w.changed = true;
+        return;
+    }
     let coll = w.class(0x0b0b).is_some_and(|c| c.has_collision);
     let m = &mut w.mobys[id];
     m.mode = (m.mode & 0xffbe) | crate::moby::mode::TARGET;
