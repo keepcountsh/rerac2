@@ -411,6 +411,8 @@ pub struct MobyWorld {
     /// `0x2e7920`'s list: the mobys whose update registered their class's draw callback this tick, in that order
     /// (crate::fx runs them after the tick). A moby drawn as another's piece runs the piece's update and has none.
     pub draws: Vec<usize>,
+    /// `RC_DEATH_LOG` (crate::moby::ai::death_log): the ticks since each enemy's death hit, by moby and its serial.
+    pub death_watch: std::collections::HashMap<usize, (u32, u32)>,
     /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
     pub groups: Vec<Vec<usize>>,
     /// The ties' and shrubs' world matrices (`0x1b249c` / `0x1b2380`, 0x40 each: rows, position) and their groups
@@ -600,6 +602,19 @@ impl MobyWorld {
             if self.mobys[id].mode & mode::NO_ADVANCE == 0 { ctx.host.advance(&self.mobys[id]); }
             if let Some(f) = self.mobys[id].update { f(self, id, ctx); }
             if self.mobys[id].mode & mode::NO_MATRIX == 0 { self.rebuild(id, &*ctx.host); }
+        }
+        if ai::death_log() { self.watch_deaths(ctx); }
+    }
+
+    /// `RC_DEATH_LOG`: an enemy still about 300 ticks after its death hit (crate::moby::ai::take_damage adds it) is
+    /// dumped once — a death that never ends; one that went is forgotten.
+    fn watch_deaths(&mut self, ctx: &Ctx) {
+        let mobys = &self.mobys;
+        self.death_watch.retain(|i, (serial, _)| mobys.get(*i).is_some_and(|m| m.state < 0x80 && m.serial == *serial));
+        let ids: Vec<usize> = self.death_watch.keys().copied().collect();
+        for i in ids {
+            let n = { let e = self.death_watch.get_mut(&i).unwrap(); e.1 += 1; e.1 };
+            if n == 300 { println!("death stuck tick {}: 300 ticks after its death hit: {}", ctx.game.frame, ai::death_line(self, i, ctx)); }
         }
     }
 

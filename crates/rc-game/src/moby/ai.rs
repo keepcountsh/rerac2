@@ -33,6 +33,28 @@
 use super::{Ctx, Moby, MobyWorld};
 use crate::hero::physics::*;
 
+/// `RC_DEATH_LOG=1` (dev): the enemies' deaths on stdout — each hit that leaves one without health ([`take_damage`]),
+/// each tick of a dying flight ([`flight`]), and one dump of any enemy still about 300 ticks after its health ran
+/// out ([`MobyWorld::death_watch`]): a death that never ends.
+pub fn death_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RC_DEATH_LOG").is_ok_and(|v| v != "0"))
+}
+
+/// The death log's view of a moby: its states, place, collision, reaction block and animation.
+pub fn death_line(w: &MobyWorld, id: usize, ctx: &Ctx) -> String {
+    let m = &w.mobys[id];
+    let r = react(m);
+    let hp = if m.mode & AI != 0 { m.pv_f(health(m)) } else { f32::NAN };
+    let a = ctx.host.anim(m).map_or("no anim".to_string(), |a| format!("seq {}/{} frame {}/{} t {:.2} speed {:.2} flags {:#x}", a.seq_a, a.seq_b, a.frame_a, a.frame_b, a.t, a.speed, a.flags));
+    format!(
+        "#{id} class {:#06x} state {} sub {} ticks {} pos ({:.2}, {:.2}, {:.2}) hp {hp:.2} mode {:#x} coll {} upd {} | react: hurt state {} sub {} opts {:#x} phase {} vel ({:.3}, {:.3}, {:.3}) land seq {} keys {} / {} g {:.4} / {:.4} | {a}",
+        m.o_class, m.state, m.sub_state, m.state_ticks, m.pos[0], m.pos[1], m.pos[2], m.mode, m.has_collision, m.update.is_some(),
+        m.pv_b(r + 0x10), m.pv_i(r + 0x48), m.pv_s(r + 0x38), m.pv_b(r + 0x1a), m.pv_f(r + 0x80), m.pv_f(r + 0x84), m.pv_f(r + 0x88),
+        m.pv_b(r + 0x15), m.pv_f(r + 0x54), m.pv_f(r + 0x60), m.pv_f(r + 0x4c), m.pv_f(r + 0x50),
+    )
+}
+
 /// The mode bit of the mobys the framework works on.
 pub const AI: u16 = 0x20;
 
@@ -825,6 +847,20 @@ fn react_start(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, dir: [f32; 4], kind:
 /// hurting with `+0x75` / mid-flight), the reaction starts (the hit's direction, else straight back) and the moby
 /// goes into its hurt state. Returns the kind.
 pub fn take_damage(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, flag: bool) -> i32 {
+    if !death_log() { return damage_tick(w, id, ctx, flag); }
+    let hp = |w: &MobyWorld| if w.mobys[id].mode & AI != 0 { w.mobys[id].pv_f(health(&w.mobys[id])) } else { 1.0 };
+    let before = hp(w);
+    let kind = damage_tick(w, id, ctx, flag);
+    let after = hp(w);
+    if after <= 0.0 && after != before {
+        println!("death hit tick {}: kind {kind} (hp {before:.2} → {after:.2}) {}", ctx.game.frame, death_line(w, id, ctx));
+        let serial = w.mobys[id].serial;
+        w.death_watch.entry(id).or_insert((serial, 0));
+    }
+    kind
+}
+
+fn damage_tick(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, flag: bool) -> i32 {
     let m = &w.mobys[id];
     if m.mode & AI == 0 { return 0; }
     let (h, r) = (health(m), react(m));
@@ -930,6 +966,7 @@ pub fn flight(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> u32 {
     let r = react(&w.mobys[id]);
     let res = if w.mobys[id].pv_b(r + 0x1a) < 3 { fly(w, id, ctx) } else { 0 };
     if res & 2 != 0 { w.mobys[id].set_pv_b(r + 0x18, 0); }
+    if death_log() && w.mobys[id].pv_s(r + 0x38) & 1 != 0 { println!("dying flight tick {}: res {res:#x} {}", ctx.game.frame, death_line(w, id, ctx)); }
     res
 }
 
