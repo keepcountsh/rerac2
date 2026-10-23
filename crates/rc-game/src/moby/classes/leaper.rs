@@ -811,7 +811,7 @@ fn bite(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let damage = w.mobys[id].pv_b(0x34) as f32;
         for j in 0..5 {
             ai::attack_joint(w, id, ctx, 0.5, damage, 1.0, j, 0x400_0001, 0, 1, 0);
-            //  x1bf918: the last moby the sphere touched.
+            // 0x1bf918: the last moby the sphere touched.
             let hit_him = ctx.hero_moby.is_some() && w.hits.last_target == ctx.hero_moby;
             if hit_him { w.mobys[id].set_pv_b(0x35c, 1); }
         }
