@@ -8,6 +8,7 @@
 //! * 0x0a92 / 0x0a93 (`0x3cfcc0`): float on that water ([`update_float`]).
 //! * 0x0a53 (`0x41def0`): the floating bridges, tilting under Ratchet or sinking with him ([`update_0a53`]).
 //! * 0x0a56 (`0x3c3ad8`): the lily pads, on the floating platforms' rocking ([`update_0a56`]).
+//! * 0x0cb5 (`0x3efbc8`): the targets the Dynamo's shot (class 0x825) switches on ([`update_0cb5`]).
 //!
 //! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
 //! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
@@ -571,6 +572,78 @@ pub fn update_0a56(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             if m.drawn == 0 || 32.0 <= dist2(m.pos, ctx.host.camera_pos()) { return; }
             w.mobys[id].set_pv_f(BLOCK + 8, water);
             floater::step(w, id, ctx, BLOCK);
+        }
+        _ => {}
+    }
+}
+
+/// 0x0cb5 (`0x3efbc8`, 12 placed): a target that switches its group on. At its set-up it rises 1 over its place,
+/// keeps its pitch (`+0x14`) and goes in the target list (mode 0x1000), its sequence 0. Each tick its hit check
+/// (`0x3efdb8`): a hit from the Dynamo's shot (class 0x825) pokes its group (`0x31c970`: each member's `+0xbc` = 2,
+/// itself too). Poked (state 1) it leaves the list, sequence 1, and stays on (state 2): with a time `+0x00` it blinks
+/// between its two glows (`$gp+0x1cc0` / `+0x1cc4`) every 10 ticks for `+0x04` ticks, then (its `+0xbc` cleared,
+/// sequence 3) back in the list, waiting again (1); without one it keeps the "on" glow. The platforms it starts
+/// (0x0936 / 0x08fa / 0x0a00, `0x3b3310`) and the Dynamo are not ported.
+pub fn update_0cb5(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    const GLOW_OFF: u32 = 0x8000_30e1;
+    const GLOW_ON: u32 = 0x8000_df2a;
+    use super::props::{seq, wrapped};
+    if let Some(h) = w.hit_message(id).filter(|h| h.tmpl.flags & 0x10000 != 0) {
+        let dynamo = h.tmpl.source.and_then(|s| w.mobys.get(s)).is_some_and(|s| s.o_class == 0x825);
+        let g = w.mobys[id].group;
+        if dynamo && g != -1 {
+            for i in usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default() { w.mobys[i].timer = 2; }
+        }
+    }
+    w.clear_hit(id);
+    match w.mobys[id].state {
+        0 => {
+            let m = &mut w.mobys[id];
+            m.pos[2] += 1.0;
+            let pitch = m.rot[0];
+            m.set_pv_f(0x14, pitch);
+            m.state = 1;
+            m.set_pv_i(0x50, 0);
+            m.mode |= crate::moby::mode::TARGET;
+            if seq(w, id, ctx) != 0 { ctx.host.set_anim(&w.mobys[id], 0, 0, 0xc); }
+        }
+        1 => {
+            if wrapped(w, id, ctx) && seq(w, id, ctx) != 0 { ctx.host.set_anim(&w.mobys[id], 0, 0, 0); }
+            if w.mobys[id].timer == 0 { return; }
+            w.mobys[id].mode &= !crate::moby::mode::TARGET;
+            ctx.host.set_anim(&w.mobys[id], 1, 0, 0);
+            let m = &mut w.mobys[id];
+            m.state = 2;
+            if m.pv_i(0) != 0 {
+                m.set_pv_i(0x10, 10);
+                m.set_pv_i(0xc, m.pv_i(4));
+            } else {
+                m.glow = GLOW_ON;
+                m.set_pv_i(0xc, 0);
+            }
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            if m.pv_i(0) != 0 {
+                let mut t = m.pv_i(0x10);
+                if crate::moby::countdown(&mut t) {
+                    m.glow = if m.glow == GLOW_OFF { GLOW_ON } else { GLOW_OFF };
+                    t = 10;
+                }
+                m.set_pv_i(0x10, t);
+                let mut left = m.pv_i(0xc);
+                if crate::moby::countdown(&mut left) { m.timer = 0; }
+                m.set_pv_i(0xc, left);
+            }
+            let wrap = wrapped(w, id, ctx);
+            if wrap && seq(w, id, ctx) == 1 { ctx.host.set_anim(&w.mobys[id], 2, 0, 0); }
+            if w.mobys[id].timer == 0 && wrap {
+                w.mobys[id].mode |= crate::moby::mode::TARGET;
+                ctx.host.set_anim(&w.mobys[id], 3, 0, 0);
+                let m = &mut w.mobys[id];
+                m.state = 1;
+                m.glow = GLOW_OFF;
+            }
         }
         _ => {}
     }

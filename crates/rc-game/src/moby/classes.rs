@@ -89,6 +89,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a8d => Some(flower::update_arm),
         0x0a8e => Some(flower::update_core),
         0x0b1a => Some(flower::update_0b1a),
+        0x0cb5 => Some(oozla::update_0cb5),
         _ => None,
     }
 }
