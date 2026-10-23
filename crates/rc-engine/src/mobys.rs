@@ -468,6 +468,7 @@ impl Mobys {
                 update: rc_game::moby::classes::update_for(c.o_class as i16),
                 scale: c.class.header.scale,
                 has_collision: c.class.header.collision != 0,
+                metal: c.class.header.metal_count != 0,
                 mode: c.class.header.mode_bits as u16,
                 glow: c.class.header.glow_rgba as u32,
                 animated: m.anim.get(ci).and_then(|a| a.sequences.first()).and_then(Option::as_ref).is_some_and(|q| q.header.frame_count >= 2),
@@ -692,11 +693,11 @@ impl CreatedDraw {
                 }
             };
             let model = moby_render::extra_model(m.rows, m.scale, m.pos);
-            // MobyProc's shine gate (crate::moby_lod: `+0x73` is 0x18 for a class with metal packets): the metal pass
-            // (chrome, glass: the ship's canopy) within its distance, with its sphere-map basis.
+            // MobyProc's shine gate (crate::moby_lod, the moby's `+0x63`): the metal pass (chrome, glass: the ship's
+            // canopy) within its distance, with its sphere-map basis.
             let (shine, e) = view.map_or((0, [[0.0; 3]; 3]), |(eye, cam, tans)| {
                 let h = &class.class.header;
-                let shine_distance = if h.metal_count > 0 { crate::moby_lod::SHINE_DISTANCE } else { 0 };
+                let shine_distance = m.shine;
                 let inp = crate::moby_lod::ProcInput { position: m.pos, rows: m.rows, scale: m.scale, draw_distance: i32::MAX, lod_trans: h.lod_trans, shine_distance, alpha: 0x80 };
                 let Some(ac) = lv.anim.get(c.class) else { return (0, [[0.0; 3]; 3]) };
                 let sphere = crate::moby_lod::world_sphere(&inp, crate::moby_lod::seq_sphere(ac, &c.state, h.bsphere));

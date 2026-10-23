@@ -517,6 +517,8 @@ fn tick(
     if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
         (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
         h.mode |= rc_game::moby::mode::KEEP_ROWS;
+        // `0x2a94d8`: his shine distance.
+        h.shine = 0x10;
         // `0x2b2b48` → `0x31a8e4`: his light from the level's light regions where he is.
         if let Some((light, ambient)) = rc_game::light::region_light(&mobys.level.light_regions, h.pos) { (h.light, h.ambient) = (light, ambient); }
     }
@@ -577,9 +579,10 @@ fn tick(
             let hidden = m.state >= 0x80 || m.mode & 1 != 0;
             if m.update.is_some() || m.drive {
                 o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), hidden);
-                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist, m.shine);
             } else {
                 o.set_hidden(ii, hidden);
+                o.set_shine(ii, m.shine);
             }
         }
     }
@@ -809,7 +812,11 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
         };
         let m = if o_class == 0 {
             match mobys.hero_moby {
-                Some(h) => h,
+                // `0x305428` makes his moby anew (`0x311418`): a class with metal packets gets 0x18.
+                Some(h) => {
+                    if lv.mobys.classes[ci].class.header.metal_count != 0 { mobys.world.mobys[h].shine = 0x18; }
+                    h
+                }
                 None => {
                     actors.push((usize::MAX, 0xff));
                     continue;
@@ -956,9 +963,10 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let hidden = m.state >= 0x80 || m.mode & 1 != 0;
             if m.update.is_some() || m.drive {
                 o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), hidden);
-                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist, m.shine);
             } else {
                 o.set_hidden(ii, hidden);
+                o.set_shine(ii, m.shine);
             }
         }
         // Ratchet: at his track with the scene's sequence and his head's scale (`0x2d51f8`), else as he stands.

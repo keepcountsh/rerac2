@@ -117,6 +117,8 @@ pub struct ClassInfo {
     pub glow: u32,
     /// Class header +0x46: the class's type (0x16: a target the aims prefer, 0x14 / 0x12: the wrench's exceptions).
     pub kind: i16,
+    /// Class header byte 6 ≠ 0: metal (shine) packets.
+    pub metal: bool,
     /// Per sequence, its reaction record (sequence `+0x14`, [`ai::Reaction`]).
     pub reactions: Vec<Option<ai::Reaction>>,
     /// The break pieces' centre and points (1/1024 of the moby's scale; `rc_formats::moby::MobyPiece`), by piece.
@@ -183,6 +185,10 @@ pub struct Moby {
     pub glow: u32,
     /// `+0x7c` as a piece mask (0x8000 | 1 << k): drawn as break piece k only (crate::moby::shards).
     pub piece: Option<u8>,
+    /// `+0x63`: the shine distance MobyProc's metal gate reads (0: no metal pass): `0x311418` gives a class with metal
+    /// packets 0x18 (created mobys, the scene actors `0x305428`), the static spawn 8 (`0x3035c8`), Ratchet's items 0x10
+    /// (`0x2afc68`) and Ratchet 0x10 every tick (`0x2a94d8`).
+    pub shine: u8,
     /// The port's: which creation this slot holds (MobyWorld's count at `CreateMoby`; 0 for the placed ones), so the
     /// engine's state of a deleted moby is not carried over to the next one created in its slot.
     pub serial: u32,
@@ -295,7 +301,7 @@ impl Moby {
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0, freed_at: 0,
             // `0x311418`: `+0x38` = 0x40404000000000.
-            light: 0, ambient: [0x40; 3], glow: 0, piece: None,
+            light: 0, ambient: [0x40; 3], glow: 0, piece: None, shine: 0,
         };
         match class {
             Some(c) => {
@@ -310,6 +316,7 @@ impl Moby {
                     m.mode |= mode::GLOW;
                     m.glow = c.glow;
                 }
+                if c.metal { m.shine = 0x18; }
             }
             None => m.mode |= mode::NO_UPDATE | 5,
         }
@@ -499,6 +506,8 @@ impl MobyWorld {
             let b = &r.base;
             let class = self.class(b.o_class as i16).cloned();
             let mut m = Moby::init(self.mobys.len(), b.o_class as i16, class.as_ref());
+            // `0x3035c8`: a placed moby's shine distance 8.
+            if m.shine != 0 { m.shine = 8; }
             m.uid = r.extra[0] as i16;
             (m.bolts, m.xp) = if alt[i] { (r.extra[2] as i16, b.unknown_10 as i16) } else { (r.extra[1] as i16, r.extra[3] as i16) };
             m.mission = b.unknown_4 as u8;

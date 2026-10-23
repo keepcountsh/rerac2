@@ -1076,7 +1076,7 @@ fn spawn_mobys(
                 scale: p.scale,
                 draw_distance: inst.draw_distance as i16 as i32,
                 lod_trans: class.class.header.lod_trans,
-                shine_distance: if class.class.header.metal_count > 0 { moby_lod::SHINE_DISTANCE } else { 0 },
+                shine_distance: if class.class.header.metal_count > 0 { moby_lod::SHINE_PLACED } else { 0 },
                 alpha: 0x80,
             }),
             class: p.class,
@@ -1230,9 +1230,9 @@ pub struct MobyLook {
 }
 
 impl MobyLook {
-    /// A fresh moby of `class` as `InitMobyInstance` (level01 0x263488) leaves it: alpha 0x80; mode 0x10 and +0x90 =
-    /// class +0x40 when that is non-zero; +0x73 = 0x18 when the class has metal packets. The other mode bits are not
-    /// taken (the undriven statics keep the blend they had).
+    /// A placed moby of `class` as `InitMobyInstance` and the static spawn leave it: alpha 0x80; mode 0x10 and +0x90 =
+    /// class +0x40 when that is non-zero; the shine distance `+0x63` 8 when the class has metal packets
+    /// ([`moby_lod::SHINE_PLACED`]). The other mode bits are not taken (the undriven statics keep the blend they had).
     pub fn of_class(class: &LevelMobyClass) -> Self {
         let h = &class.class.header;
         let glow = h.glow_rgba != 0;
@@ -1240,7 +1240,7 @@ impl MobyLook {
             alpha: 0x80,
             mode: if glow { 0x10 } else { 0 },
             glow: h.glow_rgba as u32,
-            shine_distance: if h.metal_count > 0 { moby_lod::SHINE_DISTANCE } else { 0 },
+            shine_distance: if h.metal_count > 0 { moby_lod::SHINE_PLACED } else { 0 },
             draw_dist: None,
             late: None,
         }
@@ -1876,11 +1876,12 @@ fn update_extra_metal(
 impl MobyOcclusion {
 
     /// Going Commando's moby fields MobyProc reads of static instance `ii` this tick: its alpha (`+0x23`), the glow list
-    /// (mode bit 0x10 and the word `+0x78`) and its draw distance (`+0x32`). Its other mode bits do not mean R&C1's
-    /// blends, so the instance keeps its own; the shine distance stays its class's.
-    pub fn game_look(&mut self, ii: usize, alpha: u8, mode: u16, glow: u32, draw_dist: i16) {
+    /// (mode bit 0x10 and the word `+0x78`), its draw distance (`+0x32`) and its shine distance (`+0x63`). Its other
+    /// mode bits do not mean R&C1's blends, so the instance keeps its own.
+    pub fn game_look(&mut self, ii: usize, alpha: u8, mode: u16, glow: u32, draw_dist: i16, shine: u8) {
         if let Some(l) = self.look.get_mut(ii) {
             l.alpha = alpha;
+            l.shine_distance = shine;
             l.mode = l.mode & !0x10 | mode & 0x10;
             l.glow = glow;
             l.draw_dist = Some(draw_dist);
@@ -1906,6 +1907,11 @@ impl MobyOcclusion {
     /// without an update still goes when a class deletes or hides it (a scene's props).
     pub fn set_hidden(&mut self, ii: usize, hidden: bool) {
         if let Some(h) = self.driven_hidden.get_mut(ii) { *h = hidden; }
+    }
+
+    /// The shine distance (`+0x63`) of undriven static instance `ii`.
+    pub fn set_shine(&mut self, ii: usize, shine: u8) {
+        if let Some(l) = self.look.get_mut(ii) { l.shine_distance = shine; }
     }
 
     /// The placement the moby loop gave static instance `ii` this tick: position (+0x10), rotation rows

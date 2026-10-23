@@ -355,6 +355,7 @@ fn create_hand(world: &mut MobyWorld, ctx: &mut Ctx) {
     let m = &mut world.mobys[id];
     m.draw_dist = 0x20;
     m.drawn = 1;
+    if m.shine != 0 { m.shine = 0x10; }
     m.parent = ctx.hero_moby;
     it.hand = Some(id);
     it.hand_class = r.class;
@@ -445,6 +446,7 @@ pub fn feet_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
             let m = &mut world.mobys[id];
             m.draw_dist = 0x20;
             m.drawn = 1;
+            if m.shine != 0 { m.shine = 0x10; }
             it.feet[k] = Some(id);
         }
     }
@@ -480,6 +482,7 @@ pub fn head_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
         let m = &mut world.mobys[id];
         m.draw_dist = 0x20;
         m.drawn = 1;
+        if m.shine != 0 { m.shine = 0x10; }
         it.head = Some(id);
     }
     let Some(id) = it.head else { return };

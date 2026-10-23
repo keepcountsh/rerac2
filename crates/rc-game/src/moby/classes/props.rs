@@ -770,6 +770,8 @@ fn ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
         pm.mode |= crate::moby::mode::NO_UPDATE | crate::moby::mode::NO_MATRIX | crate::moby::mode::KEEP_ROWS;
         if mirror { pm.mode |= crate::moby::mode::MIRROR; }
         (pm.draw_dist, pm.drawn, pm.update_dist) = (0x1ff, 1, 0xff);
+        // Their shine distance (`+0x63`) 8.
+        if pm.shine != 0 { pm.shine = 8; }
         ctx.game.ship_parts.push(p);
     }
     w.mobys[ship].mode |= 0x20;
