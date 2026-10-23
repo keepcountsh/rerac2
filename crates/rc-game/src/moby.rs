@@ -411,6 +411,10 @@ pub struct MobyWorld {
     /// `0x2e7920`'s list: the mobys whose update registered their class's draw callback this tick, in that order
     /// (crate::fx runs them after the tick). A moby drawn as another's piece runs the piece's update and has none.
     pub draws: Vec<usize>,
+    /// The placed instances whose moby went and whose slot a created moby took before the engine drew the going: it
+    /// hides them (the original draws a slot's moby, so a new one replaces the old; the port draws placed instances
+    /// apart, by the moby naming them).
+    pub released: Vec<usize>,
     /// `RC_DEATH_LOG` (crate::moby::ai::death_log): the ticks since each enemy's death hit, by moby and its serial.
     pub death_watch: std::collections::HashMap<usize, (u32, u32)>,
     /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
@@ -538,6 +542,7 @@ impl MobyWorld {
         let id = self.mobys.iter().position(|m| m.state >= 0xfe).unwrap_or(self.mobys.len());
         let mut m = Moby::init(id, o_class, class.as_ref());
         m.pvars = vec![0; PVAR_BYTES];
+        if let Some(ii) = self.mobys.get(id).and_then(|old| old.instance) { self.released.push(ii); }
         self.created += 1;
         m.serial = self.created;
         if id == self.mobys.len() { self.mobys.push(m) } else { self.mobys[id] = m }
