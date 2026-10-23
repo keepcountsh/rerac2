@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/rerac-logo.png" alt="ReRAC2" width="480">
+  <img src="docs/assets/rerac2-logo.png" alt="ReRAC2" width="480">
 </p>
 
 <h1 align="center">ReRAC2</h1>
