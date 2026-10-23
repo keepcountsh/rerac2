@@ -1,7 +1,9 @@
 # Workflow: the Ghidra project
 
 Tools: `tools/ghidra/` (README there). Conventions for names: `docs/plan/decomp_workflow.md`. Run every command
-from the repo root with the Ghidra GUI open on the project and the GhidraMCP plugin serving `127.0.0.1:8089`.
+from the repo root with the Ghidra GUI open on the project and the GhidraMCP plugin serving `127.0.0.1:8089`. The plugin is [bethington/ghidra-mcp](https://github.com/bethington/ghidra-mcp)
+(not LaurieWired's GhidraMCP, which has no project or import endpoints); if its Server Port option is set to another
+port, set `GHIDRA_MCP_URL` (e.g. `http://127.0.0.1:18489`) for the scripts, as for the plugin's MCP bridge.
 
 ## What the project holds, and why it is disposable
 
