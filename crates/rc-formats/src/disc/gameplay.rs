@@ -222,12 +222,15 @@ pub fn pvar_fixups(gameplay: &[u8], name: &str) -> Result<Vec<(usize, usize)>> {
     Ok(out)
 }
 
+/// The shared words and their pvar pointers `(pvar index, pvar offset, data offset)` ([`shared_data`]).
+pub type SharedData = (Vec<u8>, Vec<(usize, usize, usize)>);
+
 /// The mobys' shared words (section 21): `s32 bytes, s32 count, pad[2]`, the data (`bytes`, zero on the levels seen),
 /// then `count` pairs `{(pvar offset << 16) | pvar index, data offset}`: the loader points that pvar word at that
 /// place of the data, so the mobys listed with one offset share the words there (Oozla's 0x09a2 creatures: a 0x10
 /// block per group, their `+0x33c` / `+0x368` / `+0x36c` / `+0x370` at its words 0..3; live, the block sits after the
 /// pvar data). Returns the data and `(pvar index, pvar offset, data offset)`.
-pub fn shared_data(gameplay: &[u8]) -> Result<(Vec<u8>, Vec<(usize, usize, usize)>)> {
+pub fn shared_data(gameplay: &[u8]) -> Result<SharedData> {
     let Some(s) = section(gameplay, "shared_data")? else { return Ok((Vec::new(), Vec::new())) };
     let b = Buf(s);
     let (bytes, count) = (b.i32(0)?, b.i32(4)?);

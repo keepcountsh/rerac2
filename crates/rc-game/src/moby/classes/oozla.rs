@@ -193,6 +193,8 @@ pub fn update_0a17(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         .and_then(|c| ctx.level.cuboid_place(c))
         .map_or(m.pv_f(0x14), |(centre, _)| centre[2] + 0.15);
     if m.pv_f(0x20) < ctx.host.camera_pos()[2] {
+        // The game's own 3.14 (not π).
+        #[allow(clippy::approx_constant)]
         let phase = (ctx.game.frame % 360) as f32 * 0.017_444_445 - 3.14;
         ctx.game.water_z = ctx.game.water_base + phase.sin() * 0.1;
     }
