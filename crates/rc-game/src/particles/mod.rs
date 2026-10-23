@@ -200,8 +200,8 @@ pub fn puff(sys: &mut Particles, rng: &mut Rng, jitter: f32, grow_lo: f32, grow_
 }
 
 /// `0x33f550(size, pull, offset, moby, rgba, joint −1, def 1, life, facing, far)`: a glow (type 0x59) on moby `moby`
-/// at `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` of the way toward
-/// the camera, for `life` ticks (−1: while the moby lives); `facing`: faded unless it faces the camera
+/// at `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` units toward the
+/// camera, for `life` ticks (−1: while the moby lives); `facing`: faded unless it faces the camera
 /// ([`update_glow`]); additive, near 1 / far `far` (the caller's, else the moby's draw distance `+0x32`) >> 5, ×32. Starts at the moby's position plus the offset (unturned): its
 /// update places it the same tick.
 #[allow(clippy::too_many_arguments)]
@@ -323,7 +323,7 @@ pub fn update_burst(sys: &mut Particles, i: usize) {
 }
 
 /// `0x33f6e8`: the life down (out, or its moby gone: killed); at its moby's position plus its rows × the offset, then
-/// pulled toward the camera at `cam` by its pull.
+/// pulled its pull (in units) toward the camera at `cam`.
 pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld, cam: [f32; 3]) {
     let r = &mut sys.pool.recs[i];
     let alive = rec::i16(r, 0xa) < 0 || !dec_life(r);
@@ -345,8 +345,12 @@ pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld
         let c = if -d < 0.0 { c & 0x05ff_ffff } else { c & 0xff_ffff | ((r[7] as f32 * -d) as i32 as u32) << 24 };
         rec::set_u32(r, 4, c);
     }
+    // `0x2ef138(pull, d, d)` on `d` = camera − it: `pull` units toward the camera (a distance, not a share of the way).
     let pull = rec::ff(r, 0x28);
-    rec::set_v3(r, 0x10, std::array::from_fn(|k| p[k] + (cam[k] - p[k]) * pull));
+    let d: [f32; 3] = std::array::from_fn(|k| cam[k] - p[k]);
+    let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let k = if 0.0 < l { pull / l } else { 0.0 };
+    rec::set_v3(r, 0x10, std::array::from_fn(|i| p[i] + d[i] * k));
 }
 
 /// `UpdateParts` `0x331150`: every live record up to the high water mark at entry, in pool order (the mobys and the

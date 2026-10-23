@@ -387,7 +387,7 @@ impl Scenes {
     /// Ratchet's ship (the actor of class 0x0d54) shows the scene's actor 1 as seen from a view of its own: `0x2e6350`
     /// hides it from the frame and draws it alone into a 256×256 image (cleared to black, every texel's alpha then set
     /// to 0x80 by `0x2f16f8`, so the screen is opaque) with that view and the frame's projection, then draws the image
-    /// on the screen's corners — the ship's frame through its matrix, then 0.15 of the way to the camera `camera`.
+    /// on the screen's corners — the ship's frame through its matrix, then 0.15 toward the camera `camera`.
     pub fn ship_screen(&self, level: i32, world: &crate::moby::MobyWorld, camera: V3) -> Option<ShipScreen> {
         let p = self.player.as_ref().filter(|_| level == 0 && self.mode == SCENE)?;
         if rc_formats::disc::scene::record_of(p.id) != 0 || !(0xdc..=0x172).contains(&p.tick) { return None; }
@@ -396,7 +396,11 @@ impl Scenes {
         if let Some(ship) = p.actors.iter().filter_map(|a| world.mobys.get(a.0)).find(|m| m.o_class == 0xd54) {
             for (c, l) in corners.iter_mut().zip(SCREEN_CORNERS) {
                 *c = std::array::from_fn(|k| l[0] * ship.rows[0][k] + l[1] * ship.rows[1][k] + l[2] * ship.rows[2][k] + ship.pos[k]);
-                *c = std::array::from_fn(|k| c[k] + (camera[k] - c[k]) * 0.15);
+                // `0x2ef138(0.15, d, d)` on `d` = camera − corner: 0.15 units toward the camera.
+                let d: V3 = std::array::from_fn(|k| camera[k] - c[k]);
+                let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                let k = if 0.0 < l { 0.15 / l } else { 0.0 };
+                *c = std::array::from_fn(|i| c[i] + d[i] * k);
             }
         }
         // The angles as the camera matrix `0x129178` / `0x1292c0` / `0x129368` / `0x129218` builds it (x, then y, then
