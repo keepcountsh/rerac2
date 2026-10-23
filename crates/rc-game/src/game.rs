@@ -56,6 +56,9 @@ pub struct GameState {
     pub nanotech: [bool; 10],
     pub level_xp: [i32; 2],
     /// `0x1b1a68`: the death height (the level's setting; objects change it).
+    /// The boss health bar (`0x2f20b8(fraction, …)`: `$gp−0x5f2c` the fraction, `$gp−0x5f28` 5 ticks left, refreshed each
+    /// tick of a fight; the bar's draw `0x2f2158` is not ported).
+    pub boss_bar: Option<(f32, i32)>,
     pub death_z: Option<f32>,
     /// Oozla's water (L01 `$gp+0xdec` / `$gp+0xde8`, kept by its class 0x0a17): the level of the water and the
     /// height the floating objects read (`0x3bc3b8`: the level and a 0.1 wave; 0 until the class runs).
@@ -141,7 +144,7 @@ impl Default for GameState {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
-            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, water_base: 0.0, water_z: 0.0, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
+            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, boss_bar: None, water_base: 0.0, water_z: 0.0, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
             mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, play_time: 0, visited: vec![0; 0x1c],
         }
     }

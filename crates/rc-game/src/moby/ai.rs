@@ -629,7 +629,7 @@ fn reaction(w: &MobyWorld, id: usize, ctx: &mut Ctx, kind: u8) -> Option<(u8, Re
 /// `0x31dd48(m, hit)`: the damage a hit does — none for the same hitter again within 10 ticks (60 for the kind 9), a
 /// new hitter's weapon kept; under 1 on a moby of at most 1 health, 1; the hit's flag 0x100000 into the reaction's
 /// `+0x18`.
-fn damage_of(m: &mut Moby, hit: Option<&super::hits::HitRecord>, wrench: bool) -> f32 {
+pub(crate) fn damage_of(m: &mut Moby, hit: Option<&super::hits::HitRecord>, wrench: bool) -> f32 {
     let h = health(m);
     let mut t = m.pv_s(h + 0x1c);
     if t != 0 {

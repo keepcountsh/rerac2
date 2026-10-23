@@ -615,6 +615,8 @@ fn tick(
     let it = &p.hero.items;
     let weapon = rc_game::hero::items::row(it.item).filter(|r| r.ammo && it.ready == 2 && p.hero.mode == 0).map(|r| (r.icon, p.game.ammo.get(it.item.max(0) as usize).copied().unwrap_or(0), r.max_ammo));
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh, weapon);
+    // The boss bar's own update (`0x2f2458`): its ticks left counted down, gone at 0.
+    p.game.boss_bar = p.game.boss_bar.and_then(|(f, t)| (1 < t).then_some((f, t - 1)));
     // The help panel (`0x2f5680`).
     p.help.tick(&mut p.game, p.pad.pressed & rc_game::pad::button::TRIANGLE != 0, &p.texts);
     // The sound step (`sound_update` after the camera): the slots follow their owners (the mobys' positions; a

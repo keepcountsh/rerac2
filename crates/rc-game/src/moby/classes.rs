@@ -7,6 +7,7 @@ pub mod bolt;
 pub mod carriers;
 pub mod chute;
 pub mod crate_;
+pub mod flower;
 pub mod flyer;
 pub mod enemies;
 pub mod gate;
@@ -85,6 +86,9 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x09fc => Some(beast::update),
         0x0a53 => Some(oozla::update_0a53),
         0x0a56 => Some(oozla::update_0a56),
+        0x0a8d => Some(flower::update_arm),
+        0x0a8e => Some(flower::update_core),
+        0x0b1a => Some(flower::update_0b1a),
         _ => None,
     }
 }

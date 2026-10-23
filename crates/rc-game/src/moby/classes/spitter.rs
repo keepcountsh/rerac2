@@ -382,7 +382,7 @@ fn spit(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, spray: bool) {
 
 /// `0x3132c8(damage, push, m, from, to, flags, …)`: a hit along the line from `from` to `to`, to the first moby it
 /// meets (`0x2d3fe8` = L00 `0x2de878` with the template).
-fn line_hit(w: &mut MobyWorld, id: usize, ctx: &Ctx, damage: f32, from: V3, to: V3) {
+pub(super) fn line_hit(w: &mut MobyWorld, id: usize, ctx: &Ctx, damage: f32, from: V3, to: V3) {
     let m = &w.mobys[id];
     let d = if m.mode & crate::moby::mode::KEEP_ROWS == 0 { [m.rot[2].cos(), m.rot[2].sin(), 0.0] } else { m.rows[0] };
     let mut t = crate::moby::hits::HitTemplate::new(damage, Some(id), 0x400_0001, [d[0], d[1], 1.0, 5_627.987]);

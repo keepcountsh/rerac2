@@ -73,7 +73,7 @@ fn inside(w: &MobyWorld, id: usize, ctx: &Ctx, p: V3) -> bool {
 }
 
 /// `0x338d40(&out, p, path)`: `p` inside the path's polygon, else the nearest point of its edges.
-fn into_polygon(ctx: &Ctx, path: i32, p: V3) -> V3 {
+pub(super) fn into_polygon(ctx: &Ctx, path: i32, p: V3) -> V3 {
     let Some(pts) = usize::try_from(path).ok().and_then(|i| ctx.level.paths.get(i)) else { return p };
     if pts.is_empty() || ctx.level.in_polygon(path, p) { return p; }
     let mut best = (f32::MAX, p);
