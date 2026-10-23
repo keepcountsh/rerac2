@@ -184,6 +184,8 @@ pub struct Moby {
     /// The port's: which creation this slot holds (MobyWorld's count at `CreateMoby`; 0 for the placed ones), so the
     /// engine's state of a deleted moby is not carried over to the next one created in its slot.
     pub serial: u32,
+    /// `+0xa0`: the frame from which a deleted created moby's slot may be taken again (two after the delete).
+    pub freed_at: i32,
 }
 
 /// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
@@ -289,7 +291,7 @@ impl Moby {
             index, bsphere: [0.0; 4], pos: [0.0; 3], state: 0, group: -1, slot: 0, alpha: 0x80, scale: 0.0, update_dist: 0,
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0,
+            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0, freed_at: 0,
             // `0x311418`: `+0x38` = 0x40404000000000.
             light: 0, ambient: [0x40; 3], glow: 0, piece: None,
         };
@@ -411,10 +413,11 @@ pub struct MobyWorld {
     /// `0x2e7920`'s list: the mobys whose update registered their class's draw callback this tick, in that order
     /// (crate::fx runs them after the tick). A moby drawn as another's piece runs the piece's update and has none.
     pub draws: Vec<usize>,
-    /// The placed instances whose moby went and whose slot a created moby took before the engine drew the going: it
-    /// hides them (the original draws a slot's moby, so a new one replaces the old; the port draws placed instances
-    /// apart, by the moby naming them).
-    pub released: Vec<usize>,
+    /// `0x1b1e20`: the first created moby's slot. The placed mobys come before it, and a placed moby's slot is never
+    /// taken again: deleted, it stays there (state 0xfd) with its pvars, as the group lists and links name it.
+    pub first_created: usize,
+    /// `0x1b1948` as the last moby loop saw it (deletes stamp their slot with it).
+    pub frame: i32,
     /// `RC_DEATH_LOG` (crate::moby::ai::death_log): the ticks since each enemy's death hit, by moby and its serial.
     pub death_watch: std::collections::HashMap<usize, (u32, u32)>,
     /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
@@ -527,6 +530,7 @@ impl MobyWorld {
             let id = self.mobys.len() - 1;
             if class.is_some() { self.rebuild(id, host); }
         }
+        self.first_created = self.mobys.len();
         self.groups = data.groups.iter().map(|g| g.iter().filter_map(|&r| map.get(r as usize).and_then(|&x| usize::try_from(x).ok())).collect()).collect();
         self.ties = data.ties.clone();
         self.shrubs = data.shrubs.clone();
@@ -536,13 +540,15 @@ impl MobyWorld {
         self.tie_spheres = data.tie_spheres.clone();
     }
 
-    /// `CreateMoby(o_class)` `0x311320`: the first free slot (state ≥ 0xfe), initialised, with zeroed pvars.
+    /// `CreateMoby(o_class)` `0x311320`: past the placed mobys, the first slot free (state 0xfe) for two frames, else
+    /// a new one at the end; initialised, with zeroed pvars.
     pub fn create(&mut self, o_class: i16) -> usize {
         let class = self.class(o_class).cloned();
-        let id = self.mobys.iter().position(|m| m.state >= 0xfe).unwrap_or(self.mobys.len());
+        let start = self.first_created.min(self.mobys.len());
+        let frame = self.frame;
+        let id = self.mobys[start..].iter().position(|m| m.state == 0xfe && m.freed_at <= frame).map_or(self.mobys.len(), |k| start + k);
         let mut m = Moby::init(id, o_class, class.as_ref());
         m.pvars = vec![0; PVAR_BYTES];
-        if let Some(ii) = self.mobys.get(id).and_then(|old| old.instance) { self.released.push(ii); }
         self.created += 1;
         m.serial = self.created;
         if id == self.mobys.len() { self.mobys.push(m) } else { self.mobys[id] = m }
@@ -597,6 +603,7 @@ impl MobyWorld {
     /// reached: the animation advance (unless mode 0x40), its update (if it has one), the matrix rebuild (unless
     /// mode 4). Mobys created during the loop wait a tick.
     pub fn tick(&mut self, cam: V3, ctx: &mut Ctx) {
+        self.frame = ctx.game.frame;
         if !self.loaded {
             self.loaded = true;
             self.load_pass(ctx);
@@ -640,8 +647,11 @@ impl MobyWorld {
     /// `0x2e7920(callback, moby)`: the moby's draw callback runs after this tick (crate::fx).
     pub fn register_draw(&mut self, id: usize) { self.draws.push(id); }
 
-    /// `0x1b1d40`: the free moby slots.
-    pub fn free_slots(&self) -> usize { MAX_MOBYS.saturating_sub(self.mobys.iter().filter(|m| m.state < 0xfe).count()) }
+    /// `0x1b1d40`: the free moby slots (past the placed mobys).
+    pub fn free_slots(&self) -> usize {
+        let used = self.mobys.iter().skip(self.first_created).filter(|m| m.state != 0xfe).count();
+        MAX_MOBYS.saturating_sub(self.first_created + used)
+    }
 
     /// Adds a class the level's table does not have (the gadget classes `0x306018` loads), with the next slot.
     pub fn add_class(&mut self, mut c: ClassInfo) {
@@ -650,10 +660,14 @@ impl MobyWorld {
         self.classes.push(c);
     }
 
-    /// `DeleteMoby`: state 0xfe (free), out of the grid.
+    /// `DeleteMoby` `0x311688`: state 0xfd for a placed moby (gone for good), 0xfe for a created one (free from two
+    /// frames on), out of the grid.
     pub fn delete(&mut self, id: usize) {
+        let placed = id < self.first_created;
+        let frame = self.frame;
         let Some(m) = self.mobys.get_mut(id) else { return };
-        m.state = 0xfe;
+        m.state = if placed { 0xfd } else { 0xfe };
+        m.freed_at = frame + 2;
         let old = m.grid_rect;
         m.grid_rect = GRID_NONE;
         self.grid.update(id as u16, old, GRID_NONE);

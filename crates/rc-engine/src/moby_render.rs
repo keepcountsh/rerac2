@@ -1909,11 +1909,6 @@ impl MobyOcclusion {
     /// (+0xc0.., row i = image of model axis i), scale (+0x2c), the light block for those rows (None: keep
     /// the loaded one) and hidden (deleted or mode & 1). Rewrites its `MobyInst` record (uploaded by
     /// `update_moby_occlusion` when anything changed) and MobyProc's inputs.
-    /// Instance `ii` hidden: its moby went (rc_game::moby::MobyWorld::released).
-    pub fn hide(&mut self, ii: usize) {
-        if let Some(h) = self.driven_hidden.get_mut(ii) { *h = true; }
-    }
-
     pub fn drive(&mut self, ii: usize, position: [f32; 3], rows: [[f32; 3]; 3], scale: f32, lights: Option<&MobyLights>, hidden: bool) {
         let Some(d) = self.draws.get_mut(ii) else { return };
         if let Some(inp) = d.input.as_mut() {
