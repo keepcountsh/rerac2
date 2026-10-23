@@ -562,10 +562,14 @@ fn tick(
         mobys.world.changed = false;
     }
     if let Some(o) = occl.as_mut() {
-        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance {
-                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0);
+        for m in &mobys.world.mobys {
+            let Some(ii) = m.instance else { continue };
+            let hidden = m.state >= 0x80 || m.mode & 1 != 0;
+            if m.update.is_some() || m.drive {
+                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), hidden);
                 o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+            } else {
+                o.set_hidden(ii, hidden);
             }
         }
     }
@@ -935,10 +939,14 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         mobys.skin_worn(lv, &crate::mobys::Mobys::worn(&p.hero.items), Some(&pose));
     }
     if let Some(o) = occl.as_mut() {
-        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance {
-                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0);
+        for m in &mobys.world.mobys {
+            let Some(ii) = m.instance else { continue };
+            let hidden = m.state >= 0x80 || m.mode & 1 != 0;
+            if m.update.is_some() || m.drive {
+                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), hidden);
                 o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+            } else {
+                o.set_hidden(ii, hidden);
             }
         }
         // Ratchet: at his track with the scene's sequence and his head's scale (`0x2d51f8`), else as he stands.

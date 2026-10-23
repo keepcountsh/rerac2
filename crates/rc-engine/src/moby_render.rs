@@ -1905,6 +1905,12 @@ impl MobyOcclusion {
     /// (crate::moby_spawn) are the caller's to exclude.
     pub fn drawn(&self, ii: usize) -> bool { self.shown.get(ii).is_some_and(|s| s.is_some()) }
 
+    /// Static instance `ii` hidden or shown by its moby (deleted or mode & 1) when nothing drives it: a placed moby
+    /// without an update still goes when a class deletes or hides it (a scene's props).
+    pub fn set_hidden(&mut self, ii: usize, hidden: bool) {
+        if let Some(h) = self.driven_hidden.get_mut(ii) { *h = hidden; }
+    }
+
     /// The placement the moby loop gave static instance `ii` this tick: position (+0x10), rotation rows
     /// (+0xc0.., row i = image of model axis i), scale (+0x2c), the light block for those rows (None: keep
     /// the loaded one) and hidden (deleted or mode & 1). Rewrites its `MobyInst` record (uploaded by
