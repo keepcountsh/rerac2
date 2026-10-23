@@ -305,6 +305,12 @@ fn tick(
             .flatten()
             .and_then(|ov| rc_game::moby::classes::nanotech::GlowTables::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
             .map(std::sync::Arc::new);
+        // The Gravity Bomb's shockwave mesh (Aranos's overlay's addresses, rc_game::moby::classes::gravity_bomb).
+        m.world.gravity_bomb.mesh = (crate::level_load::level_index() == 0)
+            .then(|| crate::level_wad::overlay(&crate::level_load::extracted_root(), 0).ok())
+            .flatten()
+            .and_then(|ov| rc_game::moby::classes::gravity_bomb::DomeMesh::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
+            .map(std::sync::Arc::new);
         println!("play: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
         // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).

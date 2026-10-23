@@ -22,11 +22,16 @@
 //! Ratchet nor class 0xa5a, inside a sphere growing to 6 takes the record's blast damage (`+0x74`: 4) with flags
 //! 0x830000 along the line from the centre — then 40 ticks fading.
 //!
+//! **The blast's effect** ([`Effect`], drawn by [`draw_blast`]): 200 flares on a ring about the normal drifting out over
+//! 90 ticks and fading over 55 (`0x3f13d8` / `0x3f1618`, `0x3f1b00`), and the shockwave mesh twice (`0x3f0f18`,
+//! `0x3f1180`; Aranos's overlay tables). The blast goes once its last flare has.
+//!
 //! Not ported: the target held by `0x18b270` (nothing sets it on Aranos), the aim with L1 (`0x37e328`'s camera branch),
 //! the gravity frames and moving frames of the arc (`0x37f538` / `0x37f618`, `0x380e08` / `0x380ec0`: nothing on
-//! Aranos), the rumble, the statistics (`0x3f9f70`), the trail, the blast's effect (its arcs `0x3f13d8` / `0x3f1b00`,
-//! debris, puffs, sparks and light `0x3f09e0`, its draw `0x3f0e80`) and its camera shake (`0x1b8d60`), the bomb's
-//! explosion on a target's own line (`0x3efda0`'s `0x2de878(.., 6, target)`: here at the sweep's point).
+//! Aranos), the rumble, the statistics (`0x3f9f70`), the trail, the blast's debris, puffs, sparks and light
+//! (`0x3f09e0`: `0x390888`, `0x333a70`, `0x3348c0`, `0x39e7f0`), its camera shake (`0x1b8d60`), the shockwave mesh on
+//! levels other than Aranos (their overlays' addresses), the bomb's explosion on a target's own line (`0x3efda0`'s
+//! `0x2de878(.., 6, target)`: here at the sweep's point).
 
 use crate::hero::items::{row, GRAVITY_BOMB};
 use crate::hero::physics::{add, add_rot, cross, dot, len, scale, set_len, sub, V3};
@@ -300,7 +305,11 @@ pub fn update_blast(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         m.set_pv_i(0x1c, 0x7f);
         m.set_pv_i(0x24, 0x6f);
         m.set_pv_i(0x14, 0x14);
+        let (at, n) = (m.pos, m.pv_v(0));
+        effect_start(w, ctx, id, at, n);
     }
+    effect_tick(w, id);
+    w.register_draw(id);
     let m = &mut w.mobys[id];
     m.set_pv_f(0x10, m.pv_f(0x10) + m.pv_f(0x18));
     match m.state {
@@ -339,8 +348,13 @@ pub fn update_blast(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             }
             m.set_pv_i(0x14, t);
         }
-        // 6: its effect's last arcs gone (the effect is not ported: at once).
-        _ => w.delete(id),
+        // 6: gone with its effect's last flares.
+        _ => {
+            if w.gravity_bomb.blast != Some(id) || w.gravity_bomb.flares.is_empty() {
+                if w.gravity_bomb.blast == Some(id) { w.gravity_bomb.blast = None; }
+                w.delete(id);
+            }
+        }
     }
 }
 
@@ -372,6 +386,217 @@ pub fn draw_marker(w: &MobyWorld, id: usize, hero_state: i32, frame: i32, out: &
             additive: false,
             corners: [corner(-1.0, 1.0), corner(1.0, 1.0), corner(-1.0, -1.0), corner(1.0, -1.0)],
             st: [[0.0, 1.0], [1.0, 1.0], [0.0, 0.0], [1.0, 0.0]],
+            rgba: [c; 4],
+        });
+    }
+}
+
+/// One of the blast's flares (`0x1b2b38`, 320 records of 0x80 bytes): a camera-facing sprite (FX 0x2e) that drifts
+/// out from the centre in the surface's plane, growing, its colour easing from orange to nearly black, then fading.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Flare {
+    /// `+0x00` the place, `+0x10` the way out, `+0x24` the reach out a tick.
+    pos: V3,
+    dir: V3,
+    out: f32,
+    /// `+0x28 / +0x2c / +0x30`: the roll's speed from, now and to; `+0x34` the roll.
+    spin: [f32; 3],
+    roll: f32,
+    /// `+0x38 / +0x3c / +0x40`: the rise along the normal a tick; `+0x44 / +0x48 / +0x4c` the size.
+    rise: [f32; 3],
+    size: [f32; 3],
+    /// `+0x54 / +0x58`: the ticks left of the phase and its length.
+    left: i32,
+    ticks: i32,
+    /// `+0x5c / +0x60`: the alpha from and now; `+0x64 / +0x68 / +0x6c` the colour from, now and to.
+    alpha0: i32,
+    alpha: i32,
+    colour: [u32; 3],
+    /// `+0x70`: 2 additive (ALPHA (Cs − 0)·As + Cd), 1 blended.
+    blend: u8,
+    /// `+0x74`: 0 growing, 1 fading, 2 going; `+0x78` its kind (2: the blast's).
+    phase: u8,
+    kind: u8,
+}
+
+/// The blast's mesh (L00's overlay: the 64 quads `0x29b400` of `{vertex, ST}` pairs, the vertices `0x29af00`, the
+/// STs `0x29b800`), drawn twice as its shockwave.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DomeMesh {
+    pub verts: Vec<V3>,
+    pub st: Vec<[f32; 2]>,
+    pub quads: Vec<[(u16, u16); 4]>,
+}
+
+impl DomeMesh {
+    /// From the overlay through `read(address, length)` (L00's addresses).
+    pub fn read(read: impl Fn(u32, usize) -> Option<Vec<u8>>) -> Option<DomeMesh> {
+        let q = read(0x0029_b400, 64 * 16)?;
+        let half = |b: &[u8], i: usize| u16::from_le_bytes([b[2 * i], b[2 * i + 1]]);
+        let quads: Vec<[(u16, u16); 4]> = (0..64).map(|i| std::array::from_fn(|k| (half(&q, i * 8 + 2 * k), half(&q, i * 8 + 2 * k + 1)))).collect();
+        let nv = quads.iter().flatten().map(|&(v, _)| v as usize + 1).max()?;
+        let ns = quads.iter().flatten().map(|&(_, s)| s as usize + 1).max()?;
+        let f = |b: &[u8], i: usize| f32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap());
+        let v = read(0x0029_af00, nv * 16)?;
+        let s = read(0x0029_b800, ns * 8)?;
+        Some(DomeMesh { verts: (0..nv).map(|i| [f(&v, 4 * i), f(&v, 4 * i + 1), f(&v, 4 * i + 2)]).collect(), st: (0..ns).map(|i| [f(&s, 2 * i), f(&s, 2 * i + 1)]).collect(), quads })
+    }
+}
+
+/// The blast's effect (`0x1b2b34`: one group of 0x50 bytes, its flares in the pool), and the mesh (set by the engine).
+#[derive(Clone, Debug, Default)]
+pub struct Effect {
+    /// `+0x30`: the blast it belongs to; `+0x34` its countdown; `+0x00` the normal, `+0x10` the plane's axis, `+0x20`
+    /// the centre.
+    blast: Option<usize>,
+    left: i32,
+    normal: V3,
+    axis: V3,
+    centre: V3,
+    flares: Vec<Flare>,
+    pub mesh: Option<std::sync::Arc<DomeMesh>>,
+}
+
+/// The blast's start (`0x3f0310` state 0 clears the pool and the group) and `0x3f13d8(1/6, blast, 20, at, n)`: the
+/// group and its 200 flares, two at each of 100 angles 3.6° apart from a random one (`0x3f1618` kinds 2 and 0).
+fn effect_start(w: &mut MobyWorld, ctx: &mut Ctx, id: usize, at: V3, n: V3) {
+    let e = &mut w.gravity_bomb;
+    e.blast = Some(id);
+    e.left = 0x14;
+    e.normal = n;
+    e.centre = at;
+    e.axis = cross(n, at);
+    e.flares.clear();
+    let g = &mut ctx.game.rng;
+    let mut a = g.rand_angle();
+    for _ in 0..100 {
+        for kind in [2u8, 0] {
+            let alpha = g.rand_range(0x5f, 0x7f);
+            g.rand();
+            let dir = rotate(e.axis, a, n);
+            let grey = g.rand_range(0, 3) as u32 * 0x0001_0101;
+            let s0 = g.randf(0.15, 1.25) * 0.125;
+            let s1 = g.randf(0.5, 1.8) * 0.7;
+            let pos = add(add(at, set_len(n, 0.1)), set_len(dir, 0.75));
+            let spin1 = g.randf_signed(0.052_359_88, 0.104_719_76);
+            let spin0 = g.randf_signed(0.314_159_3, 0.356_047_2);
+            let roll = g.rand_angle();
+            e.flares.push(Flare {
+                pos,
+                dir,
+                out: if kind == 0 { 0.075 } else { 0.208_333_3 },
+                spin: [spin0, spin0, spin1],
+                roll,
+                rise: [0.0; 3],
+                size: [s0, s0, s1],
+                left: 0x5a,
+                ticks: 0x5a,
+                alpha0: alpha,
+                alpha,
+                colour: [0x0010_3080, 0x0010_3080, grey],
+                blend: 2,
+                phase: 0,
+                kind: 2,
+            });
+        }
+        a = add_rot(a, 0.063_466_52);
+    }
+}
+
+/// `0x3f1520` / `0x3f1b00`: the group's countdown (free once out with no flares left) and each flare's tick.
+fn effect_tick(w: &mut MobyWorld, id: usize) {
+    let e = &mut w.gravity_bomb;
+    if e.blast != Some(id) { return; }
+    if countdown(&mut e.left) && e.flares.is_empty() { e.blast = None; }
+    let n = e.normal;
+    e.flares.retain_mut(|f| {
+        let t = 1.0 - f.left as f32 / f.ticks.max(1) as f32;
+        let lerps = |f: &mut Flare| {
+            f.colour[1] = crate::hud::lerp_rgba(t, f.colour[0], f.colour[2]);
+            f.spin[1] = f.spin[0] + (f.spin[2] - f.spin[0]) * t;
+            f.rise[1] = f.rise[0] + (f.rise[2] - f.rise[0]) * t;
+            f.size[1] = f.size[0] + (f.size[2] - f.size[0]) * t;
+        };
+        let push = match f.phase {
+            0 => {
+                lerps(f);
+                set_len(f.dir, f.out * (1.0 - (1.0 - t) * (1.0 - t)))
+            }
+            1 => {
+                f.alpha = (f.alpha0 as f32 - f.alpha0 as f32 * t * t) as i32;
+                if f.kind != 2 {
+                    lerps(f);
+                    set_len(f.dir, f.out * (1.0 - (1.0 - t) * (1.0 - t)))
+                } else {
+                    set_len(f.dir, f.out)
+                }
+            }
+            _ => [0.0; 3],
+        };
+        f.pos = add(f.pos, set_len(n, f.rise[1]));
+        if f.kind != 1 { f.pos = add(f.pos, push); }
+        f.roll = add_rot(f.roll, f.spin[1]);
+        if countdown(&mut f.left) {
+            if f.phase == 0 {
+                f.phase = 1;
+                f.left = if f.kind == 1 { 0x1e } else { 0x37 };
+                f.ticks = f.left;
+            } else if f.alpha < 1 {
+                return false;
+            } else {
+                f.phase = 2;
+                f.alpha -= 1;
+            }
+        }
+        true
+    });
+}
+
+/// `0x321c00(angle, out, v, axis)`: `v` turned `angle` about `axis`.
+fn rotate(v: V3, angle: f32, axis: V3) -> V3 {
+    if angle.abs() < 1e-5 { return v; }
+    turn(v, crate::hero::physics::unit(axis), angle)
+}
+
+/// `0x3f0e80`: in view (100, a sphere of 2), the shockwave twice (`0x3f0f18`: the mesh 2·size across and a quarter
+/// of the size high; `0x3f1180`: the size across and an eighth high; FX 0x2b additive, `0x204080` at the blast's
+/// `+0x24`, on its rows a quarter up) and the flares (`0x3f1f90`: FX 0x2e, ±size, turned by their roll to face the
+/// camera, a quarter toward it).
+pub fn draw_blast(w: &MobyWorld, id: usize, view: &crate::particles::BSphereView, cam: V3, out: &mut Vec<crate::fx::FxQuad>) {
+    let m = &w.mobys[id];
+    if view.culled(100.0, [m.pos[0], m.pos[1], m.pos[2], 2.0]) { return; }
+    let size = m.pv_f(0x10);
+    let rgba = 0x0020_4080 | (m.pv_i(0x24).clamp(0, 0xff) as u32) << 24;
+    let base = add(m.pos, [0.0, 0.0, 0.25]);
+    if let Some(mesh) = &w.gravity_bomb.mesh {
+        for k in [[size * 2.0, size * 2.0, size * 0.25], [size, size, size * 0.125]] {
+            for q in &mesh.quads {
+                let corner = |i: usize| {
+                    let v = mesh.verts.get(q[i].0 as usize).copied().unwrap_or_default();
+                    let v = [v[0] * k[0], v[1] * k[1], v[2] * k[2]];
+                    add(base, add(add(scale(m.rows[0], v[0]), scale(m.rows[1], v[1])), scale(m.rows[2], v[2])))
+                };
+                let st = |i: usize| mesh.st.get(q[i].1 as usize).copied().unwrap_or_default();
+                out.push(crate::fx::FxQuad { fx: 0x2b, additive: true, corners: std::array::from_fn(corner), st: std::array::from_fn(st), rgba: [rgba; 4] });
+            }
+        }
+    }
+    let e = &w.gravity_bomb;
+    if e.blast != Some(id) { return; }
+    for f in &e.flares {
+        let d = sub(cam, f.pos);
+        let yaw = crate::hero::physics::atan2(d[0], d[1]);
+        let pitch = -crate::hero::physics::atan2((d[0] * d[0] + d[1] * d[1]).sqrt(), d[2]);
+        let rows = crate::hero::physics::euler_rows([f.roll, pitch, yaw]);
+        let at = add(f.pos, set_len(d, 0.25));
+        let s = f.size[1];
+        let corner = |y: f32, z: f32| add(at, add(scale(rows[1], y * s), scale(rows[2], z * s)));
+        let c = f.colour[1] & 0xff_ffff | (f.alpha.clamp(0, 0xff) as u32) << 24;
+        out.push(crate::fx::FxQuad {
+            fx: 0x2e,
+            additive: f.blend == 2,
+            corners: [corner(-1.0, -1.0), corner(-1.0, 1.0), corner(1.0, -1.0), corner(1.0, 1.0)],
+            st: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
             rgba: [c; 4],
         });
     }

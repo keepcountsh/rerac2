@@ -458,6 +458,8 @@ pub struct MobyWorld {
     pub hidden_ties: std::collections::HashSet<usize>,
     /// The nanotech clusters' globals (classes::nanotech).
     pub nanotech: classes::nanotech::Globals,
+    /// The Gravity Bomb's blast effect (classes::gravity_bomb).
+    pub gravity_bomb: classes::gravity_bomb::Effect,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).

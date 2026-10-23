@@ -11,6 +11,7 @@
 //! | `0x3e4050` | the Lancer's shot | its trail's newest point and the trail ([`crate::moby::classes::shot::draw_trail`]) |
 //! | `0x3a17f0` | the nanotech cluster 0x326 (the first list) | its sphere, halo and crate glass ([`crate::moby::classes::nanotech::draw`]) |
 //! | `0x3efd68` | the Gravity Bomb in the hand 0xce3 | where its throw lands ([`crate::moby::classes::gravity_bomb::draw_marker`]) |
+//! | `0x3f0e80` | the Gravity Bomb's blast 0xce5 | its shockwave and flares ([`crate::moby::classes::gravity_bomb::draw_blast`]) |
 //!
 //! The frame's first list (`0x2e7718`, run by `0x2e7768` before the particles, `0x3311e0`) holds on Aranos the
 //! arrival ship's draw (`0x362b40`, which the engine's created-moby draw does), class 0xd0's ribbon (`0x39ac30`, not
@@ -110,6 +111,7 @@ pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut
             crate::moby::classes::shot::SHOT_CLASS => crate::moby::classes::shot::draw_trail(&mut w.mobys[id], cam, &mut game.trail_phase, &mut out),
             crate::moby::classes::nanotech::CLASS => crate::moby::classes::nanotech::draw(w, id, cam, &mut out),
             crate::moby::classes::gravity_bomb::HAND_CLASS => crate::moby::classes::gravity_bomb::draw_marker(w, id, hero_state, game.frame, &mut out),
+            crate::moby::classes::gravity_bomb::BLAST_CLASS => crate::moby::classes::gravity_bomb::draw_blast(w, id, view, cam, &mut out),
             _ => {}
         }
     }
