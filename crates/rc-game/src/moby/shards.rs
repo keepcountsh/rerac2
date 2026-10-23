@@ -67,9 +67,10 @@ fn qmul(a: Q, b: Q) -> Q {
     [v[0], v[1], v[2], a[3] * b[3] - dot(av, bv)]
 }
 
-/// The rotation of quaternion `q` on `v` (the rows through `0x2efc20` / `0x2efa00`).
+/// A row turned by quaternion `q` as `0x2efc20` / `0x2efa00` turn the rows: `0x2efc20` builds the rotation matrix
+/// R(q), and `0x2efa00` multiplies each row on the left (`row · R`), which is Rᵀ — the rotation by `q`'s conjugate.
 pub(crate) fn rotate(q: Q, v: V3) -> V3 {
-    let u = [q[0], q[1], q[2]];
+    let u = [-q[0], -q[1], -q[2]];
     let t = scale(cross(u, v), 2.0);
     add(add(v, scale(t, q[3])), cross(u, t))
 }
@@ -213,7 +214,7 @@ fn body(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, pts: &[V3]) -> bool {
     let free = m.pvars[COUNT] == 0;
     if !moving {
         if sound != 0xff && free { ctx.host.play_sound(&w.mobys[id], sound as i32, 0); }
-        add_contact(w, id, k, n, pts);
+        add_contact(w, id, k, pts);
     } else if sound != 0xff {
         ctx.host.play_sound(&w.mobys[id], sound as i32, 0);
     }
@@ -309,37 +310,59 @@ fn contact(w: &mut MobyWorld, id: usize, ctx: &Ctx, pts: &[V3]) -> Option<(u8, V
     None
 }
 
-/// `0x2dcde8(moby, point)` with `0x2dce90`: the point a contact; the others that would lift off the face go; two make
-/// a hinge.
-fn add_contact(w: &mut MobyWorld, id: usize, k: u8, n: V3, pts: &[V3]) {
+/// `0x2dcde8(moby, point, up)`: the point a contact ([`settle`]); two or three make a hinge of the first two.
+fn add_contact(w: &mut MobyWorld, id: usize, k: u8, pts: &[V3]) {
     let m = &mut w.mobys[id];
-    let c = m.pvars[COUNT].min(2) as usize;
-    m.pvars[CONTACTS + c] = k;
-    m.pvars[COUNT] = c as u8 + 1;
-    // `0x2dce90`: in the face's plane, a contact on the far side of the new one from it goes.
-    let flat = |v: V3| sub(v, scale(n, dot(v, n)));
-    let Some(&pk) = pts.get(k as usize) else { return };
-    let base = flat(through(&m.rows, pk));
-    let mut j = 0;
-    while j < m.pvars[COUNT] as usize {
-        let cj = m.pvars[CONTACTS + j];
-        if cj != k {
-            let q = pts.get(cj as usize).map_or([0.0; 3], |&p| flat(through(&m.rows, sub(p, pk))));
-            if 0.0 < dot(q, base) {
-                let last = m.pvars[COUNT] as usize - 1;
-                m.pvars[CONTACTS + j] = m.pvars[CONTACTS + last];
-                m.pvars[COUNT] -= 1;
-                continue;
-            }
-        }
-        j += 1;
-    }
-    if 1 < m.pvars[COUNT] {
+    let slot = m.pvars[COUNT].min(2) as usize;
+    m.pvars[CONTACTS + slot] = k;
+    m.pvars[COUNT] = slot as u8 + 1;
+    settle(m, slot, [0.0, 0.0, 1.0], pts);
+    if m.pvars[COUNT] != 1 {
         let (a, b) = (m.pvars[CONTACTS] as usize, m.pvars[CONTACTS + 1] as usize);
         if let (Some(&pa), Some(&pb)) = (pts.get(a), pts.get(b)) {
             let d = through(&m.rows, sub(pa, pb));
             let s = hinge_spin(quat(m, SPIN), d);
             set_quat(m, SPIN, s);
+        }
+    }
+}
+
+/// `0x2dce90(moby, slot, up)`: flat in the plane across `up`, the contacts that lie beyond the new one (slot `slot`)
+/// from it go (each tested once: the one moved into a freed place is not); of three, one goes unless they hold the
+/// piece up — the first two's lines from the third must lie on either side. As the original, a contact is the new
+/// one when its point's number equals the slot's.
+fn settle(m: &mut super::Moby, slot: usize, up: V3, pts: &[V3]) {
+    let flat = |v: V3| sub(v, scale(up, dot(up, v)));
+    let pt = |m: &super::Moby, c: usize| pts.get(m.pvars[CONTACTS + c] as usize).copied().unwrap_or([0.0; 3]);
+    let base = flat(through(&m.rows, pt(m, slot)));
+    let mut e = [[0.0f32; 3]; 3];
+    let mut j = 0;
+    while j < m.pvars[COUNT] as usize {
+        let cj = m.pvars[CONTACTS + j] as usize;
+        if cj == slot {
+            e[j] = base;
+        } else {
+            let p = pts.get(cj).copied().unwrap_or([0.0; 3]);
+            let q = flat(through(&m.rows, sub(p, pt(m, slot))));
+            e[j] = q;
+            if 0.0 < dot(q, base) {
+                let last = m.pvars[COUNT] as usize - 1;
+                m.pvars[CONTACTS + j] = m.pvars[CONTACTS + last];
+                m.pvars[COUNT] -= 1;
+            }
+        }
+        j += 1;
+    }
+    if m.pvars[COUNT] == 3 {
+        // `0x2eef88(out, a, b)` is `b × a`.
+        let (a, b) = (cross(e[2], e[0]), cross(e[2], e[1]));
+        let (c, d) = (cross(e[1], e[0]), cross(e[0], e[1]));
+        if dot(a, c) < 0.0 {
+            m.pvars[COUNT] -= 1;
+            m.pvars[CONTACTS + 1] = m.pvars[CONTACTS + 2];
+        } else if dot(b, d) < 0.0 {
+            m.pvars[COUNT] -= 1;
+            m.pvars[CONTACTS] = m.pvars[CONTACTS + 2];
         }
     }
 }

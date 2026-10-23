@@ -174,7 +174,8 @@ fn fly_in(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
     let vel = set_len(to, speed);
     m.set_pv_v(VEL, vel);
     m.pos = add(m.pos, vel);
-    let axis = cross([0.0, 0.0, 1.0], vel);
+    // `0x2eef88(out, up, vel)`: `vel × up`.
+    let axis = cross(vel, [0.0, 0.0, 1.0]);
     if len(axis) > 0.0 {
         let pin = [0.0, 0.0, 0.3];
         let through = |r: &[V3; 3], v: V3| -> V3 { std::array::from_fn(|k| v[0] * r[0][k] + v[1] * r[1][k] + v[2] * r[2][k]) };
@@ -188,15 +189,15 @@ fn fly_in(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
     true
 }
 
-/// While it lies about Ratchet (their spheres overlapping) it fades to 0x24; else back to full (mode 0x2000 while
-/// see-through).
+/// While it lies about Ratchet (their bounding spheres overlapping, `0x2ef0f0`) it fades to 0x24; else back to full
+/// (mode 0x2000 while see-through).
 fn fade(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
     let over = w.mobys[id].state == 1
         && ctx.hero_moby.and_then(|h| w.mobys.get(h)).is_some_and(|h| {
-            let m = &w.mobys[id];
-            let r = m.bsphere[3] + h.bsphere[3];
-            let d = sub(m.pos, h.pos);
-            d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < r * r
+            let (a, b) = (w.mobys[id].bsphere, h.bsphere);
+            let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+            let r = a[3] + b[3];
+            d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - r * r < 0.0
         });
     let m = &mut w.mobys[id];
     m.alpha = if over { if 0x24 < m.alpha { m.alpha - 4 } else { 0x24 } } else if 0x7b < m.alpha { 0x80 } else { m.alpha + 4 };
