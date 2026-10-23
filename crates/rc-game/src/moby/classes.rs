@@ -8,6 +8,7 @@ pub mod crate_;
 pub mod enemies;
 pub mod gate;
 pub mod lancer;
+pub mod nanotech;
 pub mod pickup;
 pub mod props;
 pub mod shot;
@@ -66,6 +67,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0ac7 => Some(gate::update),
         0x0c22 => Some(props::update_0c22),
         pickup::CLASS => Some(pickup::update),
+        nanotech::CLASS => Some(nanotech::update),
         _ => None,
     }
 }

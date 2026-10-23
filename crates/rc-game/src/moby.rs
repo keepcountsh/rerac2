@@ -94,6 +94,8 @@ pub struct Ctx<'a> {
     pub level: &'a crate::level::LevelData,
     /// The particle pool the effects spawn into (crate::particles), when the engine has one.
     pub parts: Option<&'a mut crate::particles::Particles>,
+    /// The view the updates' sphere tests (`0x2f0080`) read (the last frame's camera); `None`: everything in view.
+    pub view: Option<crate::particles::BSphereView>,
 }
 
 /// What the level's class table gives a moby at init.
@@ -390,6 +392,8 @@ pub trait MobyHost {
     /// `0x3605f0(index, mode, moby)`: play the moby's class sound `index` (mode 0 once, 4 looped); returns its
     /// handle (−1: none).
     fn play_sound(&mut self, _m: &Moby, _index: i32, _mode: i32) -> i32 { -1 }
+    /// `0x360698(index, mode, moby, class)`: the same with sound `index` of another class's table.
+    fn play_sound_of(&mut self, _m: &Moby, _class: i16, _index: i32, _mode: i32) -> i32 { -1 }
     /// `0x3602f0(handle)`: stop a sound; `0x3602a8(moby, handle)`: it still plays.
     fn stop_sound(&mut self, _handle: i32) {}
     fn sound_playing(&self, _handle: i32) -> bool { false }
@@ -442,6 +446,8 @@ pub struct MobyWorld {
     pub moved_shrubs: Vec<usize>,
     /// The ties hidden by the level's objects (the runtime tie's `+0x1e` bit 2), for the engine.
     pub hidden_ties: std::collections::HashSet<usize>,
+    /// The nanotech clusters' globals (classes::nanotech).
+    pub nanotech: classes::nanotech::Globals,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).

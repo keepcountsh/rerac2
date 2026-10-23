@@ -13,9 +13,10 @@
 //! The stacks are found when the crates start ([`stack_search`]) and fall when a crate under them goes ([`fall`]).
 //!
 //! Not ported: the TNT crate 0x1f9 and the class 0x1f6's flag test beyond
-//! the damage, the dust puffs (`0x334528`), the other classes' break sounds (`0x360698`), the nanotech
-//! crates' pickups, the respawn's stacking search
-//! (`0x31c9d8`).
+//! the damage, the dust puffs (`0x334528`), the other classes' break sounds (`0x360698`), the respawn's stacking
+//! search (`0x31c9d8`).
+//!
+//! A nanotech crate (0x1f5, 0x200) holds a nanotech cluster from its start (crate::moby::classes::nanotech, `+0xfc`).
 
 use crate::hero::physics::{add, sub, V3};
 use crate::moby::aim::is_crate;
@@ -59,6 +60,11 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let m = &mut w.mobys[id];
             m.set_pv_i(0xfc, 0);
             if class == 0x1ff { m.set_pv_s(0xc6, 100); }
+            // `0x39ff50`: a nanotech crate's cluster (crate::moby::classes::nanotech; 0x200 the four-point one).
+            if let Some(kind) = match class { 0x1f5 => Some(0), 0x200 => Some(1), _ => None } {
+                let c = super::nanotech::create(w, id, kind);
+                w.mobys[id].set_pv_i(0xfc, c.map_or(0, |c| c as i32));
+            }
             // Targets for the aims (the class header's mode bits give 0x1000 / 0x4000).
             return;
         }

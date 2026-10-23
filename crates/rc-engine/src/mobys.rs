@@ -336,6 +336,15 @@ impl MobyHost for Host<'_> {
         k
     }
 
+    fn play_sound_of(&mut self, m: &Moby, class: i16, index: i32, mode: i32) -> i32 {
+        let Some(s) = self.sound.as_mut() else { return -1 };
+        let ev = rc_game::audio::SoundEvent { index, flags: mode as u32, moby: m.index, o_class: m.o_class, sound_class: class, pos: m.pos, tick: s.tick };
+        let mut rng = s.system.rng;
+        let k = s.system.play_class_sound(&ev, None, &s.listener, &mut rng);
+        s.system.rng = rng;
+        k
+    }
+
     /// `0x3602f0(handle)`: the slot released.
     fn stop_sound(&mut self, handle: i32) {
         if let Some(s) = self.sound.as_mut() { if 0 <= handle { s.system.slots.release(handle); } }

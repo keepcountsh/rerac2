@@ -271,6 +271,12 @@ fn tick(
             .flatten()
             .and_then(|ov| rc_game::canopy::CanopyMesh::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
             .map(rc_game::canopy::Canopy::new);
+        // The nanotech glow's tables (Aranos's overlay's addresses, rc_game::moby::classes::nanotech).
+        m.world.nanotech.tables = (crate::level_load::level_index() == 0)
+            .then(|| crate::level_wad::overlay(&crate::level_load::extracted_root(), 0).ok())
+            .flatten()
+            .and_then(|ov| rc_game::moby::classes::nanotech::GlowTables::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
+            .map(std::sync::Arc::new);
         println!("play: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
         // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).
@@ -408,7 +414,11 @@ fn tick(
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         // The movers' carry of this tick starts from nothing (`0x189f70`).
         (p.hero.carry, p.hero.carry_yaw) = ([0.0; 3], 0.0);
-        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
+        // The view the updates test their spheres against: the camera as the last tick left it (`0x2f0080`).
+        let (tx, ty) = crate::game_camera::projection_tans(None);
+        let [fwd, left, up] = p.camera.rows;
+        let view = Some(rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty));
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys), view };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     // The collision kernels read the mobys as they are: the hero's queries this tick see where the loop left them
@@ -522,7 +532,7 @@ fn tick(
         // The write-back's `0x313dc0`: his moby's sphere and grid cells follow him (the hits find him there).
         if let Some(i) = mobys.hero_moby { mobys.world.rebuild(i, &host); }
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys), view: None };
         rc_game::hero::items::item_pass(&mut mobys.world, &mut ctx);
     }
     // The use stance's sequence for Ratchet (`0x2af5e0` / `0x2af848` call `0x2d2508` from the item pass).
@@ -533,7 +543,7 @@ fn tick(
     // `0x2afc38`: his pose layers (the holding layers, the face), after the item pass.
     rc_game::hero::layers::upkeep(&mut p.hero, &p.anim.ctl(class));
     // `UpdateParts` (`0x331150`), after the hero.
-    if let Some(s) = parts.as_deref_mut() { rc_game::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos, &mut p.game.rng); }
+    if let Some(s) = parts.as_deref_mut() { rc_game::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos, p.hero.pos, &mut p.game.rng); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game::fx).
     {
         // The callbacks read joints (0x0b0b's glows) through the loop's host, as the draw reads the mobys' poses.
@@ -881,7 +891,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let pose = crate::mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
         let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut(), view: None };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     let hp = p.hero.hp;
@@ -929,7 +939,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(&lv.mobys.anim[p.class]));
             let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
             let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-            let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
+            let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut(), view: None };
             rc_game::hero::items::head_pass(&mut mobys.world, &mut ctx);
             rc_game::hero::items::feet_pass(&mut mobys.world, &mut ctx);
             // The ship's parts on the scene's ship, the one drawn, at itself (as the original's frames show them).
@@ -978,7 +988,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
-    if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye, &mut p.game.rng); }
+    if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye, p.hero.pos, &mut p.game.rng); }
     // The frame's draw calls the callbacks the scene tick's updates registered too (rc_game::fx): the enemies hidden
     // for the scene registered none, so play's last glows go.
     {
