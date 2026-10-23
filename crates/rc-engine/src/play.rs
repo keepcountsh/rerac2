@@ -578,6 +578,7 @@ fn tick(
                 o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
             }
         }
+        for &ii in &mobys.unspawned { o.hide(ii); }
     }
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), None, p.camera.pos, p.game.scenes.mode);
     {
@@ -949,6 +950,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
                 o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
             }
         }
+        for &ii in &mobys.unspawned { o.hide(ii); }
         // Ratchet: at his track with the scene's sequence and his head's scale (`0x2d51f8`), else as he stands.
         let (pos, rows, state) = match hero_pose {
             Some((pos, state)) => (pos, identity, state),

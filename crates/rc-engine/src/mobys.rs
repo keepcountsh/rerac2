@@ -70,6 +70,9 @@ pub struct Mobys {
     /// The level defs' footstep base (`$gp − 0x60e4`, `0x3012a0`): the level settings' word after their variant
     /// blocks (`[0x17 + 8·n]`, n = `[0x1a]`; `[0x1f]` without blocks).
     pub footstep_base: usize,
+    /// The placed records the spawn rules left out (`0x3012a0`: a mission rank above the save's, dead, the flags):
+    /// no moby, so their static instances stay hidden (else they stand at their places, idling, untouchable).
+    pub unspawned: Vec<usize>,
 }
 
 /// Joint lists per class: each list the root-to-joint chain whose last joint the query returns.
@@ -518,6 +521,8 @@ impl Mobys {
         let mut rules = rc_game::moby::SpawnRules { game, fresh, ground: &ground };
         world.spawn_static(&records, &data, host, &mut rules);
         let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
+        let spawned: std::collections::HashSet<usize> = world.mobys.iter().filter_map(|m| m.instance).collect();
+        let unspawned = (0..records.len()).filter(|i| !spawned.contains(i)).collect();
         let lists: Vec<(Vec<u8>, Vec<u8>)> = m
             .classes
             .iter()
@@ -549,7 +554,7 @@ impl Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("mobys: grind paths: {e}")).unwrap_or_default();
-        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay) }
+        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay), unspawned }
     }
 
 }
