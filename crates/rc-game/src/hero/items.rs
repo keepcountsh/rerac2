@@ -473,7 +473,9 @@ pub fn feet_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
 /// Ratchet: the host's hero pose). Not on armour 4 or with the cheats' bodies (`0x1a7a51` / `0x4a` / `0x53` / `0x52`):
 /// the port wears armour 0. `0x2b09e0` then puts it at Ratchet's attachment [`HEAD_ATTACH`] (his head), out of the
 /// moby loop; its pose is built from his (`0x2aa278`: joint 0 at rest, joints 1 and 2 his [`HEAD_JOINTS`]; the
-/// engine draws it so). Shown (`0x2d4fc8` clears bit 0 in a scene).
+/// engine draws it so). Shown (`0x2d4fc8` clears bit 0 in a scene). Its visor (`0x2b13c8`, slot 2: `+0x7c` = 1, its
+/// piece 0 drawn on top, crate::moby::Moby::bangles) is down while Ratchet swims (movement group 0x11), in the
+/// states 0x73 / 0x67 / 0x7f, or in one of the tutorial's no-item areas (`0x18c310`: outside the ship).
 pub fn head_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
     let it = &mut ctx.hero.items;
     if it.head.is_some_and(|id| world.mobys.get(id).is_none_or(|m| m.state >= 0xfe || m.o_class != HEAD_CLASS)) { it.head = None; }
@@ -486,6 +488,8 @@ pub fn head_pass(world: &mut MobyWorld, ctx: &mut Ctx) {
         it.head = Some(id);
     }
     let Some(id) = it.head else { return };
+    let visor = ctx.hero.group == 0x11 || matches!(ctx.hero.state, 0x73 | 0x67 | 0x7f) || ctx.game.no_item_area;
+    world.mobys[id].bangles = visor as u16;
     let Some((rows, pos)) = ctx.host.hero_attach(HEAD_ATTACH) else { return };
     {
         let m = &mut world.mobys[id];

@@ -1616,10 +1616,14 @@ pub struct SlotLook {
     /// Going Commando's piece mask (`+0x7c` = 0x8000 | 1 << k, L00 `0x318fd0`): only break piece k's packets
     /// (`MobyClass::pieces`), no metal. None: the whole moby (R&C1 always).
     pub piece: Option<u8>,
+    /// `+0x7c` without 0x8000 (L00 `0x319cb8` → `0x31a000`): the whole moby plus the pieces whose bits are set.
+    pub bangles: u16,
 }
 
-/// The part-cache key of a class drawn whole (its o_class) or as one break piece.
-fn piece_key(o_class: i32, piece: Option<u8>) -> i32 { piece.map_or(o_class, |k| o_class | (k as i32 + 1) << 16) }
+/// The part-cache key of a class drawn whole (its o_class), as one break piece, or whole with pieces on top.
+fn piece_key(o_class: i32, piece: Option<u8>, bangles: u16) -> i32 {
+    piece.map_or(o_class | (bangles as i32 & 0x3ff) << 21, |k| o_class | (k as i32 + 1) << 16)
+}
 
 /// A metal entity of an extra instance: where update_extra_metal reads its placement and writes its shine.
 #[derive(Component, Clone)]
@@ -1745,7 +1749,7 @@ impl ExtraMobys {
         materials: &mut Assets<MobyMaterial>,
         buffers: &mut Assets<ShaderBuffer>,
     ) {
-        let want = view.map(|(c, l)| ((piece_key(c.o_class, l.piece), MobyBlend::pick(l.mode, l.fading, l.alpha)), l.model.w_axis.truncate()));
+        let want = view.map(|(c, l)| ((piece_key(c.o_class, l.piece, l.bangles), MobyBlend::pick(l.mode, l.fading, l.alpha)), l.model.w_axis.truncate()));
         let was = self.slot_shown.get(&slot).copied();
         let (want_key, was_key) = (want.map(|w| w.0), was.map(|w| w.0));
         if want_key != was_key {
@@ -1780,7 +1784,13 @@ impl ExtraMobys {
                 .entry(oc)
                 .or_insert_with(|| match look.piece {
                     Some(k) => build_parts(class, class.class.pieces.get(k as usize).and_then(Option::as_ref).map_or(&[][..], |p| &p.packets[..]), false, usize::MAX, meshes).0,
-                    None => build_parts(class, &class.class.high_lod, false, glow_from(class, false), meshes).0,
+                    None if look.bangles == 0 => build_parts(class, &class.class.high_lod, false, glow_from(class, false), meshes).0,
+                    // MobyProc 0x31a000: each set bit's piece k after the packets (its high-LOD range).
+                    None => {
+                        let extra = (0..16).filter(|k| look.bangles & 1 << k != 0).filter_map(|k| class.class.pieces.get(k).and_then(Option::as_ref));
+                        let lod: Vec<_> = class.class.high_lod.iter().cloned().chain(extra.flat_map(|p| p.packets.iter().cloned())).collect();
+                        build_parts(class, &lod, false, glow_from(class, false), meshes).0
+                    }
                 })
                 .clone();
             let name = format!("dynamic moby slot {slot} class {oc} {blend:?}");

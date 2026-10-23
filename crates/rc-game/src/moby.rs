@@ -185,6 +185,9 @@ pub struct Moby {
     pub glow: u32,
     /// `+0x7c` as a piece mask (0x8000 | 1 << k): drawn as break piece k only (crate::moby::shards).
     pub piece: Option<u8>,
+    /// `+0x7c` without 0x8000: the pieces whose bits are set drawn on top of the whole moby (MobyProc `0x319cb8` →
+    /// `0x31a000`, after its packets): the helmet's visor (crate::hero::items::head_pass).
+    pub bangles: u16,
     /// `+0x63`: the shine distance MobyProc's metal gate reads (0: no metal pass): `0x311418` gives a class with metal
     /// packets 0x18 (created mobys, the scene actors `0x305428`), the static spawn 8 (`0x3035c8`), Ratchet's items 0x10
     /// (`0x2afc68`) and Ratchet 0x10 every tick (`0x2a94d8`).
@@ -301,7 +304,7 @@ impl Moby {
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0, freed_at: 0,
             // `0x311418`: `+0x38` = 0x40404000000000.
-            light: 0, ambient: [0x40; 3], glow: 0, piece: None, shine: 0,
+            light: 0, ambient: [0x40; 3], glow: 0, piece: None, bangles: 0, shine: 0,
         };
         match class {
             Some(c) => {

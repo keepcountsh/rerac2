@@ -707,7 +707,7 @@ impl CreatedDraw {
                     _ => (0, [[0.0; 3]; 3]),
                 }
             });
-            let look = moby_render::SlotLook { model, alpha: m.alpha, fading: false, mode: m.mode, glow: m.glow, shine, e, late: false, piece: m.piece };
+            let look = moby_render::SlotLook { model, alpha: m.alpha, fading: false, mode: m.mode, glow: m.glow, shine, e, late: false, piece: m.piece, bangles: m.bangles };
             self.extra.show_slot(commands, level, slot, Some((class, look)), meshes, images, materials, buffers);
             shown.push(slot);
             if let Some(f) = mobys.skinned.get(&id).cloned().or_else(|| lv.anim.get(c.class).map(|ac| moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref()))) {
