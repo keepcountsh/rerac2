@@ -283,9 +283,9 @@ fn move_body(w: &mut MobyWorld, id: usize, ctx: &Ctx, from: V3) {
     } else {
         let mut v = sub(m.pos, from);
         let l = len2(v);
+        // `0x2ef188`: the move across held to the speed it had, the fall kept.
         if m.pv_f(o + 0xb0) < l {
-            let k = m.pv_f(o + 0xb0) / l;
-            v = scale(v, k);
+            v = set_len2(v, m.pv_f(o + 0xb0));
         } else {
             m.set_pv_f(o + 0xb0, l);
         }
@@ -707,6 +707,30 @@ pub fn flash_start(m: &mut Moby, b: usize) {
     }
 }
 
+/// `0x328c28(range, cone, _, m, out, dir)`: the knock aimed at what it may fly into — the crates and the targets the
+/// aims prefer (class type 0x16) about the point `range` ahead along `dir` across (the first 16 the sphere of `range`
+/// there touches, `0x2e14b0`), those within `cone` of its heading: across it turns to their median heading, its
+/// length kept. None: `dir` as it is. (Its third argument, 4, is not read.)
+fn knock_aim(w: &MobyWorld, id: usize, ctx: &Ctx, range: f32, cone: f32, dir: V3) -> V3 {
+    let Some(sc) = ctx.scene else { return dir };
+    let m = &w.mobys[id];
+    let ahead = set_len([dir[0], dir[1], 0.0], range);
+    let heading = atan2(ahead[0], ahead[1]);
+    let near = crate::collision::coll_sphere_mobys(sc, add(m.pos, ahead), range, crate::collision::QueryFlags(0), Some(id));
+    let mut hs: Vec<f32> = near
+        .into_iter()
+        .take(16)
+        .filter(|&o| super::aim::is_crate(w, o) || w.mobys.get(o).and_then(|x| w.class(x.o_class)).is_some_and(|c| c.kind == 0x16))
+        .map(|o| { let p = w.mobys[o].pos; atan2(p[0] - m.pos[0], p[1] - m.pos[1]) })
+        .filter(|&h| rot_dist(heading, h) < cone)
+        .collect();
+    if hs.is_empty() { return dir; }
+    hs.sort_by(f32::total_cmp);
+    let h = hs[hs.len() >> 1];
+    let l = len2(dir);
+    [h.cos() * l, h.sin() * l, dir[2]]
+}
+
 /// `0x3282b0(m, react, dir, kind)`: the reaction's start — its sequence (a class reaction of the kind, else the
 /// block's fallback with the speeds scaled), dying (kind 4) or spinning (5) without collision and out of the target
 /// list; the knock along `dir` (at least 1 across and 1 up) at the reaction's speeds, facing the hit; the flight's
@@ -772,13 +796,11 @@ fn react_start(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, dir: [f32; 4], kind:
     // The block's flash (its colour: red, `+7`).
     flash_start(&mut w.mobys[id], r);
     if kind == 1 || !ok { return false; }
-    let m = &mut w.mobys[id];
-    let mut d = [dir[0], dir[1], dir[2]];
-    if len2(d) < 1.0 {
-        let l = len2(d);
-        d = if l == 0.0 { [0.0; 3] } else { scale(d, 1.0 / l) };
-    }
+    // Aimed at what it may fly into (`0x328c28`), at least 1 across (`0x2ef188`: the fall kept) and 1 up.
+    let mut d = knock_aim(w, id, ctx, 5.0, 0.785_398_2, [dir[0], dir[1], dir[2]]);
+    if len2(d) < 1.0 { d = set_len2(d, 1.0); }
     if d[2] < 1.0 { d[2] = 1.0; }
+    let m = &mut w.mobys[id];
     m.set_pv_v(r + 0x80, [d[0] * x.across, d[1] * x.across, d[2] * x.up]);
     m.set_pv_f(r + 0x64, add_rot(atan2(d[0], d[1]), PI));
     if m.pv_b(r + 0x76) == 0 || 3 < kind {
@@ -921,9 +943,8 @@ fn fly(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> u32 {
     v[2] -= g;
     let mut s = len2(v);
     approach(if 1 < phase { 0.0 } else { 0.016_666_668 }, m.pv_f(r + 0x2c), &mut s);
-    // `0x2ef188(s, v, v)`: the speed across set (`vmulq.xy`; none across: x and y 0), the fall's kept.
-    let l = len2(v);
-    if l != 0.0 { (v[0], v[1]) = (v[0] * s / l, v[1] * s / l); } else { (v[0], v[1]) = (0.0, 0.0); }
+    // `0x2ef188(s, v, v)`: the speed across set, the fall kept.
+    v = set_len2(v, s);
     m.set_pv_v(r + 0x80, v);
     let up = scale(m.rows[2], m.pv_f(r + 0x34));
     let centre = add(m.pos, up);

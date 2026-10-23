@@ -53,7 +53,7 @@ fn checks_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
         // The reaction block (`+0x60`).
         m.set_pv_b(0x70, 0xb);
         m.set_pv_f(0x7c, 0.1);
-        m.set_pv_f(0x88, 0.016_666_668);
+        m.set_pv_f(0x88, 0.008_333_334);
         m.set_pv_f(0x8c, 0.004_166_667);
         m.set_pv_f(0x9c, 0.4);
         m.set_pv_f(0x80, 0.066_666_67);
