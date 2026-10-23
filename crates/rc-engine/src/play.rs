@@ -157,6 +157,9 @@ pub(crate) struct Play {
     hud: rc_game::hud::Hud,
     /// The help panel (rc_game::help) and the level's English help texts.
     help: rc_game::help::Panel,
+    /// The HUD screen's message boxes, and the font they measure with (the HUD's, kept from its first draw).
+    boxes: rc_game::msgbox::Boxes,
+    glyphs: Option<Box<[rc_formats::disc::boot::Glyph; 256]>>,
     texts: Vec<rc_formats::strings::Message>,
     pub(crate) ticks: u64,
     trace: bool,
@@ -594,6 +597,8 @@ fn tick(
     let it = &p.hero.items;
     let weapon = rc_game::hero::items::row(it.item).filter(|r| r.ammo && it.ready == 2 && p.hero.mode == 0).map(|r| (r.icon, p.game.ammo.get(it.item.max(0) as usize).copied().unwrap_or(0), r.max_ammo));
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh, weapon);
+    // The message boxes (`0x4451e8`'s part, after the panel).
+    if let Some(g) = p.glyphs.as_deref() { p.boxes.tick(&mut p.game.messages, &p.texts, g); }
     // The help panel (`0x2f5680`).
     p.help.tick(&mut p.game, p.pad.pressed & rc_game::pad::button::TRIANGLE != 0, &p.texts);
     // The sound step (`sound_update` after the camera): the slots follow their owners (the mobys' positions; a
@@ -1146,8 +1151,11 @@ fn draw_hud(
         }
         let draws = p.hud.draw(p.game.bolts);
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
-        quads = rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
-        quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs, &hud.data.assets().sprites));
+        quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
+        let a = hud.data.assets();
+        if p.glyphs.is_none() { p.glyphs = Some(Box::new(a.glyphs)); }
+        p.boxes.draw(&mut quads, &a.glyphs, &a.sprites);
+        quads.extend(p.help.draw(&p.game, &p.texts, &a.glyphs, &a.sprites));
     }
     // The letterbox (`0x2e82c0`: black bars of `0x1b186c` pixels at the top and the bottom).
     let bars = p.game.scenes.bars as f32;
@@ -1418,7 +1426,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
         fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None,
-        help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
+        help: Default::default(), boxes: Default::default(), glyphs: None, texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
 }

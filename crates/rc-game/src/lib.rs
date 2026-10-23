@@ -14,6 +14,7 @@ pub mod fx;
 pub mod game;
 pub mod gui;
 pub mod help;
+pub mod msgbox;
 pub mod hero;
 pub mod hud;
 pub mod level;

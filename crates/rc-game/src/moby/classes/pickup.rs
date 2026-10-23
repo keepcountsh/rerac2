@@ -8,7 +8,7 @@
 //! `+0x70` 0x10, `+0x74` the rise while flying in, `+0x78` the height it started at, `+0x7c` the ticks left of the
 //! near-miss window.
 //!
-//! Not ported: the message (`0x327478` → the GUI's message box `0x42f608`), the weapon panel shown, the challenge
+//! Its message shows in the HUD's message box (crate::msgbox). Not ported: the weapon panel shown, the challenge
 //! mode's doubled ammo (`0x1a7a12`), the gravity frames.
 
 use crate::hero::physics::{add, approach, cross, dist, dist2, len, set_len, sub, V3};
@@ -139,9 +139,16 @@ fn rest_or_take(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
     if m.pos[2] < m.pv_f(0x78) - 2.0 { take = true; }
     if ctx.hero.hp == 0 { take = false; }
     if !take { return true; }
-    // `0x2d4358(item, n)`: added up to the most.
+    // `0x2d4358(item, n)`: added up to the most; what it added, its message (`0x327478`: the item's one-round text
+    // `+0x2a` or its rounds text `+0x28`, with the count).
     let give = m.pv_i(0x60);
+    let before = ctx.game.ammo.get(item).copied().unwrap_or(0);
     if let Some(a) = ctx.game.ammo.get_mut(item) { *a = (*a + give).min(if max == 0 { i32::MAX } else { max }); }
+    let added = ctx.game.ammo.get(item).copied().unwrap_or(0) - before;
+    if 0 < added {
+        let t = ctx.level.items.get(item).map_or(0, |r| r.pickup_text[if added == 1 { 0 } else { 1 }] as i32);
+        ctx.game.messages.push(crate::msgbox::Request::Formatted { text: t, n: added, ticks: None });
+    }
     m.set_state(2, -1);
     m.set_pv_f(0x74, 0.133_333_33);
     m.set_pv_v(VEL, [0.0; 3]);
