@@ -411,6 +411,13 @@ fn tick(
         let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
+    // The collision kernels read the mobys as they are: the hero's queries this tick see where the loop left them
+    // (a lift's floor moved this tick), not where the last tick did.
+    if mobys.world.changed {
+        let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
+        mobys.snap = Some(crate::mobys::take_snapshot(&mobys.world, &mobys.coll, &host));
+        mobys.world.changed = false;
+    }
     // `RC_MOBY_TRACE=0b0b,099c`: those classes' mobys every 15 ticks (`RC_MOBY_TRACE_EVERY`; a dev trace).
     let every = std::env::var("RC_MOBY_TRACE_EVERY").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(15).max(1);
     if p.ticks % every == 0 {

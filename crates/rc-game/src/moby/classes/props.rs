@@ -1060,13 +1060,15 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
             m.set_pv_i(0x80, flip as i32);
             m.set_pv_i(0x84, 0);
             m.set_pv_i(0x88, -1);
-            let (at, ud, dd) = (pad_at(m, 0.15), m.update_dist, m.draw_dist);
+            let (at, ud, dd, light, ambient) = (pad_at(m, 0.15), m.update_dist, m.draw_dist, m.light, m.ambient);
             let p = w.create(0x0c16);
             let pm = &mut w.mobys[p];
             pm.update_dist = ud;
             pm.draw_dist = dd;
             pm.drawn = 1;
             pm.pos = at;
+            // Lit as the lift (`+0x38` / `+0x3c`).
+            (pm.light, pm.ambient) = (light, ambient);
             w.mobys[id].set_pv_i(0x9c, p as i32);
             if !l.aca { set_seq(w, id, ctx, 2, 0, 0); }
             let ph = ctx.game.rng.rand_angle();
@@ -1196,13 +1198,14 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             m.set_pv_i(0x80, flip as i32);
             m.set_pv_i(0x84, 0);
             m.set_pv_i(0x88, -1);
-            let (pos, ud, dd) = (m.pos, m.update_dist, m.draw_dist);
+            let (pos, ud, dd, light, ambient) = (m.pos, m.update_dist, m.draw_dist, m.light, m.ambient);
             let p = w.create(0x0c16);
             let pm = &mut w.mobys[p];
             pm.update_dist = ud;
             pm.draw_dist = dd;
             pm.drawn = 1;
             pm.pos = add3(pos, [0.0, 0.0, 0.25]);
+            (pm.light, pm.ambient) = (light, ambient);
             w.mobys[id].set_pv_i(0xa0, p as i32);
             let ph = ctx.game.rng.rand_angle();
             w.mobys[id].set_pv_f(0xa8, ph);
