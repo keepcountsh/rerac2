@@ -9,6 +9,8 @@
 //! * 0x0a53 (`0x41def0`): the floating bridges, tilting under Ratchet or sinking with him ([`update_0a53`]).
 //! * 0x0a56 (`0x3c3ad8`): the lily pads, on the floating platforms' rocking ([`update_0a56`]).
 //! * 0x0cb5 (`0x3efbc8`): the targets the Dynamo's shot (class 0x825) switches on ([`update_0cb5`]).
+//! * 0x0936 / 0x08fa / 0x0a00 (`0x3b3310`): the platforms those targets move ([`update_dynamo_platform`]).
+//! * 0x0a95 (`0x3d01f8`): the Dynamo to pick up ([`update_0a95`]).
 //!
 //! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
 //! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
@@ -582,8 +584,8 @@ pub fn update_0a56(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// (`0x3efdb8`): a hit from the Dynamo's shot (class 0x825) pokes its group (`0x31c970`: each member's `+0xbc` = 2,
 /// itself too). Poked (state 1) it leaves the list, sequence 1, and stays on (state 2): with a time `+0x00` it blinks
 /// between its two glows (`$gp+0x1cc0` / `+0x1cc4`) every 10 ticks for `+0x04` ticks, then (its `+0xbc` cleared,
-/// sequence 3) back in the list, waiting again (1); without one it keeps the "on" glow. The platforms it starts
-/// (0x0936 / 0x08fa / 0x0a00, `0x3b3310`) and the Dynamo are not ported.
+/// sequence 3) back in the list, waiting again (1); without one it keeps the "on" glow. Its group's platforms:
+/// [`update_dynamo_platform`].
 pub fn update_0cb5(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     const GLOW_OFF: u32 = 0x8000_30e1;
     const GLOW_ON: u32 = 0x8000_df2a;
@@ -644,6 +646,170 @@ pub fn update_0cb5(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 m.state = 1;
                 m.glow = GLOW_OFF;
             }
+        }
+        _ => {}
+    }
+}
+
+/// 0x0936 / 0x08fa / 0x0a00 (`0x3b3310`, 8 placed): a platform the Dynamo's targets move (their group's poke,
+/// `+0xbc`), between its place (kept at `+0x60` / `+0x70`) and the cuboid `+0x80`'s place and angles. Poked at home
+/// (1, no collision there) it waits `+0x84` ticks (2) and goes over `+0x88` ticks (3: `t` `+0x9c`, eased
+/// `(1 − cos πt)/2`, each angle turned the short way, `0x31e980`); there it holds `+0x8c` ticks (4) or, with −1, until
+/// poked again (5: then `+0x84` more); back the same way (6); then, `+0x98` −1, it waits `+0x94` (7) and goes again;
+/// else it counts its trips down (`+0xa4`): with some left it waits `+0x94` and goes again, at the last its group's
+/// pokes cleared (`0x31c970(group, 0)`) it is home again (1). It carries Ratchet (`0x322668`, the block `+0x20`).
+///
+/// Not ported: its moving sound (class 0x9ea's, looped, `+0xa8`), its glow while it is out (`0x321ba0`, `+0xac` /
+/// the moby's `+0x23`).
+pub fn update_dynamo_platform(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
+    let m = &mut w.mobys[id];
+    let (old, old_rot) = (m.pos, m.rot);
+    let poked = m.timer != 0;
+    let place = ctx.level.cuboid_place(m.pv_i(0x80));
+    let tick_down = |m: &mut crate::moby::Moby, off: usize| {
+        let mut t = m.pv_i(off);
+        let done = crate::moby::countdown(&mut t);
+        m.set_pv_i(off, t);
+        done
+    };
+    let pose = |m: &mut crate::moby::Moby, t: f32| {
+        let Some((to, angles)) = place else { return };
+        let f = (1.0 - (t * PI).cos()) * 0.5;
+        let home = m.pv_v(0x60);
+        m.pos = add(home, scale(sub(to, home), f));
+        for k in 0..3 { m.rot[k] = lerp_rot(m.pv_f(0x70 + 4 * k), angles[k], f); }
+    };
+    match m.state {
+        0 => {
+            m.mode |= 0x2000;
+            m.set_pv_i(0xa8, -1);
+            let (pos, rot) = (m.pos, m.rot);
+            m.set_pv_v(0x60, pos);
+            m.set_pv_v(0x70, rot);
+            m.set_state(1, -1);
+            m.has_collision = false;
+        }
+        1 => {
+            if poked {
+                m.set_pv_i(0xa4, m.pv_i(0x98));
+                m.set_pv_i(0xa0, m.pv_i(0x84));
+                m.set_state(2, -1);
+                m.has_collision = solid;
+            }
+        }
+        2 => {
+            if tick_down(m, 0xa0) {
+                m.set_pv_f(0x9c, 0.0);
+                m.set_state(3, -1);
+            }
+        }
+        3 => {
+            let t = (m.pv_f(0x9c) + 1.0 / m.pv_f(0x88)).min(1.0);
+            m.set_pv_f(0x9c, t);
+            pose(m, t);
+            if 1.0 <= t {
+                if m.pv_i(0x8c) != -1 {
+                    m.set_pv_i(0xa0, m.pv_i(0x8c));
+                    m.set_state(4, -1);
+                } else {
+                    m.set_state(5, -1);
+                }
+            }
+        }
+        4 => {
+            if tick_down(m, 0xa0) {
+                m.set_pv_f(0x9c, 1.0);
+                m.set_state(6, -1);
+            }
+        }
+        5 => {
+            if poked {
+                m.set_pv_i(0xa0, m.pv_i(0x84));
+                m.timer = 0;
+                m.set_state(4, -1);
+            }
+        }
+        6 => {
+            let t = (m.pv_f(0x9c) - 1.0 / m.pv_f(0x88)).max(0.0);
+            m.set_pv_f(0x9c, t);
+            pose(m, t);
+            if t <= 0.0 {
+                if m.pv_i(0x98) == -1 || !tick_down(m, 0xa4) {
+                    m.set_pv_i(0xa0, m.pv_i(0x94));
+                    m.set_state(7, -1);
+                } else {
+                    let g = m.group;
+                    m.set_state(1, -1);
+                    m.has_collision = false;
+                    if g != -1 {
+                        for i in usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default() { w.mobys[i].timer = 0; }
+                    }
+                }
+            }
+        }
+        7 => {
+            if tick_down(m, 0xa0) {
+                m.set_pv_f(0x9c, 0.0);
+                m.set_state(3, -1);
+            }
+        }
+        _ => {}
+    }
+    let m = &mut w.mobys[id];
+    m.timer = 0;
+    if m.state < 8 {
+        let (pos, yaw) = (m.pos, m.rot[2]);
+        carry_hero(ctx, id, old, old_rot[2], pos, yaw);
+    }
+}
+
+/// 0x0a95 (`0x3d01f8`, 1 placed): the Dynamo (item 0x24) to pick up. Not had yet it floats 0.75 over its place at
+/// 1.5 times its scale (else it is gone at once), turning 4.5° a tick; Ratchet in its cuboid `+0x04` asks for the
+/// scene 0x26 (`0x2f4ee8`, then `0x2f5030`: the chain started) and it waits (2), hidden while the scene plays. Once no
+/// scene is asked for or playing (`0x371ba8`) Ratchet is put at the cuboid `+0x08` (`0x2b9e68`), the Dynamo
+/// is his (`0x2f46e0`, in the quick select `0x3227d8`) and it is gone.
+///
+/// Not ported: its sparkle (`0x3cff58`), the message 0x1225 (`0x327448`), the autosave (`0x30d658`), the camera of
+/// the moby `+0x0c` (`0x42d968`), the help 0x9b9 after three minutes.
+pub fn update_0a95(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::items::DYNAMO;
+    let scale_of = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
+    match w.mobys[id].state {
+        0 => {
+            if ctx.game.items.get(DYNAMO as usize).copied().unwrap_or(0) != 0 {
+                w.delete(id);
+                return;
+            }
+            let m = &mut w.mobys[id];
+            m.pos[2] += 0.75;
+            m.scale = scale_of * 1.5;
+            m.set_state(1, -1);
+        }
+        1 => {
+            let m = &mut w.mobys[id];
+            m.rot[2] = add_rot(m.rot[2], 0.078_539_82);
+            if !ctx.level.in_cuboid(m.pv_i(4), ctx.hero.pos) { return; }
+            if !ctx.game.scenes.queue.push(0x26) { return; }
+            ctx.game.scenes.start_queue(ctx.hero.hp);
+            w.mobys[id].set_state(2, -1);
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            m.state_ticks = m.state_ticks.wrapping_add(1);
+            if ctx.game.scenes.mode == crate::scene::SCENE {
+                m.drawn = 0;
+                m.mode |= 1;
+            }
+            if ctx.game.scenes.in_scene() { return; }
+            if let Some((pos, rot)) = ctx.level.cuboid_place(m.pv_i(8)) {
+                ctx.hero.teleport(pos, rot);
+                // The game holds him in 0x6f for the camera of `+0x0c` (`0x42d968`, not ported): idle at once here.
+                ctx.hero.request_state(0, true);
+            }
+            ctx.game.get_item(DYNAMO);
+            ctx.game.give_item(DYNAMO);
+            w.delete(id);
         }
         _ => {}
     }

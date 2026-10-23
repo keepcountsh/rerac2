@@ -7,6 +7,7 @@ pub mod bolt;
 pub mod carriers;
 pub mod chute;
 pub mod crate_;
+pub mod dynamo;
 pub mod flower;
 pub mod flyer;
 pub mod enemies;
@@ -90,6 +91,9 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a8e => Some(flower::update_core),
         0x0b1a => Some(flower::update_0b1a),
         0x0cb5 => Some(oozla::update_0cb5),
+        0x0936 | 0x08fa | 0x0a00 => Some(oozla::update_dynamo_platform),
+        0x0a95 => Some(oozla::update_0a95),
+        0x0825 => Some(dynamo::update),
         _ => None,
     }
 }

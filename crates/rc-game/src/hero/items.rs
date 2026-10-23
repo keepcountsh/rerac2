@@ -24,6 +24,9 @@ pub const WRENCH: i32 = 10;
 /// The Lancer: item 0x1e, class 0x5d2 (`0x262504` of its row; a gadget, `G/GADGET.WAD`).
 pub const LANCER: i32 = 0x1e;
 pub const LANCER_CLASS: i16 = 0x5d2;
+/// The Dynamo: item 0x24, class 0x825 (L01 item table `0x2637b0`; got on Oozla, crate::moby::classes::dynamo).
+pub const DYNAMO: i32 = 0x24;
+pub const DYNAMO_CLASS: i16 = 0x825;
 
 /// An item record (`0x262500 + 0xe0·row`, row `0x139568[item]` = the item): the fields the port reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,10 +52,11 @@ pub struct ItemRow {
     pub start_ammo: i32,
 }
 
-/// The rows the port has (L00 `0x262dc0`, `0x263f40`).
-pub const ROWS: [ItemRow; 2] = [
+/// The rows the port has (L00 `0x262dc0`, `0x263f40`; the Dynamo's from Oozla's live table).
+pub const ROWS: [ItemRow; 3] = [
     ItemRow { item: WRENCH, attach: 0, class: WRENCH_CLASS, stance: 0, icon: 0, use_seq: 0, keep: false, speed: 0.0, rate: 0.0, damage: 1.0, ammo: false, max_ammo: 0, start_ammo: 0 },
     ItemRow { item: LANCER, attach: 0, class: LANCER_CLASS, stance: 1, icon: 0xea64, use_seq: 0x38, keep: true, speed: 60.0, rate: 7.0, damage: 0.5, ammo: true, max_ammo: 200, start_ammo: 200 },
+    ItemRow { item: DYNAMO, attach: 1, class: DYNAMO_CLASS, stance: 1, icon: 0xea7f, use_seq: 0x8d, keep: false, speed: 0.0, rate: 0.0, damage: 0.0, ammo: false, max_ammo: 0, start_ammo: 0 },
 ];
 
 /// Item `item`'s row.
