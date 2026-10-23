@@ -678,7 +678,7 @@ pub fn update_dynamo_platform(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let f = (1.0 - (t * PI).cos()) * 0.5;
         let home = m.pv_v(0x60);
         m.pos = add(home, scale(sub(to, home), f));
-        for k in 0..3 { m.rot[k] = lerp_rot(m.pv_f(0x70 + 4 * k), angles[k], f); }
+        for (k, a) in angles.iter().enumerate() { m.rot[k] = lerp_rot(m.pv_f(0x70 + 4 * k), *a, f); }
     };
     match m.state {
         0 => {
@@ -748,11 +748,9 @@ pub fn update_dynamo_platform(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 }
             }
         }
-        7 => {
-            if tick_down(m, 0xa0) {
-                m.set_pv_f(0x9c, 0.0);
-                m.set_state(3, -1);
-            }
+        7 if tick_down(m, 0xa0) => {
+            m.set_pv_f(0x9c, 0.0);
+            m.set_state(3, -1);
         }
         _ => {}
     }
