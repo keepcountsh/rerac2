@@ -687,7 +687,6 @@ fn bank(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                     if rot_dist(m.rot[2], face) < 0.174_532_95 { bite_start(w, id, ctx, (0x10, 0x16)); }
                 }
             }
-            return;
         }
         4 => {
             let m = &w.mobys[id];
