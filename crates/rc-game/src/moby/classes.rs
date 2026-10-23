@@ -1,6 +1,7 @@
 //! The class updates the port has, by o_class: the level's update table (L00 `0x2a2e80`, records `{o_class,
 //! update, 0x2a3978}` up to o_class −1, written to the slot table `0x1da240` by `0x32e1f8`) as Rust ports.
 
+pub mod area_switch;
 pub mod bolt;
 pub mod carriers;
 pub mod chute;
@@ -64,6 +65,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x02a7 => Some(chute::update),
         0x0ac7 => Some(gate::update),
         0x0c22 => Some(props::update_0c22),
+        0x0102 => Some(area_switch::update),
         _ => None,
     }
 }
