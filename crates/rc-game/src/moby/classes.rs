@@ -2,6 +2,7 @@
 //! update, 0x2a3978}` up to o_class −1, written to the slot table `0x1da240` by `0x32e1f8`) as Rust ports.
 
 pub mod area_switch;
+pub mod beast;
 pub mod bolt;
 pub mod carriers;
 pub mod chute;
@@ -81,6 +82,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x09a2 => Some(leaper::update),
         0x0b2b => Some(spitter::update),
         0x0a49 => Some(flyer::update),
+        0x09fc => Some(beast::update),
         _ => None,
     }
 }
