@@ -19,8 +19,13 @@ use crate::moby::{Ctx, MobyWorld};
 /// `0x3f45e0`.
 pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     match w.mobys[id].state {
-        0 => init(w, id),
+        0 => {
+            init(w, id);
+            // Into glow mode it registers its draw (`0x2e7920(0x3f4998)`) at once.
+            if w.mobys.get(id).is_some_and(|m| m.state == 2) { w.register_draw(id); }
+        }
         1 if active(w, id, ctx.level, ctx.host.camera_pos()) => pulse(w, id),
+        2 if active(w, id, ctx.level, ctx.host.camera_pos()) => w.register_draw(id),
         _ => {}
     }
 }
@@ -60,7 +65,7 @@ fn init(w: &mut MobyWorld, id: usize) {
     m.set_pv_i(0x30, cc as i32);
     m.set_pv_i(0x34, cd as i32);
     if m.pv_v(0x40) == [0.0; 3] { m.set_pv_i(0x6c, 1); }
-    // `0x2e7920(0x3f4998, m)` this tick too: crate::fx draws state 2's.
+    // `0x2e7920(0x3f4998, m)` this tick too ([`update`]).
     m.state = 2;
 }
 

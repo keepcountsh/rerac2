@@ -829,6 +829,8 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     if m.state_ticks != -1 { m.state_ticks = m.state_ticks.wrapping_add(1); }
     w.changed = true;
+    // `0x2e7920(0x3d8340)`: its glows and wire (crate::fx).
+    w.register_draw(id);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1477,6 +1479,8 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         m.set_pv_f(0x2ac, angle);
     }
     spin_parts(w, id, id, 0x2a0, ctx, angle);
+    // `0x3dc100` → `0x2e7920(0x3dc220)`: its glows (crate::fx).
+    w.register_draw(id);
     let m = &mut w.mobys[id];
     ai::flash(m, 0x50);
     for o in [0x270, 0x272, 0x26] {

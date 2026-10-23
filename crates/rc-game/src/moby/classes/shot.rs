@@ -154,6 +154,8 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 }
             }
             if let Some(sys) = ctx.parts.as_deref_mut() { flight_fx(sys, &mut ctx.game.rng, from, to, ctx.game.frame); }
+            // `0x2e7920(0x3e4050)`: its trail (crate::fx).
+            w.register_draw(id);
             w.rebuild(id, &*ctx.host);
         }
         1 => {
@@ -164,6 +166,7 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 w.delete(id);
                 return;
             }
+            w.register_draw(id);
         }
         _ => {}
     }

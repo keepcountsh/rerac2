@@ -93,15 +93,15 @@ fn draw_0b0b(w: &MobyWorld, host: &dyn crate::moby::MobyHost, id: usize, rng: &m
     glow(out, rng, 0.15, c, GLOW_0B0B[1], 0x10, 0x30, cam);
 }
 
-/// The frame's callbacks after the tick: the mobys the loop ran (they registered theirs), in the loop's order. `view`:
-/// the frame's camera for the callbacks' sphere checks (`0x2f0080`).
-pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, level: &crate::level::LevelData, view: &crate::particles::BSphereView, cam: V3) -> Vec<FxQuad> {
+/// The frame's callbacks after the tick: those the mobys' updates registered ([`MobyWorld::draws`]), in that order.
+/// `view`: the frame's camera for the callbacks' sphere checks (`0x2f0080`).
+pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, view: &crate::particles::BSphereView, cam: V3) -> Vec<FxQuad> {
     use crate::moby::classes::tie_lights;
     let mut out = Vec::new();
-    for id in w.run_list(cam) {
-        if 0x80 <= w.mobys[id].state { continue; }
+    for id in w.draws.clone() {
+        if w.mobys.get(id).is_none_or(|m| 0x80 <= m.state) { continue; }
         match w.mobys[id].o_class {
-            0x0ce9 if w.mobys[id].state == 2 && tie_lights::active(w, id, level, cam) => tie_lights::draw(w, id, view, cam, &mut out),
+            0x0ce9 => tie_lights::draw(w, id, view, cam, &mut out),
             0x0b0a => draw_0b0a(w, id, &mut game.rng, cam, &mut out),
             0x0b0b => draw_0b0b(w, host, id, &mut game.rng, cam, &mut out),
             crate::moby::classes::shot::SHOT_CLASS => crate::moby::classes::shot::draw_trail(&mut w.mobys[id], cam, &mut game.trail_phase, &mut out),

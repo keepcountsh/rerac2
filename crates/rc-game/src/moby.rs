@@ -406,6 +406,9 @@ pub struct MobyWorld {
     pub created: u32,
     /// The hit log (`0x1c3400`).
     pub hits: hits::HitLog,
+    /// `0x2e7920`'s list: the mobys whose update registered their class's draw callback this tick, in that order
+    /// (crate::fx runs them after the tick). A moby drawn as another's piece runs the piece's update and has none.
+    pub draws: Vec<usize>,
     /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
     pub groups: Vec<Vec<usize>>,
     /// The ties' and shrubs' world matrices (`0x1b249c` / `0x1b2380`, 0x40 each: rows, position) and their groups
@@ -589,6 +592,7 @@ impl MobyWorld {
             self.loaded = true;
             self.load_pass(ctx);
         }
+        self.draws.clear();
         for id in self.run_list(cam) {
             if self.mobys[id].state >= 0x80 { continue; }
             if self.mobys[id].mode & mode::NO_ADVANCE == 0 { ctx.host.advance(&self.mobys[id]); }
@@ -610,6 +614,9 @@ impl MobyWorld {
             if self.mobys[id].mode & mode::NO_MATRIX == 0 { self.rebuild(id, &*ctx.host); }
         }
     }
+
+    /// `0x2e7920(callback, moby)`: the moby's draw callback runs after this tick (crate::fx).
+    pub fn register_draw(&mut self, id: usize) { self.draws.push(id); }
 
     /// `0x1b1d40`: the free moby slots.
     pub fn free_slots(&self) -> usize { MAX_MOBYS.saturating_sub(self.mobys.iter().filter(|m| m.state < 0xfe).count()) }
