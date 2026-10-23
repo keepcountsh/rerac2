@@ -98,7 +98,7 @@ impl MobyCollision {
     }
 
     /// The blob of a class (`class_blob` = the class's core block), `None` when class +0x10 is 0.
-    pub(crate) fn of_class(class_blob: &[u8]) -> Result<Option<MobyCollision>> {
+    pub fn of_class(class_blob: &[u8]) -> Result<Option<MobyCollision>> {
         let off = Buf(class_blob).i32(0x10)?;
         if off == 0 { return Ok(None); }
         if off < 0 { return invalid(format!("moby collision offset {off:#x}")); }
