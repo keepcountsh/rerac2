@@ -921,7 +921,9 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             Some((pos, state)) => (pos, identity, state, None, scene_hero_mods(&mobys.hero_targets, p.hero.items.feet[0].is_some())),
             None => (p.hero.pos, p.hero.rows, p.anim.state, p.anim.snapshot.clone(), p.hero.posture.modifiers(&mobys.hero_targets)),
         };
-        let hl = mobys.hero_layers(&p.hero.layers);
+        // The scene's Ratchet takes none of play's pose layers (below).
+        let scene_hero = hero_pose.is_some();
+        let hl = if scene_hero { Vec::new() } else { mobys.hero_layers(&p.hero.layers) };
         let pose = crate::mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
         {
             let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(&lv.mobys.anim[p.class]));
@@ -934,7 +936,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
             if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
         }
-        let hl = mobys.hero_layers(&p.hero.layers);
+        let hl = if scene_hero { Vec::new() } else { mobys.hero_layers(&p.hero.layers) };
         let pose = crate::mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
         mobys.skin_worn(lv, &crate::mobys::Mobys::worn(&p.hero.items), Some(&pose));
     }
@@ -963,6 +965,9 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             if hero_pose.is_some() {
                 if let Some(slot) = a.snapshots.get_mut(k) { *slot = None; }
                 if let Some(mods) = a.mods.get_mut(k) { *mods = scene_hero_mods(&mobys.hero_targets, p.hero.items.feet[0].is_some()); }
+                // The scene's Ratchet is his moby made anew (`0x305428`: `0x311418(moby, 0)`), posed by the scene alone:
+                // none of play's pose layers (the weapon's hold, the face's look at an enemy) go with him.
+                if let Some(l) = a.layers.get_mut(k) { l.clear(); }
             }
         }
     }
@@ -974,6 +979,15 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
     if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye, &mut p.game.rng); }
+    // The frame's draw calls the callbacks the scene tick's updates registered too (rc_game::fx): the enemies hidden
+    // for the scene registered none, so play's last glows go.
+    {
+        let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: frame.camera.eye, sound: None };
+        let (tx, ty) = crate::game_camera::projection_tans(None);
+        let [fwd, left, up] = frame.camera.rows;
+        let view = rc_game::particles::BSphereView::from_camera(frame.camera.eye, fwd, left, up, tx, ty);
+        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, &view, frame.camera.eye);
+    }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: p.game.view_far * 1024.0 });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
 }
