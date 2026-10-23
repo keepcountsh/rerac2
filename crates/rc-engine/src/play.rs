@@ -574,6 +574,7 @@ fn tick(
         mobys.world.changed = false;
     }
     if let Some(o) = occl.as_mut() {
+        for &ii in &mobys.left_out { o.set_hidden(ii, true); }
         for m in &mobys.world.mobys {
             let Some(ii) = m.instance else { continue };
             let hidden = m.state >= 0x80 || m.mode & 1 != 0;
@@ -958,6 +959,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         mobys.skin_worn(lv, &crate::mobys::Mobys::worn(&p.hero.items), Some(&pose));
     }
     if let Some(o) = occl.as_mut() {
+        for &ii in &mobys.left_out { o.set_hidden(ii, true); }
         for m in &mobys.world.mobys {
             let Some(ii) = m.instance else { continue };
             let hidden = m.state >= 0x80 || m.mode & 1 != 0;

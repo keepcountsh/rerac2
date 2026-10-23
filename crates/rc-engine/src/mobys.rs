@@ -70,6 +70,8 @@ pub struct Mobys {
     /// The level defs' footstep base (`$gp − 0x60e4`, `0x3012a0`): the level settings' word after their variant
     /// blocks (`[0x17 + 8·n]`, n = `[0x1a]`; `[0x1f]` without blocks).
     pub footstep_base: usize,
+    /// The placed instances whose record the spawn rules left out (`0x3012a0`: no moby, so nothing draws them).
+    pub left_out: Vec<usize>,
 }
 
 /// Joint lists per class: each list the root-to-joint chain whose last joint the query returns.
@@ -525,6 +527,8 @@ impl Mobys {
         };
         let mut rules = rc_game::moby::SpawnRules { game, fresh, ground: &ground };
         world.spawn_static(&records, &data, host, &mut rules);
+        let spawned: std::collections::HashSet<usize> = world.mobys.iter().filter_map(|m| m.instance).collect();
+        let left_out = (0..records.len()).filter(|i| !spawned.contains(i)).collect();
         let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
         let lists: Vec<(Vec<u8>, Vec<u8>)> = m
             .classes
@@ -561,7 +565,7 @@ impl Mobys {
             let mut l = rc_game::level::LevelData::load(&lv.gameplay);
             l.items = crate::play::menu_tables(&crate::level_load::extracted_root(), crate::level_load::level_index()).items;
             l
-        }, footstep_base: footstep_base(&lv.gameplay) }
+        }, footstep_base: footstep_base(&lv.gameplay), left_out }
     }
 
 }
