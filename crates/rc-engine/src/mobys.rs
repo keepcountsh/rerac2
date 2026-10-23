@@ -518,6 +518,15 @@ impl Mobys {
             let coll = lv.collision.as_ref()?;
             rc_game::collision::coll_line(coll, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.01], rc_game::collision::QueryFlags(2)).map(|o| o.point[2])
         };
+        // `RC_MISSIONS=12=bf,14=bf` (dev): this level's mission progress bytes (`0x19b2e8 + level·0x10`, and the
+        // level's copy the spawn rules read) before the spawn, to match a save's mission ranks (e.g. a 100% card).
+        if let Ok(list) = std::env::var("RC_MISSIONS") {
+            for (m, v) in list.split(',').filter_map(|kv| kv.split_once('=')).filter_map(|(m, v)| Some((m.trim().parse::<usize>().ok()?, u8::from_str_radix(v.trim(), 16).ok()?))) {
+                let i = game.level.max(0) as usize * 0x10 + (m & 0xf);
+                if let Some(b) = game.missions.get_mut(i) { *b = v; }
+                if let Some(b) = game.mission_table.get_mut(m) { *b = v; }
+            }
+        }
         let mut rules = rc_game::moby::SpawnRules { game, fresh, ground: &ground };
         world.spawn_static(&records, &data, host, &mut rules);
         let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
