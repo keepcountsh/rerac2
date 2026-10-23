@@ -485,10 +485,13 @@ impl Mobys {
             classes.push(ClassInfo { o_class: o, update: rc_game::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
         }
         let mut world = MobyWorld::new(classes);
+        let (shared, shared_ptrs) = g2::shared_data(&lv.gameplay).map_err(|e| eprintln!("mobys: shared data: {e}")).unwrap_or_default();
         let data = rc_game::moby::SpawnData {
             pvars: g2::pvar_blocks(&lv.gameplay).map_err(|e| eprintln!("mobys: pvars: {e}")).unwrap_or_default(),
             links: g2::pvar_fixups(&lv.gameplay, "pvar_moby_links").unwrap_or_default(),
             fixups: g2::pvar_fixups(&lv.gameplay, "pvar_pointer_fixups").unwrap_or_default(),
+            shared,
+            shared_ptrs,
             groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("mobys: moby groups: {e}")).unwrap_or_default(),
             ties: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
             tie_classes: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.o_class).collect(),
@@ -497,6 +500,10 @@ impl Mobys {
             tie_groups: g2::instance_groups(&lv.gameplay, "tie_groups").map_err(|e| eprintln!("mobys: tie groups: {e}")).unwrap_or_default(),
             shrub_groups: g2::instance_groups(&lv.gameplay, "shrub_groups").map_err(|e| eprintln!("mobys: shrub groups: {e}")).unwrap_or_default(),
         };
+        // `RC_DUMP_GAMEPLAY=<file>`: the level's gameplay file as loaded (a dev dump, for reading its sections).
+        if let Ok(path) = std::env::var("RC_DUMP_GAMEPLAY") {
+            if let Err(e) = std::fs::write(&path, &lv.gameplay) { eprintln!("RC_DUMP_GAMEPLAY: {e}"); }
+        }
         // `RC_PVAR_FIXUPS=12,40`: those pvar blocks' pointer fixups and moby links (byte offsets; a dev trace).
         if let Ok(list) = std::env::var("RC_PVAR_FIXUPS") {
             for k in list.split(',').filter_map(|x| x.trim().parse::<usize>().ok()) {

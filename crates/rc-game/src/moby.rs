@@ -428,6 +428,9 @@ pub struct MobyWorld {
     pub moved_shrubs: Vec<usize>,
     /// The ties hidden by the level's objects (the runtime tie's `+0x1e` bit 2), for the engine.
     pub hidden_ties: std::collections::HashSet<usize>,
+    /// The mobys' shared words (gameplay section 21, live after the pvar data): the pvar words listed in its pairs
+    /// hold an offset here ([`MobyWorld::shared_i`]).
+    pub shared: Vec<u8>,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).
@@ -438,6 +441,10 @@ pub struct SpawnData {
     pub links: Vec<(usize, usize)>,
     /// `(pvar index, offset)`: a pointer relative to its own block (kept relative here: the classes read offsets).
     pub fixups: Vec<(usize, usize)>,
+    /// The shared words and `(pvar index, pvar offset, offset in them)` (section 21: the pointer there is kept as
+    /// the offset).
+    pub shared: Vec<u8>,
+    pub shared_ptrs: Vec<(usize, usize, usize)>,
     pub groups: Vec<Vec<u16>>,
     /// The ties' and shrubs' matrices and groups ([`MobyWorld::ties`]).
     pub ties: Vec<[[f32; 4]; 4]>,
@@ -508,6 +515,10 @@ impl MobyWorld {
                             pv[off..off + 4].copy_from_slice(&to.to_le_bytes());
                         }
                     }
+                    // The shared words' pointers (section 21): their offset into `self.shared`.
+                    for &(k, off, to) in &data.shared_ptrs {
+                        if k as i32 == b.pvar_index && off + 4 <= pv.len() { pv[off..off + 4].copy_from_slice(&(to as i32).to_le_bytes()); }
+                    }
                     m.pvars = pv;
                     m.pvar_index = b.pvar_index;
                 }
@@ -523,6 +534,15 @@ impl MobyWorld {
         self.shrub_groups = data.shrub_groups.clone();
         self.tie_classes = data.tie_classes.clone();
         self.tie_spheres = data.tie_spheres.clone();
+        self.shared = data.shared.clone();
+    }
+
+    /// The shared word a pvar pointer of section 21 names (its offset, [`SpawnData::shared_ptrs`]); 0 out of range.
+    pub fn shared_i(&self, off: i32) -> i32 {
+        usize::try_from(off).ok().and_then(|o| self.shared.get(o..o + 4)).map_or(0, |b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+    pub fn set_shared_i(&mut self, off: i32, v: i32) {
+        if let Some(b) = usize::try_from(off).ok().and_then(|o| self.shared.get_mut(o..o + 4)) { b.copy_from_slice(&v.to_le_bytes()); }
     }
 
     /// `CreateMoby(o_class)` `0x311320`: the first free slot (state ≥ 0xfe), initialised, with zeroed pvars.
