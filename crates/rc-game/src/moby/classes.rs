@@ -7,6 +7,7 @@ pub mod chute;
 pub mod crate_;
 pub mod enemies;
 pub mod gate;
+pub mod gravity_bomb;
 pub mod lancer;
 pub mod nanotech;
 pub mod pickup;
@@ -23,6 +24,9 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
     match o_class {
         0x47 => Some(wrench::update),
         0x5d2 => Some(lancer::update),
+        gravity_bomb::HAND_CLASS => Some(gravity_bomb::update),
+        gravity_bomb::BOMB_CLASS => Some(gravity_bomb::update_bomb),
+        gravity_bomb::BLAST_CLASS => Some(gravity_bomb::update_blast),
         0xbfe => Some(shot::update),
         500 | 501 | 511 => Some(crate_::update),
         13..=19 => Some(bolt::update),

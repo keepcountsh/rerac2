@@ -24,8 +24,9 @@ pub const WRENCH: i32 = 10;
 /// The Lancer: item 0x1e, class 0x5d2 (`0x262504` of its row; a gadget, `G/GADGET.WAD`).
 pub const LANCER: i32 = 0x1e;
 pub const LANCER_CLASS: i16 = 0x5d2;
-/// The Gravity Bomb (item 0x2a).
+/// The Gravity Bomb (item 0x2a) and its hand moby's class (crate::moby::classes::gravity_bomb).
 pub const GRAVITY_BOMB: i32 = 0x2a;
+pub const GRAVITY_BOMB_CLASS: i16 = 0xce3;
 
 /// An item record (`0x262500 + 0xe0·row`, row `0x139568[item]` = the item): the fields the port reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,10 +52,11 @@ pub struct ItemRow {
     pub start_ammo: i32,
 }
 
-/// The rows the port has (L00 `0x262dc0`, `0x263f40`).
-pub const ROWS: [ItemRow; 2] = [
+/// The rows the port has (L00 `0x262dc0`, `0x263f40`, `0x2649c0`).
+pub const ROWS: [ItemRow; 3] = [
     ItemRow { item: WRENCH, attach: 0, class: WRENCH_CLASS, stance: 0, icon: 0, use_seq: 0, keep: false, speed: 0.0, rate: 0.0, damage: 1.0, ammo: false, max_ammo: 0, start_ammo: 0 },
     ItemRow { item: LANCER, attach: 0, class: LANCER_CLASS, stance: 1, icon: 0xea64, use_seq: 0x38, keep: true, speed: 60.0, rate: 7.0, damage: 0.5, ammo: true, max_ammo: 200, start_ammo: 200 },
+    ItemRow { item: GRAVITY_BOMB, attach: 0, class: GRAVITY_BOMB_CLASS, stance: 2, icon: 0xea65, use_seq: 0x36, keep: false, speed: 0.0, rate: 0.5, damage: 0.0, ammo: true, max_ammo: 8, start_ammo: 8 },
 ];
 
 /// Item `item`'s row.

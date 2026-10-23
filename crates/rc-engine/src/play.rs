@@ -591,7 +591,7 @@ fn tick(
         let (tx, ty) = crate::game_camera::projection_tans(None);
         let [fwd, left, up] = p.camera.rows;
         let view = rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty);
-        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, &view, p.camera.pos);
+        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, p.hero.state, &view, p.camera.pos);
     }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
@@ -1050,7 +1050,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let (tx, ty) = crate::game_camera::projection_tans(None);
         let [fwd, left, up] = frame.camera.rows;
         let view = rc_game::particles::BSphereView::from_camera(frame.camera.eye, fwd, left, up, tx, ty);
-        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, &view, frame.camera.eye);
+        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, p.hero.state, &view, frame.camera.eye);
     }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: p.game.view_far * 1024.0 });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });

@@ -10,6 +10,7 @@
 //! | `0x3f4998` | 0x0ce9 in glow mode | a glow at each tie of its group ([`crate::moby::classes::tie_lights::draw`]) |
 //! | `0x3e4050` | the Lancer's shot | its trail's newest point and the trail ([`crate::moby::classes::shot::draw_trail`]) |
 //! | `0x3a17f0` | the nanotech cluster 0x326 (the first list) | its sphere, halo and crate glass ([`crate::moby::classes::nanotech::draw`]) |
+//! | `0x3efd68` | the Gravity Bomb in the hand 0xce3 | where its throw lands ([`crate::moby::classes::gravity_bomb::draw_marker`]) |
 //!
 //! The frame's first list (`0x2e7718`, run by `0x2e7768` before the particles, `0x3311e0`) holds on Aranos the
 //! arrival ship's draw (`0x362b40`, which the engine's created-moby draw does), class 0xd0's ribbon (`0x39ac30`, not
@@ -96,8 +97,8 @@ fn draw_0b0b(w: &MobyWorld, host: &dyn crate::moby::MobyHost, id: usize, rng: &m
 }
 
 /// The frame's callbacks after the tick: those the mobys' updates registered ([`MobyWorld::draws`]), in that order.
-/// `view`: the frame's camera for the callbacks' sphere checks (`0x2f0080`).
-pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, view: &crate::particles::BSphereView, cam: V3) -> Vec<FxQuad> {
+/// `hero_state`: Ratchet's (`0x18c0b4`). `view`: the frame's camera for the callbacks' sphere checks (`0x2f0080`).
+pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, hero_state: i32, view: &crate::particles::BSphereView, cam: V3) -> Vec<FxQuad> {
     use crate::moby::classes::tie_lights;
     let mut out = Vec::new();
     for id in w.draws.clone() {
@@ -108,6 +109,7 @@ pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut
             0x0b0b => draw_0b0b(w, host, id, &mut game.rng, cam, &mut out),
             crate::moby::classes::shot::SHOT_CLASS => crate::moby::classes::shot::draw_trail(&mut w.mobys[id], cam, &mut game.trail_phase, &mut out),
             crate::moby::classes::nanotech::CLASS => crate::moby::classes::nanotech::draw(w, id, cam, &mut out),
+            crate::moby::classes::gravity_bomb::HAND_CLASS => crate::moby::classes::gravity_bomb::draw_marker(w, id, hero_state, game.frame, &mut out),
             _ => {}
         }
     }
