@@ -274,6 +274,13 @@ impl GameState {
     /// A help slot's count.
     pub fn help_count(&self, slot: usize) -> i16 { self.help_counts.get(slot).copied().unwrap_or(0) }
 
+    /// `0x2e4450(mission)`: the mission's rank, how many of its enemies come (the placed records' word 9 against
+    /// it, crate::moby::SpawnRules): 3 in the challenge mode (`0x1a7a12`), else `3 − stat / 100`, at least 1. The stat
+    /// (`0x2e43a8`) weighs ten of the player's counters (`0x1a24a8`) by the level's table (`0x25ed60`: per mission
+    /// 0x28 bytes of `{counter row, counter, weight}`); the port keeps no counters yet, so it is 0 and the rank 3, as
+    /// on a fresh game.
+    pub fn mission_rank(&self, _mission: u8) -> u8 { 3 }
+
     /// The two progress bits of a mission's sub-mission on this level.
     pub fn mission(&self, mission: u8, sub: u8) -> u8 {
         let b = self.missions.get(self.level.max(0) as usize * 0x10 + mission as usize).copied().unwrap_or(0);

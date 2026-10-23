@@ -93,8 +93,8 @@ pub fn update_0c4c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 
 /// 0x0c63 (`0x3ec378`): a mission area — Ratchet in its cuboid (`+0x68`[4]) marks the mission (`+0xb0`) the area's;
-/// the first time (`+0x68`[8] = 0, its bits clear) the sub-mission (`+0xb1`) is done: its bits set to the rank
-/// (`0x2e4450`: 1 without the stats table) and its rewards (the spawn's tables `0x1c5400` XP, `0x1c54c0` bolts: not
+/// the first time (`+0x68`[8] = 0, its bits clear) the sub-mission (`+0xb1`) is done: its bits set to the mission's
+/// rank (`0x2e4450`, crate::game::GameState::mission_rank) and its rewards (the spawn's tables `0x1c5400` XP, `0x1c54c0` bolts: not
 /// read yet, none) banked.
 pub fn update_0c63(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &w.mobys[id];
@@ -103,7 +103,8 @@ pub fn update_0c63(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if m.pv_i(8) != 0 || ctx.game.mission(m.mission, m.sub_index) != 0 { return; }
     let (mission, sub) = (m.mission, m.sub_index);
     w.mobys[id].set_pv_i(8, 1);
-    ctx.game.set_mission(mission, sub, 1);
+    let rank = ctx.game.mission_rank(mission);
+    ctx.game.set_mission(mission, sub, rank);
 }
 
 /// 0x0340 (`0x3a2030`, on 18 levels): the remote's range. Its alpha 0xff every tick; with Ratchet steering a remote

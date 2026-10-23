@@ -197,7 +197,8 @@ pub struct SpawnRules<'a> {
 
 impl SpawnRules<'_> {
     /// Whether the record stays out, and whether it takes the alternative bolts / XP (words 6 / 8). The rank test
-    /// (word 9 against the mission's rank `0x2e4450`) leaves the challenge mobys out, banking their rewards for the
+    /// (word 9 against the sub-mission's progress bits, else the mission's rank `0x2e4450`,
+    /// crate::game::GameState::mission_rank) leaves the higher ranks' mobys out, banking their rewards for the
     /// mission (`0x1c5400` / `0x1c54c0`); the flags (word 3): 0 always; dead since the checkpoint (`0x21e1c4`):
     /// never; bits 0 / 1 by the mission's table `0x1b1c60` (bit 1: the uid's bit 3 set, its count cleared, the
     /// alternative rewards); bit 2 (with 3 clear) once — not while the uid's count is set; bit 3 the count cleared on
@@ -207,8 +208,9 @@ impl SpawnRules<'_> {
         let g = &mut *self.game;
         let (mission, sub, flags, uid, rank) = (b.unknown_4, b.spawn_flags, b.spawn_id, r.extra[0] as i16, b.unknown_14);
         if 0 <= mission && 0 < rank {
+            // The sub-mission's progress bits, else (none yet) the mission's rank.
             let mut have = g.mission(mission as u8, sub as u8) as i32;
-            if have == 0 { have = 1; }
+            if have == 0 { have = g.mission_rank(mission as u8) as i32; }
             if b.o_class == 0x1f5 || b.o_class == 0x200 {
                 if rank < have { return (true, false); }
             } else if have < rank {
