@@ -6,6 +6,7 @@ pub mod bolt;
 pub mod carriers;
 pub mod chute;
 pub mod crate_;
+pub mod flyer;
 pub mod enemies;
 pub mod gate;
 pub mod lancer;
@@ -77,6 +78,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a92 | 0x0a93 => Some(oozla::update_float),
         0x09a2 => Some(leaper::update),
         0x0b2b => Some(spitter::update),
+        0x0a49 => Some(flyer::update),
         _ => None,
     }
 }
