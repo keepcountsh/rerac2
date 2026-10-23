@@ -58,7 +58,7 @@ def files():
             for f in fs:
                 if not (f.endswith(".rs") or f.endswith(".md")):
                     continue
-                p = os.path.relpath(os.path.join(d, f), ROOT)
+                p = os.path.relpath(os.path.join(d, f), ROOT).replace(os.sep, "/")  # the prefixes above use "/"
                 if any(p.startswith(c) for c in CITES) and not any(p.startswith(x) for x in RAC1_ADDRESSED):
                     yield p
 
@@ -160,7 +160,7 @@ def main():
             rows.append(c)
     infer(shared, rows)
     out = os.path.join(ROOT, "tools/ghidra/names/census_systems.tsv")
-    with open(out, "w") as fh:
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# Going Commando census tags (tools/census/tags.py; manual rows: tools/census/tags_manual.tsv).\n")
         fh.write("# conf: cite = from the port's citing lines; range = the vector maths range; L = read in the decomp, inferred;\n")
         fh.write("#   leaf = a leaf of at most 12 words; near = a level copy's L00 twin; wrap = a thin wrapper's callee;\n")
