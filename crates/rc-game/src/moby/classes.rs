@@ -75,6 +75,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a6a | 0x0a6b | 0x0aa0 | 0x0aa1 => Some(oozla::update_mover),
         0x0c58 => Some(oozla::update_0c58),
         0x0ca0 => Some(oozla::update_0ca0),
+        0x046f => Some(oozla::update_046f),
         0x0a17 => Some(oozla::update_0a17),
         0x0a92 | 0x0a93 => Some(oozla::update_float),
         0x09a2 => Some(leaper::update),

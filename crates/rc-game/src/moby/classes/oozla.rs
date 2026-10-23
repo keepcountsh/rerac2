@@ -11,7 +11,8 @@
 //! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
 //! `0x1a7b13` / `0x1a7b32`), 0x0ca0 (`0x3ee1d0`, the switch that pokes them: the use system, G-UI-001).
 
-use crate::hero::physics::{add, add_rot, dist2, scale, sub, sub_rot, V3};
+use crate::hero::physics::{add, add_rot, approach, dist2, scale, set_len, sub, sub_rot, V3};
+use crate::moby::ai;
 use crate::moby::attach::rows_of;
 use crate::moby::{carry_hero, Ctx, MobyWorld};
 use std::f32::consts::PI;
@@ -285,4 +286,170 @@ pub fn update_float(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         }
         _ => {}
     }
+}
+
+/// The teleporter's pads (`[5..8]`): at its place 0.4 lower, out along their facing by `[8]`·2.4 − 1.2, tilted by
+/// `[9]`·−60° − 20° (`0x399d28`).
+fn teleporter_pads(w: &mut MobyWorld, id: usize) {
+    let m = &w.mobys[id];
+    let (pos, out, tilt) = (m.pos, m.pv_f(0x20) * 2.4 - 1.2, m.pv_f(0x24) * -1.047_197_7 - 0.349_065_9);
+    for k in 0..3 {
+        let Some(p) = usize::try_from(w.mobys[id].pv_i(0x14 + 4 * k)).ok().filter(|&p| p < w.mobys.len()) else { continue };
+        let pm = &mut w.mobys[p];
+        pm.rot[1] = -20.0 * 0.017_453_294;
+        let rows = rows_of(pm.rot);
+        pm.pos = add([pos[0], pos[1], pos[2] - 0.4], set_len(rows[0], out));
+        pm.rot[1] = tilt;
+        pm.drive = true;
+    }
+}
+
+/// Its pads shown (with collision) or hidden (`0x39a4d8` / `0x39a488`).
+fn teleporter_show(w: &mut MobyWorld, id: usize, show: bool) {
+    let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
+    let pads: Vec<usize> = (0..3).filter_map(|k| usize::try_from(w.mobys[id].pv_i(0x14 + 4 * k)).ok()).filter(|&p| p < w.mobys.len()).collect();
+    for i in std::iter::once(id).chain(pads) {
+        let m = &mut w.mobys[i];
+        if show { (m.mode, m.drawn) = (m.mode & !1, 1) } else { (m.mode, m.drawn) = (m.mode | 1, 0) }
+        if i == id { m.has_collision = show && solid; }
+    }
+}
+
+/// 0x046f (`0x3994c0`, levels 1, 8, 9, 12, 17): a teleporter to its partner `+0x68`[0] (on Oozla to the Megacorp
+/// store and back). Hidden until Ratchet first enters its cuboid `[1]` (its uid counted in the save; kept for good),
+/// with its three pads (class 0x13b, made at the set-up). Standing on it (his ground moby, grounded) he gets its help
+/// text once (not ported: `0x399e80`, the level's text `$gp+0x568`[`[0x10]`], 0x12e5 on Oozla); △ (and a 1.5 sphere
+/// pushing 20 off it) walks him to its centre (`0x2d4440`, facing its yaw) while it powers up (`[8]` / `[9]` eased
+/// to 1: 12/3600, at most 32/60: `$gp+0x558..0x560`); once he is there (his state 0x64; or after 360 ticks) the beam
+/// `[0xd]` fades from 1.95 and he is put on the partner 0.2 up, facing its way (`0x2b9e68`); the partner powers down
+/// (4). Not ported: the beam's draw (`0x2dce00`), the help text, the cameras' snap (`0x304200`, `0x3245e8`,
+/// `0x42b9f0`), the item gate `[0xf]` (`0x1a7a12`), the mission gate `[2]`, `0x320328`'s pad flag.
+pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::physics::ease;
+    let uid = w.mobys[id].uid;
+    let mut on = ctx.game.uid_dead.get(uid.max(0) as usize).is_some_and(|&d| d != 0) || ctx.game.uid_count(uid) != 0;
+    if !on && w.mobys[id].pv_i(4) != -1 && ctx.level.in_cuboid(w.mobys[id].pv_i(4), ctx.hero.pos) {
+        on = true;
+        ctx.game.count_uid(uid);
+        teleporter_show(w, id, true);
+        if w.mobys[id].state == 5 { w.mobys[id].set_state(1, -1); }
+    }
+    let m = &mut w.mobys[id];
+    if (m.state_ticks as u16) < 0x7ffd { m.state_ticks += 1; }
+    let (a, b, most) = (12.0 / 3600.0, 12.0 / 3600.0, 32.0 / 60.0);
+    let ease_to = |m: &mut crate::moby::Moby, t: f32, x: usize, v: usize| {
+        let (mut p, mut s) = (m.pv_f(x), m.pv_f(v));
+        ease(t, a, b, most, &mut p, &mut s);
+        m.set_pv_f(x, p);
+        m.set_pv_f(v, s);
+    };
+    match m.state {
+        0 => {
+            m.update_dist = 0xff;
+            let (pos, rot, ud) = (m.pos, m.rot, m.update_dist);
+            for k in 0..3 {
+                let p = w.create(0x013b);
+                let pm = &mut w.mobys[p];
+                pm.draw_dist = 0x40;
+                pm.drawn = 1;
+                pm.pos = pos;
+                pm.rot = [rot[0], rot[1], add_rot(rot[2], k as f32 * 2.094_395_4)];
+                pm.update_dist = ud;
+                pm.set_pv_i(0, id as i32);
+                w.mobys[id].set_pv_i(0x14 + 4 * k, p as i32);
+            }
+            if w.mobys[id].pv_i(0x38) == 0 && !on {
+                w.mobys[id].set_state(5, -1);
+                teleporter_show(w, id, false);
+            } else {
+                w.mobys[id].set_state(6, -1);
+            }
+        }
+        6 => w.mobys[id].set_state(1, -1),
+        1 => {
+            let m = &w.mobys[id];
+            if m.pv_i(0) == -1 || ctx.hero.ground_moby != Some(id) || ctx.hero.air_ticks != 0 { teleporter_pads(w, id); return; }
+            if m.pv_i(0x50) != 0 {
+                let idle = ctx.hero.state == 0;
+                w.mobys[id].set_pv_i(0x50, idle as i32);
+            }
+            if ctx.hero.items.pressed & crate::pad::button::TRIANGLE != 0 {
+                ctx.host.play_sound(&w.mobys[id], 0, 0);
+                let m = &mut w.mobys[id];
+                m.set_state(2, -1);
+                m.set_pv_i(0x28, 0);
+                m.set_pv_i(0x30, -1);
+                m.set_pv_i(0x2c, 0);
+                let (yaw, at) = (m.rot[2], m.pos);
+                ctx.hero.script_walk_to(yaw, at, false);
+                ai::attack_sphere(w, id, ctx, 1.5, 20.0, 1.0, at, 0x10000, 0, 1, 0);
+                return;
+            }
+        }
+        2 => {
+            let walk = match ctx.hero.state { 0x62 | 0x63 => 1, 0x64 => 2, _ => 0 };
+            if m.pv_f(0x20) < 1.0 {
+                ease_to(m, 1.0, 0x20, 0x28);
+            } else if m.pv_f(0x24) < 1.0 {
+                ease_to(m, 1.0, 0x24, 0x2c);
+            } else if walk == 2 || (walk != 0 && 0x168 < m.state_ticks) {
+                if walk != 2 { ctx.hero.request_state(0, true); }
+                m.set_pv_f(0x34, 1.95);
+                m.set_state(3, -1);
+            } else if walk == 0 {
+                m.set_state(4, -1);
+            }
+        }
+        3 => {
+            if m.pv_f(0x34) != 0.0 {
+                let mut f = m.pv_f(0x34);
+                approach(0.0, 0.066_666_67, &mut f);
+                m.set_pv_f(0x34, f);
+                return;
+            }
+            let Some(p) = usize::try_from(m.pv_i(0)).ok().filter(|&p| p < w.mobys.len()) else { return };
+            let (to, rot) = (w.mobys[p].pos, w.mobys[p].rot);
+            ctx.hero.teleport([to[0], to[1], to[2] + 0.2], rot);
+            // His walk to the old pad's centre ends there (he stands on the new pad).
+            ctx.hero.request_state(0, true);
+            let pm = &mut w.mobys[p];
+            pm.set_state(4, -1);
+            for o in [0x28, 0x2c, 0x34] { pm.set_pv_i(o, 0); }
+            pm.set_pv_f(0x24, 1.0);
+            pm.set_pv_f(0x20, 1.0);
+            pm.set_pv_i(0x50, 1);
+            ctx.host.play_sound(&w.mobys[p], 1, 0);
+            let m = &mut w.mobys[id];
+            m.set_state(1, -1);
+            for o in [0x2c, 0x20, 0x24, 0x28] { m.set_pv_i(o, 0); }
+            m.set_pv_f(0x34, 1.95);
+        }
+        4 | 8 => {
+            if m.pv_f(0x34) < 1.95 {
+                let mut f = m.pv_f(0x34);
+                approach(1.95, 0.066_666_67, &mut f);
+                m.set_pv_f(0x34, f);
+            } else if 0.0 < m.pv_f(0x24) {
+                ease_to(m, 0.0, 0x24, 0x28);
+            } else if m.pv_f(0x20) <= 0.0 {
+                m.set_state(1, -1);
+            } else {
+                ease_to(m, 0.0, 0x20, 0x2c);
+            }
+        }
+        7 => {
+            if m.pv_f(0x20) < 1.0 {
+                ease_to(m, 1.0, 0x20, 0x28);
+            } else if m.pv_f(0x24) < 1.0 {
+                ease_to(m, 1.0, 0x24, 0x2c);
+            } else {
+                ctx.host.play_sound(&w.mobys[id], 1, 0);
+                let m = &mut w.mobys[id];
+                m.set_state(8, -1);
+                m.set_pv_f(0x34, 0.0);
+            }
+        }
+        _ => return,
+    }
+    teleporter_pads(w, id);
 }
