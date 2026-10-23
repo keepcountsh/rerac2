@@ -408,6 +408,17 @@ fn tick(
         let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
+    // `RC_CUBOIDS=64,85`: those cuboids' centres and angles on the first tick (a dev trace, for placing Ratchet in one).
+    if p.ticks == 0 {
+        if let Ok(list) = std::env::var("RC_CUBOIDS") {
+            for i in list.split(',').filter_map(|x| x.trim().parse::<i32>().ok()) {
+                match mobys.level.cuboid_place(i) {
+                    Some((c, a)) => println!("cuboid {i}: centre ({:.2}, {:.2}, {:.2}) angles ({:.3}, {:.3}, {:.3})", c[0], c[1], c[2], a[0], a[1], a[2]),
+                    None => println!("cuboid {i}: none"),
+                }
+            }
+        }
+    }
     // `RC_MOBY_TRACE=0b0b,099c`: those classes' mobys every 15 ticks (`RC_MOBY_TRACE_EVERY`; a dev trace).
     let every = std::env::var("RC_MOBY_TRACE_EVERY").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(15).max(1);
     if p.ticks % every == 0 {

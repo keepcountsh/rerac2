@@ -9,6 +9,7 @@ pub mod crate_;
 pub mod enemies;
 pub mod gate;
 pub mod lancer;
+pub mod oozla;
 pub mod props;
 pub mod shot;
 pub mod spawn_point;
@@ -66,6 +67,10 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0ac7 => Some(gate::update),
         0x0c22 => Some(props::update_0c22),
         0x0102 => Some(area_switch::update),
+        0x08fb => Some(oozla::update_08fb),
+        0x0f14 => Some(oozla::update_0f14),
+        0x0a6a | 0x0a6b | 0x0aa0 | 0x0aa1 => Some(oozla::update_mover),
+        0x0c58 => Some(oozla::update_0c58),
         _ => None,
     }
 }
