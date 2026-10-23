@@ -120,6 +120,39 @@ pub fn update_mover(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if m.state < 5 { carry_hero(ctx, id, old, old_yaw, m.pos, m.rot[2]); }
 }
 
+/// 0x0ca0 (`0x3ee1d0`): a pressure plate. Ratchet standing on it (his ground moby `0x18a15c`, grounded) within 0.5
+/// across of its joint 0 counts its uid in the level's save bits; with the count (or the uid gone for good) and a
+/// mission (`+0xb0` ≠ −1) it is pressed (state 1) and pokes its moby `+0x68`[0] (`+0xbc`: Oozla's ladder, 0x0c58,
+/// swings down), so a save keeps it pressed. Its glow pulses (`+0x78`: grey `(4·sin p − 3)·128`, 0x20..0x80; p `[1]`
+/// 6°/tick); pressed it glows 0x80208010. Not ported: the sound 0x8a1 when pressed (`0x356a20`).
+pub fn update_0ca0(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    let p = add_rot(m.pv_f(4), 0.104_719_76);
+    m.set_pv_f(4, p);
+    if m.state != 0 {
+        m.set_pv_i(8, 1);
+        m.glow = 0x8020_8010;
+        return;
+    }
+    m.set_pv_i(8, 0);
+    let on = ctx.hero.ground_moby == Some(id) && ctx.hero.air_ticks == 0;
+    let near = ctx.host.joint(&w.mobys[id], 0).is_some_and(|j| dist2(ctx.hero.pos, j) < 0.5);    let uid = w.mobys[id].uid;
+    if on && near { ctx.game.count_uid(uid); }
+    let m = &w.mobys[id];
+    let pressed = m.mission != 0xff && (ctx.game.uid_dead.get(uid.max(0) as usize).is_some_and(|&d| d != 0) || ctx.game.uid_count(uid) != 0);
+    if pressed {
+        let target = usize::try_from(m.pv_i(0)).ok();
+        let m = &mut w.mobys[id];
+        m.state = 1;
+        m.timer = 1;
+        if let Some(t) = target.and_then(|t| w.mobys.get_mut(t)) { t.timer = 1; }
+    }
+    let m = &mut w.mobys[id];
+    let v = ((m.pv_f(4).sin() * 4.0 - 3.0) * 128.0) as i32;
+    let v = v.clamp(0x20, 0x80) as u32;
+    m.glow = 0x8000_0000 | v << 16 | v << 8 | v;
+}
+
 /// 0x0c58 (`0x3ed598`): poked (`+0xbc`, by a switch) it plays its looped sound 0 (handle `+0x90`) and moves over
 /// `+0x84` ticks (progress `+0x88`, eased as the movers) from its place (kept at `+0x60` / `+0x70` on the first tick)
 /// to the cuboid `+0x80`'s place and angles (its `+0x30` / `+0x70`), carrying Ratchet; there the loop stops, the sound
