@@ -237,7 +237,9 @@ impl Hero {
                 // `0x2cb1c8`: a weapon in use that keeps the stance stops him in it.
                 if self.gun_stance(anim, env) { return None; }
                 if self.set_state(anim, env, 0, false) {
-                    if 0.1 < len(self.momentum) { self.momentum = set_len(self.momentum, 0.1); }
+                    // `0x321688(0.025, momentum)` (the float 0x3cccccce): what he carries into the stop is cut to
+                    // a quarter of the run.
+                    if 0.025 < len(self.momentum) { self.momentum = set_len(self.momentum, 0.025); }
                     self.speed = self.speed.min(0.025);
                     let seq = self.idle_seq();
                     self.set_anim(anim, if seq == 0x51 { 15.0 } else { -1.0 }, seq, 0);
