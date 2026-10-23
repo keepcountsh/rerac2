@@ -832,9 +832,14 @@ fn show_group(w: &mut MobyWorld, group: i32, show: bool) {
 /// for good (5); one of the four mobys [0..0xc] gone or set off (its sub-state) opens it too — or, with [0x10] ≠ 0,
 /// blows it up (the sound 2, a blast `0x320538` and debris `0x327498`: the effects pass; deleted). Opened it shows
 /// the sequence 2 (3); Ratchet through into [0x14] shuts it (4: sequence 3, then 5: its collision back, sequence 0).
-/// Its colour word `+0x78` and the state 2 (a slide 0.3 a tick to its right until it touches, set by nothing here)
-/// are not ported.
+/// Its light, the glow word `+0x78` (the class's until then): green ([`DOOR_OPENING`]) when Ratchet's nearness
+/// opens it, red-orange ([`DOOR_OPEN`]) once open (3). The state 2 (a slide 0.3 a tick to its right until it
+/// touches, set by nothing here) is not ported.
 pub fn update_0ac4(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    /// `0x3d02d0`: the light as Ratchet's nearness opens the door.
+    const DOOR_OPENING: u32 = 0x0024_c102;
+    /// `0x3d0444`: the light once it is open.
+    const DOOR_OPEN: u32 = 0x0002_24c1;
     let p = ctx.hero.pos;
     if w.mobys[id].state == 0 {
         let m = &w.mobys[id];
@@ -843,6 +848,7 @@ pub fn update_0ac4(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let near = crate::hero::physics::dist2(w.mobys[id].pos, p) < 6.0;
         if near && !ctx.level.in_cuboid(a, p) && !ctx.level.in_cuboid(b, p) {
             w.mobys[id].state = 1;
+            w.mobys[id].glow = DOOR_OPENING;
             set_seq(w, id, ctx, 1, 0, 0);
             w.mobys[id].has_collision = false;
             show_group(w, group, true);
@@ -866,6 +872,7 @@ pub fn update_0ac4(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     if w.mobys[id].state == 1 && wrapped(w, id, ctx) {
         w.mobys[id].state = 3;
+        w.mobys[id].glow = DOOR_OPEN;
         set_seq(w, id, ctx, 2, 0, 0);
     }
     if w.mobys[id].state == 3 && ctx.level.in_cuboid(w.mobys[id].pv_i(0x14), p) {
