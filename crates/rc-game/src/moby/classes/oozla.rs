@@ -289,8 +289,8 @@ pub fn update_float(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 
 /// The teleporter's pads (`[5..8]`): at its place 0.4 lower, out along their facing by `[8]`·2.4 − 1.2, tilted by
-/// `[9]`·−60° − 20° (`0x399d28`).
-fn teleporter_pads(w: &mut MobyWorld, id: usize) {
+/// `[9]`·−60° − 20°, their rows rebuilt (`0x399d28`).
+fn teleporter_pads(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
     let m = &w.mobys[id];
     let (pos, out, tilt) = (m.pos, m.pv_f(0x20) * 2.4 - 1.2, m.pv_f(0x24) * -1.047_197_7 - 0.349_065_9);
     for k in 0..3 {
@@ -301,6 +301,7 @@ fn teleporter_pads(w: &mut MobyWorld, id: usize) {
         pm.pos = add([pos[0], pos[1], pos[2] - 0.4], set_len(rows[0], out));
         pm.rot[1] = tilt;
         pm.drive = true;
+        w.rebuild(p, &*ctx.host);
     }
 }
 
@@ -368,7 +369,7 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         6 => w.mobys[id].set_state(1, -1),
         1 => {
             let m = &w.mobys[id];
-            if m.pv_i(0) == -1 || ctx.hero.ground_moby != Some(id) || ctx.hero.air_ticks != 0 { teleporter_pads(w, id); return; }
+            if m.pv_i(0) == -1 || ctx.hero.ground_moby != Some(id) || ctx.hero.air_ticks != 0 { teleporter_pads(w, id, ctx); return; }
             if m.pv_i(0x50) != 0 {
                 let idle = ctx.hero.state == 0;
                 w.mobys[id].set_pv_i(0x50, idle as i32);
@@ -451,5 +452,5 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         }
         _ => return,
     }
-    teleporter_pads(w, id);
+    teleporter_pads(w, id, ctx);
 }
