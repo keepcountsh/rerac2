@@ -10,11 +10,15 @@
 //!
 //! The break throws the crate's pieces (crate::moby::shards) and plays its sound.
 //!
-//! Not ported: the stack's fall and settle (`0x39dfd8`), the TNT crate 0x1f9 and the class 0x1f6's flag test beyond
+//! The stacks are found when the crates start ([`stack_search`]) and fall when a crate under them goes ([`fall`]).
+//!
+//! Not ported: the TNT crate 0x1f9 and the class 0x1f6's flag test beyond
 //! the damage, the dust puffs (`0x334528`), the other classes' break sounds (`0x360698`), the nanotech
 //! crates' pickups, the respawn's stacking search
 //! (`0x31c9d8`).
 
+use crate::hero::physics::{add, sub, V3};
+use crate::moby::aim::is_crate;
 use crate::moby::{bolts, mode, shards, Ctx, MobyWorld};
 
 /// `0x5830001`: the hit flags a crate takes.
@@ -23,6 +27,7 @@ const HIT_MASK: u32 = 0x0583_0001;
 /// `0x39c870`.
 pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let class = w.mobys[id].o_class;
+    if w.mobys[id].pv_i(0xac) & 0xc != 0 && w.mobys[id].pv_i(0xb4) != ctx.game.frame { fall(w, id, ctx); }
     if w.mobys[id].pv_link(0xa0).is_none() {
         let f = w.mobys[id].pv_s(0x3e);
         w.mobys[id].set_pv_s(0x3e, f | 1);
@@ -38,12 +43,20 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if hit.is_some_and(|h| h.tmpl.flags == 0x0100_0000) { hit = None; }
     match w.mobys[id].state {
         0 => {
+            for off in [0xa0, 0xa4] {
+                if w.mobys[id].pv_link(off).is_some_and(|o| !is_crate(w, o)) { w.mobys[id].set_pv_i(off, 0); }
+            }
             let m = &mut w.mobys[id];
             m.set_pv_v(0x90, [0.0; 3]);
             m.state = 1;
             m.set_pv_i(0xa8, 0);
             if class == 0x1ff { m.set_pv_i(0xb4, m.pv_i(0xb4) + 1); }
-            if m.pv_i(0xcc) == 0 { m.set_pv_i(0xac, m.pv_i(0xac) | 0x14); }
+            if m.pv_i(0xcc) == 0 {
+                let f = m.pv_i(0xac) | 0x14;
+                m.set_pv_i(0xac, f);
+                if f & 1 == 0 { stack_search(w, id, ctx); }
+            }
+            let m = &mut w.mobys[id];
             m.set_pv_i(0xfc, 0);
             if class == 0x1ff { m.set_pv_s(0xc6, 100); }
             // Targets for the aims (the class header's mode bits give 0x1000 / 0x4000).
@@ -190,5 +203,143 @@ fn reward(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         if !matches!(w.mobys[id].o_class, 0x1f5 | 0x200) { super::pickup::drop_ammo(w, id, ctx); }
         if w.mobys[id].bolts != 0 { w.mobys[id].bolts = 0; }
         bolts::drop(w, id, 0x100, 0, ctx);
+    }
+}
+
+/// The line down from `at` to just above the world's floor (z 0.1), as `0x2de878(a, b, 2, 0, 0)`: the hit's z and
+/// moby.
+fn down(w: &MobyWorld, ctx: &Ctx, from: V3, to: V3) -> Option<(f32, Option<usize>)> {
+    w.coll_line(ctx, from, to, 2, None).map(|h| (h.point[2], h.moby))
+}
+
+/// `0x39d0c0`: the stack search (once, by the group's first crate to start): each crate of the group (a crate
+/// without a group alone) is set to size 1, its key kept (`+0xc4`), and looks straight down from half a unit up.
+/// On the world's floor it drops onto it; on a crate of its group it stands on its top (its position plus its up
+/// row) and the two are linked (`+0xa4` below, `+0xa0` above); on another moby it rests there (flag 0x8, always
+/// updated) — classes 0x128 / 0x129 aside, which it drops onto. A bolt crate standing upright turns a quarter turn
+/// one time in two.
+///
+/// Not ported: the crates on movers (`0x322028` / `0x322570`, the second pass: carried with them, `+0xd0..+0xf4`),
+/// the nanotech crates' removal by the save's counter (`0x1a73e0[+0xb0] < +0xf8` → `0x311688`), the third pass
+/// (distances between the group's crates, unused), the effect slots (`+0xc0`, `0x1fda00`).
+fn stack_search(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let f = w.mobys[id].pv_i(0xac);
+    w.mobys[id].set_pv_i(0xac, f | 4);
+    let group = w.mobys[id].group;
+    let members: Vec<usize> = if group < 0 {
+        vec![id]
+    } else {
+        w.groups.get(group as usize).map_or(Vec::new(), |g| g.iter().copied().filter(|&i| w.mobys.get(i).is_some_and(|m| m.state < 0x80)).collect())
+    };
+    for c in members {
+        if !is_crate(w, c) { continue; }
+        if w.mobys[c].o_class == 500 && ctx.game.rng.randi(2) != 0 && w.mobys[c].rot[0] == 0.0 {
+            let m = &mut w.mobys[c];
+            if m.rot[1] == 0.0 { m.rot[2] = crate::hero::physics::add_rot(m.rot[2], std::f32::consts::FRAC_PI_2); }
+        }
+        let m = &mut w.mobys[c];
+        m.set_pv_s(0xc4, m.rebuilds as i16);
+        m.set_pv_f(0xb0, 1.0);
+        m.set_pv_i(0xac, m.pv_i(0xac) | 1);
+        let p = m.pos;
+        let Some((z, hit)) = down(w, ctx, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.1]) else {
+            w.mobys[c].set_pv_i(0xa4, 0);
+            continue;
+        };
+        let Some(b) = hit else {
+            let m = &mut w.mobys[c];
+            m.pos[2] = z;
+            m.set_pv_i(0xa4, 0);
+            continue;
+        };
+        let alone = group < 0;
+        if !is_crate(w, b) && (alone || !matches!(w.mobys[b].o_class, 0x128 | 0x129)) {
+            let m = &mut w.mobys[c];
+            m.set_pv_i(0xa4, 0);
+            m.set_pv_i(0xac, m.pv_i(0xac) | 8);
+            if !alone { m.update_dist = 0xff; }
+            continue;
+        }
+        if alone { continue; }
+        if w.mobys[b].group != w.mobys[c].group {
+            w.mobys[c].set_pv_i(0xa4, 0);
+            continue;
+        }
+        if !is_crate(w, b) {
+            w.mobys[c].set_pv_i(0xa4, 0);
+            w.mobys[c].pos[2] = z;
+            continue;
+        }
+        let top = add(w.mobys[b].pos, w.mobys[b].rows[2]);
+        let m = &mut w.mobys[c];
+        m.set_pv_i(0xa4, b as i32);
+        m.pos = top;
+        w.mobys[b].set_pv_i(0xa0, c as i32);
+    }
+    w.changed = true;
+}
+
+/// `0x39dfd8`: the fall of the stack `id` is in, once a frame (`+0xb4`), from the bottom crate up. Each crate falls
+/// (gravity 9.8 a second², at most 0.3 a tick either way, `+0x98`) until it reaches the floor (the line from three
+/// quarters of its size up to its next place) or, above another, that one's top (1 up); there it stops. While it
+/// falls, Ratchet under it (within 0.55 across in its frame, below it by less than his capsule's top and radius)
+/// breaks it as a hit would.
+///
+/// Not ported: the crates on movers (`+0xf0`: carried by `0x3223e8` / `0x322668`), the TNT crates' (0x1f9) fuse when
+/// they land hard on a broken stack (state 5).
+fn fall(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if w.mobys[id].state == 0 { return; }
+    let mut bottom = id;
+    for _ in 0..64 {
+        match w.mobys[bottom].pv_link(0xa4) {
+            Some(b) => bottom = b,
+            None => break,
+        }
+    }
+    let mut next = Some(bottom);
+    let mut guard = 0;
+    while let Some(c) = next {
+        guard += 1;
+        if guard > 64 { return; }
+        next = w.mobys[c].pv_link(0xa0);
+        let mut f = w.mobys[c].pv_i(0xac);
+        if f & 4 == 0 { f &= !0x10; }
+        f &= !4;
+        w.mobys[c].set_pv_i(0xac, f);
+        if !is_crate(w, c) || f & 2 != 0 { return; }
+        w.mobys[c].set_pv_i(0xb4, ctx.game.frame);
+        if w.mobys[c].state == 0 { continue; }
+        // `0x2ef318`: Ratchet's place from the crate, through its rows.
+        let m = &w.mobys[c];
+        let d = sub(ctx.hero.pos, m.pos);
+        let l: V3 = std::array::from_fn(|k| d[0] * m.rows[0][k] + d[1] * m.rows[1][k] + d[2] * m.rows[2][k]);
+        if l[0].abs() < 0.55 && l[1].abs() < 0.55 && l[2] < 0.0 && -(ctx.hero.cap_top + ctx.hero.cap_radius) < l[2] && matches!(m.state, 1 | 5) {
+            break_crate(w, c, ctx);
+            reward(w, c, ctx);
+        }
+        let vz = (w.mobys[c].pv_f(0x98) - 0.002_722_222_4).clamp(-0.3, 0.3);
+        w.mobys[c].set_pv_f(0x98, vz);
+        if w.mobys[c].pv_i(0xf0) != 0 { continue; }
+        let m = &w.mobys[c];
+        let p = m.pos;
+        let land = match m.pv_link(0xa4) {
+            None => down(w, ctx, [p[0], p[1], p[2] + m.pv_f(0xb0) * 0.75], [p[0], p[1], p[2] + vz]).map(|(z, _)| z),
+            Some(b) => {
+                let top = w.mobys[b].pos[2] + 1.0;
+                (p[2] + vz < top).then_some(top)
+            }
+        };
+        let m = &mut w.mobys[c];
+        match land {
+            None => {
+                m.set_pv_i(0xac, m.pv_i(0xac) | 4);
+                m.pos = add(m.pos, m.pv_v(0x90));
+            }
+            Some(z) => {
+                m.pos[2] = z;
+                m.set_pv_f(0x98, 0.0);
+            }
+        }
+        w.changed = true;
     }
 }

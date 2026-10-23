@@ -631,6 +631,13 @@ impl MobyWorld {
         self.changed = true;
     }
 
+    /// `0x2de878(a, b, flags, 0, ignore)` from the moby loop: the line against the world and the mobys as they are now
+    /// (crate::collision::coll_line_live).
+    pub fn coll_line(&self, ctx: &Ctx, a: V3, b: V3, flags: u32, ignore: Option<usize>) -> Option<crate::collision::CollOutput> {
+        let live = |i: usize| self.mobys.get(i).is_some_and(|m| m.state < 0x80 && m.has_collision);
+        crate::collision::coll_line_live(ctx.coll?, ctx.scene, a, b, crate::collision::QueryFlags(flags), ignore, &live)
+    }
+
     /// `0x313dc0`: rows from the Euler angles (unless mode 0x100; mode 0x8000 mirrors the second row), the bounding
     /// sphere = position · 1024 + rows · (the sequence's sphere · scale), radius · scale; the rebuild count; and,
     /// with a collision blob, the grid rectangle from the sphere (`0x313ae0` when it changed and is on the grid).

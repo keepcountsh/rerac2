@@ -518,7 +518,7 @@ pub(crate) fn coll_sphere_mobys(sc: &MobyScene, centre: [f32; 3], radius: f32, f
 
 /// The moby pass of `CollLine_Fix`, after the world walk (which it follows even past its early out).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn line_pass(sc: &MobyScene, fl: u32, a: V3, b: V3, d: V3, list: &[(F, [i32; 3])], ignore: Option<usize>, best_t: &mut F, mut best: Option<Best>) -> Option<Best> {
+pub(super) fn line_pass(sc: &MobyScene, fl: u32, a: V3, b: V3, d: V3, list: &[(F, [i32; 3])], ignore: Option<usize>, live: &dyn Fn(usize) -> bool, best_t: &mut F, mut best: Option<Best>) -> Option<Best> {
     // 0x211fd8: the DDA cells' (x>>2, y>>2), consecutive duplicates dropped, up to t == 1.0.
     let key = |c: [i32; 3]| (((c[0] & 0xff) >> 2) as u32, ((c[1] & 0xff) >> 2) as u32);
     let Some(first) = list.first() else { return best };
@@ -533,7 +533,7 @@ pub(super) fn line_pass(sc: &MobyScene, fl: u32, a: V3, b: V3, d: V3, list: &[(F
     for (x, y) in cells {
         for &idx in sc.grid.cell(x, y) {
             let id = idx as usize;
-            if Some(id) == ignore { continue; }
+            if Some(id) == ignore || !live(id) { continue; }
             let Some(m) = sc.mobys.moby(id) else { continue };
             if fl & 0x9 != 0 && m.mode & 0x4000 == 0 { continue; }
             let bs = m.bsphere;
