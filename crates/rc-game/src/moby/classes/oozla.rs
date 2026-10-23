@@ -6,7 +6,8 @@
 //! * 0x0c58 (`0x3ed598`): moves once to a cuboid's place when poked ([`update_0c58`]).
 //! * 0x0a17 (`0x3bcdd8`): the swamp's water level ([`update_0a17`]).
 //! * 0x0a92 / 0x0a93 (`0x3cfcc0`): float on that water ([`update_float`]).
-//! * 0x0a53 (`0x41def0`): the lily pads, tilting under Ratchet or sinking with him ([`update_0a53`]).
+//! * 0x0a53 (`0x41def0`): the floating bridges, tilting under Ratchet or sinking with him ([`update_0a53`]).
+//! * 0x0a56 (`0x3c3ad8`): the lily pads, on the floating platforms' rocking ([`update_0a56`]).
 //!
 //! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
 //! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
@@ -456,7 +457,7 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     teleporter_pads(w, id, ctx);
 }
 
-/// 0x0a53 (`0x41def0`, 4 placed): a lily pad on the swamp. Once there is water (above 100) it keeps its height over the
+/// 0x0a53 (`0x41def0`, 4 placed): a floating bridge on the swamp. Once there is water (above 100) it keeps its height over the
 /// water (`+0x6c`, the lowest `+0x64` = 3 under it), its angles (`+0x80..`) and two rocking phases (`+0x78` / `+0x7c`);
 /// `+0xa0` set makes it a sinker (1), else it tilts (2).
 ///
@@ -534,4 +535,43 @@ pub fn update_0a53(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     let (pos, yaw) = (m.pos, m.rot[2]);
     carry_hero(ctx, id, old, old_yaw, pos, yaw);
+}
+
+/// 0x0a56 (`0x3c3ad8`, 8 placed): a lily pad. Once there is water it keeps two spare phases (`+0x120` / `+0x124`,
+/// `+0x128` = 0.02) and its angles (`+0x130`), sets up the floating platforms' rocking at `+0x60`
+/// ([`crate::moby::floater`], with its own tunables, as the live block shows: tilts clamped to 0.17, sink 0.19,
+/// response 0.027 / 0.027 / 0.05, wobble 0.03 / 0.03 / 0.057) and goes to 1. In 1, drawn and within 32 of the camera,
+/// its home height follows the water (`$gp+0xf24` = 0 above it) and it rocks.
+pub fn update_0a56(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::moby::floater;
+    const BLOCK: usize = 0x60;
+    let water = ctx.game.water_z;
+    match w.mobys[id].state {
+        0 => {
+            if water <= 0.0 { return; }
+            let (a, b) = (ctx.game.rng.rand_angle(), ctx.game.rng.rand_angle());
+            let m = &mut w.mobys[id];
+            m.set_pv_f(0x120, a);
+            m.set_pv_f(0x124, b);
+            m.set_pv_f(0x128, 0.02);
+            let rot = m.rot;
+            m.set_pv_v(0x130, rot);
+            m.set_pv_v(0x140, [0.0; 3]);
+            m.set_state(1, -1);
+            let p = floater::Params {
+                clamp: [0.17, 0.17, 0.19],
+                response: [0.027, 0.027, 0.05],
+                amplitude: [0.03, 0.03, 0.057],
+                ..Default::default()
+            };
+            floater::init(w, id, ctx, BLOCK, &p);
+        }
+        1 => {
+            let m = &w.mobys[id];
+            if m.drawn == 0 || 32.0 <= dist2(m.pos, ctx.host.camera_pos()) { return; }
+            w.mobys[id].set_pv_f(BLOCK + 8, water);
+            floater::step(w, id, ctx, BLOCK);
+        }
+        _ => {}
+    }
 }

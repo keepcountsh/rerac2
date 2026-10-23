@@ -84,6 +84,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a49 => Some(flyer::update),
         0x09fc => Some(beast::update),
         0x0a53 => Some(oozla::update_0a53),
+        0x0a56 => Some(oozla::update_0a56),
         _ => None,
     }
 }

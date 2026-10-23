@@ -38,6 +38,7 @@ pub mod aim;
 pub mod attach;
 pub mod blast;
 pub mod bolts;
+pub mod floater;
 pub mod hits;
 pub mod shards;
 
