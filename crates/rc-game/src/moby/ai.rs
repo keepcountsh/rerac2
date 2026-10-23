@@ -921,8 +921,9 @@ fn fly(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> u32 {
     v[2] -= g;
     let mut s = len2(v);
     approach(if 1 < phase { 0.0 } else { 0.016_666_668 }, m.pv_f(r + 0x2c), &mut s);
+    // `0x2ef188(s, v, v)`: the speed across set (`vmulq.xy`; none across: x and y 0), the fall's kept.
     let l = len2(v);
-    if l != 0.0 { v = scale(v, s / l); } else { v = [0.0; 3]; }
+    if l != 0.0 { (v[0], v[1]) = (v[0] * s / l, v[1] * s / l); } else { (v[0], v[1]) = (0.0, 0.0); }
     m.set_pv_v(r + 0x80, v);
     let up = scale(m.rows[2], m.pv_f(r + 0x34));
     let centre = add(m.pos, up);
