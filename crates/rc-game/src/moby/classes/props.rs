@@ -977,8 +977,9 @@ fn thrusters(w: &MobyWorld, id: usize, ctx: &mut Ctx) {
 
 /// The lifts 0x0ac2 (`0x3cf6c8`) and 0x0aca (`0x3d1458`): each runs between its height and `+0x68`[0x8c] (`[0x90]`
 /// ≠ 0: starting at the other end; `[0x94]` / `[0x98]` the ends of the states 2 / 3, `[0x80]` the end it is at),
-/// with a pad (0x0c16; 0x0ac2's 0.2 above it, 0x0aca's 0.25 above and 1 ahead; its light pulsing `[0xa0]`: not
-/// drawn) that starts it when Ratchet stands on it — or, with him far off at the first end (0x0ac2: more than 14
+/// with a pad (0x0c16; 0x0ac2's 0.2 above it, 0x0aca's 0.25 above and 1 ahead; its light pulsing grey by `[0xa0]`,
+/// green while pressed: [`pad_pulse`], [`pad_set`]) that starts it when Ratchet stands on it — or, with him far off
+/// at the first end (0x0ac2: more than 14
 /// below; 0x0aca: more than 6 off and within 25), or more than 6 off at the other (0x0ac2: above), it comes to him —
 /// the pad's collision off, the looped sound 0, the sound 0x8a1 (`0x360698`, the sound pass), 0x0ac2's sequence 2.
 /// It springs there (up: k 0.02, d 0.3, at most 0.1; down: 1/600 and 1/300, the fast spring with Ratchet just under
@@ -1016,7 +1017,7 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
         }
         w.mobys[id].set_state(state, -1);
         if !l.aca { set_seq(w, id, ctx, 2, 0, 6); }
-        if let Some(p) = pad(w) { w.mobys[p].has_collision = false; }
+        pad_set(w, pad(w), false);
     };
     // There: waits while Ratchet is near, then the pad back at the end `at`.
     let arrive = |w: &mut MobyWorld, ctx: &mut Ctx, at: i32| {
@@ -1037,7 +1038,7 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
         w.mobys[id].set_state(1, -1);
         if !l.aca { set_seq(w, id, ctx, 1, 0, 6); }
         if l.aca && at == 1 { w.mobys[id].set_pv_i(0x84, 0); }
-        if let Some(p) = pad(w) { w.mobys[p].has_collision = w.class(0x0c16).is_some_and(|c| c.has_collision); }
+        pad_set(w, pad(w), true);
     };
     let step = |m: &mut crate::moby::Moby, t: f32, k: f32, d: f32| {
         let (mut z, mut v) = (m.pos[2], m.pv_f(vel));
@@ -1074,7 +1075,10 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
         1 => {
             let m = &mut w.mobys[id];
             m.set_pv_f(0xa0, crate::hero::physics::add_rot(m.pv_f(0xa0), 0.104_719_76));
-            if !l.aca && dist2(m.pos, hp) < 6.0 && seq(w, id, ctx) == 2 { ctx.host.set_anim(&w.mobys[id], 1, 0, 6); }
+            let ph = m.pv_f(0xa0);
+            let p = pad(w);
+            pad_pulse(w, p, ph);
+            if !l.aca && dist2(w.mobys[id].pos, hp) < 6.0 && seq(w, id, ctx) == 2 { ctx.host.set_anim(&w.mobys[id], 1, 0, 6); }
             let at = w.mobys[id].pv_i(0x80);
             let z = w.mobys[id].pos[2];
             let dz = (z - hp[2]).abs();
@@ -1130,6 +1134,23 @@ fn lift(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, l: Lift) {
 
 fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] { [a[0] + b[0], a[1] + b[1], a[2] + b[2]] }
 
+/// The lifts' pad light (its glow word `+0x78`, crate::moby::Moby::glow): waiting, a grey pulse — `(sin(phase)·4 −
+/// 3)·208` (truncated, `0x2effb8`) held to 0x50..0xd0, the phase 6° a tick; pressed (its collision off) green
+/// `0x8000df2a`; back (its collision on) grey `0x808c8c8c`.
+fn pad_pulse(w: &mut MobyWorld, pad: Option<usize>, phase: f32) {
+    let v = (((phase.sin() * 4.0 - 3.0) * 208.0) as i32).clamp(0x50, 0xd0) as u32;
+    if let Some(p) = pad { w.mobys[p].glow = 0x8000_0000 | v << 16 | v << 8 | v; }
+}
+
+/// The pad pressed (off: green, no collision) or back (grey, its class's collision).
+fn pad_set(w: &mut MobyWorld, pad: Option<usize>, on: bool) {
+    let coll = on && w.class(0x0c16).is_some_and(|c| c.has_collision);
+    if let Some(p) = pad {
+        w.mobys[p].has_collision = coll;
+        w.mobys[p].glow = if on { 0x808c_8c8c } else { 0x8000_df2a };
+    }
+}
+
 /// 0x0ac1 (`0x3ced30`, the big lift): as the lifts above (the ends `+0x68`[0x94] / [0x98], [0x80] the end it is at,
 /// its pad 0x0c16 0.25 above), but its pad only starts it at the other end (state 2, up), with a camera tweak of
 /// priority 5 (distance 2, pivot 1.5; `[0x9c]`, `[0xa4]` held) and, the first time (`0x1a790c` = 0), the scene camera
@@ -1159,10 +1180,7 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             w.mobys[id].set_pv_i(0xa4, 0);
         }
     };
-    let pad_on = |w: &mut MobyWorld, on: bool| {
-        let coll = on && w.class(0x0c16).is_some_and(|c| c.has_collision);
-        if let Some(p) = pad(w) { w.mobys[p].has_collision = coll; }
-    };
+    let pad_on = |w: &mut MobyWorld, on: bool| pad_set(w, pad(w), on);
     match w.mobys[id].state {
         0 => {
             let m = &mut w.mobys[id];
@@ -1192,6 +1210,9 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         1 => {
             let m = &mut w.mobys[id];
             m.set_pv_f(0xa8, crate::hero::physics::add_rot(m.pv_f(0xa8), 0.104_719_76));
+            let ph = m.pv_f(0xa8);
+            let p = pad(w);
+            pad_pulse(w, p, ph);
             let on = pad(w).is_some_and(|p| ctx.hero.ground_moby == Some(p) && ctx.hero.air_ticks == 0);
             if on && w.mobys[id].pv_i(0x80) != 0 {
                 w.mobys[id].set_state(2, -1);
