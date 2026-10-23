@@ -12,6 +12,7 @@ pub mod lancer;
 pub mod leaper;
 pub mod oozla;
 pub mod props;
+pub mod spitter;
 pub mod shot;
 pub mod spawn_point;
 pub mod tie_lights;
@@ -75,6 +76,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a17 => Some(oozla::update_0a17),
         0x0a92 | 0x0a93 => Some(oozla::update_float),
         0x09a2 => Some(leaper::update),
+        0x0b2b => Some(spitter::update),
         _ => None,
     }
 }

@@ -418,6 +418,15 @@ fn tick(
                 }
             }
         }
+        // `RC_AREAS=3,6`: those trigger areas' bounding spheres and their volume lists (a dev trace).
+        if let Ok(list) = std::env::var("RC_AREAS") {
+            for i in list.split(',').filter_map(|x| x.trim().parse::<usize>().ok()) {
+                match mobys.level.areas.get(i) {
+                    Some(a) => println!("area {i}: sphere ({:.2}, {:.2}, {:.2}) r {:.2}, lists {:?}", a.sphere[0], a.sphere[1], a.sphere[2], a.sphere[3], a.lists),
+                    None => println!("area {i}: none"),
+                }
+            }
+        }
     }
     // `RC_MOBY_TRACE=0b0b,099c`: those classes' mobys every 15 ticks (`RC_MOBY_TRACE_EVERY`; a dev trace).
     let every = std::env::var("RC_MOBY_TRACE_EVERY").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(15).max(1);

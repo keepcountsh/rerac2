@@ -49,14 +49,14 @@ const SWIM_SPEED: f32 = 2.0 / 60.0;
 const TURN: f32 = 120.0 * 0.000_290_888_25;
 
 /// The sequence the moby blends from (`+0x42`).
-fn seq_a(w: &MobyWorld, id: usize, ctx: &Ctx) -> u8 { ctx.host.anim(&w.mobys[id]).map_or(0xff, |a| a.seq_a) }
-fn seq_b(w: &MobyWorld, id: usize, ctx: &Ctx) -> u8 { super::props::seq(w, id, ctx) }
+pub(super) fn seq_a(w: &MobyWorld, id: usize, ctx: &Ctx) -> u8 { ctx.host.anim(&w.mobys[id]).map_or(0xff, |a| a.seq_a) }
+pub(super) fn seq_b(w: &MobyWorld, id: usize, ctx: &Ctx) -> u8 { super::props::seq(w, id, ctx) }
 
 /// `0x311358(m, s, frame, blend)` unless `s` plays.
-fn play(w: &MobyWorld, id: usize, ctx: &mut Ctx, s: u8, frame: u8, blend: i32) { set_seq(w, id, ctx, s, frame, blend.clamp(0, 255) as u8); }
+pub(super) fn play(w: &MobyWorld, id: usize, ctx: &mut Ctx, s: u8, frame: u8, blend: i32) { set_seq(w, id, ctx, s, frame, blend.clamp(0, 255) as u8); }
 
 /// A countdown on a pvar word (`0x2e3de8`).
-fn tick_down(w: &mut MobyWorld, id: usize, off: usize) -> bool {
+pub(super) fn tick_down(w: &mut MobyWorld, id: usize, off: usize) -> bool {
     let m = &mut w.mobys[id];
     let mut t = m.pv_i(off);
     let r = countdown(&mut t);
@@ -65,7 +65,7 @@ fn tick_down(w: &mut MobyWorld, id: usize, off: usize) -> bool {
 }
 
 /// The target moby (`+0x240`) and its place, when it has one.
-fn target(w: &MobyWorld, id: usize) -> Option<(usize, V3)> {
+pub(super) fn target(w: &MobyWorld, id: usize) -> Option<(usize, V3)> {
     ai::link(&w.mobys[id], T_MOBY).and_then(|t| w.mobys.get(t).map(|m| (t, m.pos)))
 }
 
@@ -171,8 +171,7 @@ fn moving(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, mv: impl FnOnce(&mut Moby
 /// `0x319858(m, block, mv)`: the wander about home (the block `WANDER`): a new heading 45°..150° to a side held for
 /// `+0x2c..+0x2e` ticks, turned to at the block's turn; each tick a move 2 ahead (`0x322450`), on the ground; off
 /// home's radius `+0x1c` (or stopped) it heads home for 30..90 ticks, near Ratchet (`+0x20`) it turns away from him.
-fn wander(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> i32 {
-    let b = WANDER;
+pub(super) fn wander(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, b: usize) -> i32 {
     let m = &w.mobys[id];
     if m.pv_s(b + 0x28) == 0 {
         let turn = ctx.game.rng.randf_signed(std::f32::consts::FRAC_PI_4, 2.617_994);
@@ -218,7 +217,7 @@ fn wander(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> i32 {
 }
 
 /// `0x3b5de0`: the wander's frame.
-fn roam(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { moving(w, id, ctx, |w, ctx| wander(w, id, ctx)); }
+fn roam(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) { moving(w, id, ctx, |w, ctx| wander(w, id, ctx, WANDER)); }
 
 /// `0x3b5ed8(m, goal, &offset)`: the move toward `goal` at a yaw offset (`0x3224a8` = the framework's move toward).
 fn go_to(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, goal: V3, offset: f32) -> i32 { moving(w, id, ctx, |w, ctx| ai::move_toward(w, id, ctx, offset, goal)) }
@@ -231,7 +230,7 @@ fn weave(ctx: &Ctx) -> f32 {
 }
 
 /// The cuboid's centre (`+0x30` of its record).
-fn cuboid_at(ctx: &Ctx, i: i32) -> Option<V3> { ctx.level.cuboid_place(i).map(|(c, _)| c) }
+pub(super) fn cuboid_at(ctx: &Ctx, i: i32) -> Option<V3> { ctx.level.cuboid_place(i).map(|(c, _)| c) }
 
 /// `0x3b6060`: the set-up (module docs). False while the water is not up yet.
 fn setup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
@@ -812,7 +811,8 @@ fn bite(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let damage = w.mobys[id].pv_b(0x34) as f32;
         for j in 0..5 {
             ai::attack_joint(w, id, ctx, 0.5, damage, 1.0, j, 0x400_0001, 0, 1, 0);
-            let hit_him = ctx.hero_moby.and_then(|h| w.hit_message(h)).is_some_and(|r| r.tmpl.source == Some(id));
+            //  x1bf918: the last moby the sphere touched.
+            let hit_him = ctx.hero_moby.is_some() && w.hits.last_target == ctx.hero_moby;
             if hit_him { w.mobys[id].set_pv_b(0x35c, 1); }
         }
     }
@@ -840,13 +840,16 @@ fn bite(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 
 /// On the bank its body tilts to the floor's normal (up when it stands on a moby without solid collision), 40° at
 /// most, each axis eased (`0x3152d0`: 0.1°/tick², at most 6°/tick).
-fn tilt(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
+fn tilt(w: &mut MobyWorld, id: usize, ctx: &Ctx) { tilt_to_floor(w, id, ctx, MV, 0x358, 0x354); }
+
+/// The tilt for a movement block `mv` and the pitch / roll springs' velocity words.
+pub(super) fn tilt_to_floor(w: &mut MobyWorld, id: usize, ctx: &Ctx, mv: usize, v_pitch: usize, v_roll: usize) {
     let _ = ctx;
     let m = &w.mobys[id];
-    let on_moby = ai::link(m, MV + 0x88).and_then(|f| w.mobys.get(f));
+    let on_moby = ai::link(m, mv + 0x88).and_then(|f| w.mobys.get(f));
     let n = match on_moby {
         Some(f) if !f.has_collision => [0.0, 0.0, 1.0],
-        _ => m.pv_v(MV + 0x50),
+        _ => m.pv_v(mv + 0x50),
     };
     // Into the frame of its yaw (the transpose of the yaw's rows).
     let (s, c) = m.rot[2].sin_cos();
@@ -854,12 +857,12 @@ fn tilt(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
     let pitch = atan2(l[2], l[0]).clamp(-0.698_131_8, 0.698_131_8);
     let roll = (-atan2(l[2], l[1])).clamp(-0.698_131_8, 0.698_131_8);
     let m = &mut w.mobys[id];
-    let (mut a, mut v) = (m.rot[1], m.pv_f(0x358));
+    let (mut a, mut v) = (m.rot[1], m.pv_f(v_pitch));
     turn_ease(pitch, 0.001_745_329_3, 0.001_745_329_3, 0.104_719_76, &mut a, &mut v, 0);
     m.rot[1] = a;
-    m.set_pv_f(0x358, v);
-    let (mut a, mut v) = (m.rot[0], m.pv_f(0x354));
+    m.set_pv_f(v_pitch, v);
+    let (mut a, mut v) = (m.rot[0], m.pv_f(v_roll));
     turn_ease(roll, 0.001_745_329_3, 0.001_745_329_3, 0.104_719_76, &mut a, &mut v, 0);
     m.rot[0] = a;
-    m.set_pv_f(0x354, v);
+    m.set_pv_f(v_roll, v);
 }
