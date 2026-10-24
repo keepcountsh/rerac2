@@ -19,6 +19,7 @@ pub mod oozla;
 pub mod nanotech;
 pub mod pickup;
 pub mod props;
+pub mod space;
 pub mod spitter;
 pub mod shot;
 pub mod spawn_point;
@@ -117,6 +118,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0aaf => Some(maktar::update_0aaf),
         0x0873 => Some(maktar::update_0873),
         crate::ship::LASER_CLASS => Some(crate::ship::update_laser),
+        space::FIGHTER => Some(space::update_fighter),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),
         _ => None,
