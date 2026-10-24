@@ -697,7 +697,16 @@ fn tick(
             if let Some((pos, rot, idx)) = p.game.cameras.current_record(0x20) {
                 let ms = &mobys.world.mobys;
                 let ship = ms.iter().position(|m| m.index as i32 == idx && m.o_class == rc_game::ship::SHIP_CLASS).or_else(|| ms.iter().position(|m| m.o_class == rc_game::ship::SHIP_CLASS && m.state < 0x80));
-                p.ship = Some(rc_game::ship::Flight::new(pos, rot, ship));
+                let mut f = rc_game::ship::Flight::new(pos, rot, ship);
+                // The fight's sphere (the mission object 0x0eee's `+0x68`[0]).
+                let sphere = ms.iter().find(|m| m.o_class == rc_game::ship::MISSION_CLASS).map(|m| m.pv_i(0));
+                f.arena = sphere.and_then(|i| usize::try_from(i).ok()).and_then(|i| mobys.level.spheres.get(i)).map(|v| {
+                    let m = &v.matrix;
+                    ([m[3][0], m[3][1], m[3][2]], (m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[0][2] * m[0][2]).sqrt())
+                });
+                // `RC_SHIP_HULL=n`: no shield and n of hull (a dev aid for the death).
+                if let Some(n) = std::env::var("RC_SHIP_HULL").ok().and_then(|v| v.trim().parse().ok()) { (f.shield, f.hull) = (0, n); }
+                p.ship = Some(f);
             }
         }
         // `RC_SPACE_CLEAR=t1,t2`: every fighter shot at those ticks (a dev aid for the waves).

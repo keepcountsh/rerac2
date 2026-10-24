@@ -115,6 +115,8 @@ pub struct Flight {
     pub restart: bool,
     /// The ram's wait (the camera record's `+0x58`, 15 ticks).
     ram_wait: i32,
+    /// The fight's sphere (its centre and radius), for the camera's clamp.
+    pub arena: Option<(V3, f32)>,
     /// The mission (0x0eee, [`Flight::mission`]): its state (1 fighting, 3 the cut), the quiet start's ticks, the
     /// wait's, the waves done, the cut's ticks, the place kept over the cut, the screen's fade, the level won.
     mission_state: i32,
@@ -225,6 +227,7 @@ impl Flight {
             dying: 0,
             restart: false,
             ram_wait: 0,
+            arena: None,
             mission_state: 0,
             quiet: 0,
             wave_wait: 0,
@@ -490,6 +493,12 @@ impl Flight {
             self.pos = add(self.pos, scale(self.rows[1], step));
         }
         for c in &mut self.pos { *c = c.clamp(5.0, 1000.0); }
+        // Inside the fight's sphere (the mission object's `+0x68`[0]) less the ship's lead (`$gp+0x258c`).
+        if let Some((c, r)) = self.arena {
+            let d = sub(self.pos, c);
+            let room = r - k::AHEAD;
+            if room < crate::hero::physics::len(d) { self.pos = add(c, set_len(d, room)); }
+        }
     }
 
     /// `0x435e78`: the ship a tenth of its size just ahead of and below the camera, shifted across by the yaw and down
