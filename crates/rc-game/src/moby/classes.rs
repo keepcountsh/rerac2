@@ -23,6 +23,7 @@ pub mod spitter;
 pub mod shot;
 pub mod spawn_point;
 pub mod tie_lights;
+pub mod maktar;
 pub mod tractor;
 pub mod wrench;
 
@@ -108,6 +109,9 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0825 => Some(dynamo::update),
         0x00bc => Some(tractor::update),
         0x0acb | 0x0acc => Some(tractor::update_box),
+        0x0afc => Some(maktar::update_0afc),
+        0x0aaf => Some(maktar::update_0aaf),
+        0x0873 => Some(maktar::update_0873),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),
         _ => None,
