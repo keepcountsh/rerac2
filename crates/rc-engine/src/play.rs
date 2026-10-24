@@ -218,6 +218,11 @@ pub(crate) struct Play {
     qs_paused: bool,
 }
 
+impl Play {
+    /// The game's point lights (rc_game::point_lights, owned by the explosion lights), for crate::world_lights.
+    pub(crate) fn point_lights(&self) -> Option<&rc_game::point_lights::PointLights> { self.mobys.as_ref().map(|m| &m.world.point_lights) }
+}
+
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
     if keys.just_pressed(KeyCode::Tab) {
         *source = if *source == CameraSource::Play { CameraSource::Fly } else { CameraSource::Play };
@@ -241,6 +246,7 @@ fn tick(
     mut audio: Option<ResMut<crate::audio_out::AudioOut>>,
     mut parts: Option<ResMut<crate::particle_render::ParticleSim>>,
     mut card: Option<ResMut<crate::card::Card>>,
+    mut lights: Option<ResMut<crate::moby_render::PointLightFrame>>,
 ) {
     // The game drives the particles (crate::particles of rc_game on the shared pool; R&C1's own tick stays off).
 
@@ -264,7 +270,7 @@ fn tick(
             p.hero.hp = game.max_health;
             p.game = game;
             commands.remove_resource::<Carry>();
-            commands.insert_resource(PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: p.game.view_far * 1024.0 });
+            commands.insert_resource(PlayView { view: camera_view(&p.camera, p.camera.pos, p.camera.rows), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: p.game.view_far * 1024.0 });
             commands.insert_resource(p);
         }
         return;
@@ -599,6 +605,11 @@ fn tick(
         let view = rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty);
         p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, p.hero.state, &view, p.camera.pos);
     }
+    // The point lights the mobys merge (crate::moby_render).
+    if let Some(l) = lights.as_deref_mut() {
+        let now: Vec<_> = mobys.world.point_lights.active().copied().collect();
+        if l.0 != now { l.0 = now; }
+    }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
         for id in [p.hero.items.hand, p.hero.items.head, p.hero.items.feet[0], p.hero.items.feet[1]].into_iter().flatten() {
@@ -726,9 +737,17 @@ fn tick(
     // `0x2e5df8`'s view distance: the far plane and the mobys' cap.
     let far = p.game.view_far * 1024.0;
     crate::moby_lod::set_draw_cap(p.game.moby_draw_cap());
+    // `0x2d9f38`'s shakes on the frame's eye and rows (rc_game::camera::Shakes; the cameras keep their own).
     let (view, fwd) = match cam.view {
-        Some((pos, rows)) => (PlayView { view: scene_view(&rc_game::scene_camera::SceneCamera { eye: pos, rows, tan_half_fov: p.game.cameras.tan, cut: false }), tan_half_fov: p.game.cameras.tan, far }, rows[0]),
-        None => (PlayView { view: camera_view(&p.camera), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far }, p.camera.rows[0]),
+        Some((mut pos, mut rows)) => {
+            p.game.shakes.apply(&mut pos, &mut rows);
+            (PlayView { view: scene_view(&rc_game::scene_camera::SceneCamera { eye: pos, rows, tan_half_fov: p.game.cameras.tan, cut: false }), tan_half_fov: p.game.cameras.tan, far }, rows[0])
+        }
+        None => {
+            let (mut pos, mut rows) = (p.camera.pos, p.camera.rows);
+            p.game.shakes.apply(&mut pos, &mut rows);
+            (PlayView { view: camera_view(&p.camera, pos, rows), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far }, rows[0])
+        }
     };
     commands.insert_resource(view);
     // The frame's sky draw `0x2fd348`: the shells turn by the view's forward (rc_game::sky).
@@ -1553,7 +1572,9 @@ fn cam_input<'a>(hero: &'a Hero, coll: Option<&'a rc_formats::collision::Collisi
     CamInput { hero, coll, rstick, yaw_normal: true, pitch_normal: true, speed: 0, scene: None, hero_moby: None, level: 0, strafe_held: false, ground: None }
 }
 
-fn camera_view(c: &FollowCamera) -> CameraView {
+/// The view from `c` at the eye `pos` with the rows `rows` (shaken; the angles are the camera's own, as `0x2d9f38`
+/// takes them before the shakes).
+fn camera_view(c: &FollowCamera, pos: [f32; 3], rows: [[f32; 3]; 3]) -> CameraView {
     let v = |a: [f32; 3]| [Pf::f(a[0]), Pf::f(a[1]), Pf::f(a[2]), Pf::ZERO];
-    CameraView { pos: v(c.pos), euler: [Pf::ZERO, Pf::f(c.pitch()), Pf::f(c.yaw()), Pf::ZERO], rows: c.rows.map(v), class: 0, flyby_phase: 0 }
+    CameraView { pos: v(pos), euler: [Pf::ZERO, Pf::f(c.pitch()), Pf::f(c.yaw()), Pf::ZERO], rows: rows.map(v), class: 0, flyby_phase: 0 }
 }

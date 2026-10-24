@@ -1,8 +1,8 @@
 //! The eight dynamic point lights (level01 bank 0x180740, 8 × 0x20 bytes; per slot `{r, g, b, intensity}` then
 //! `{position, radius}`, the active flag at 0x180950 + 0x30·i): `WritePointLight_B` 0x252750 takes the first free
 //! slot (only while the frame-load measure 0x15f5d4 is at most 0.8), the owner rewrites its slot every tick, and
-//! `FreePointLight` 0x252850 clears it. The explosion light moby (class 0x27f, `rerac:rc_game::moby_update::creature::fx`)
-//! is the owner on every level.
+//! `FreePointLight` 0x252850 clears it. The explosion light moby (class 0x27f, crate::moby::classes::light) is the owner
+//! on every level. Going Commando's bank is 0x1c6ec0 (the same records; `0x2fdb60` takes a slot, `0x2fdc48` frees it).
 //!
 //! Who reads the bank in the game: `MobyProc` merges the lights in range of a moby into its third directional light
 //! (docs/plan/moby_skinning_lighting.md "Point lights"; the port: `rc-engine` moby_render `point_light_merge`), and
@@ -31,6 +31,30 @@ pub struct PointLights {
     /// Bumped by every [`PointLights::alloc`] of the slot: `WritePointLight_*` zeroes the slot's attachment record
     /// (0x180940 + 0x30·i) and sets its state to 1, so [`WorldLightLists`] can tell a new light in a reused slot.
     pub(crate) generation: [u32; 8],
+}
+
+impl PointLights {
+    /// Going Commando's `0x2fdb60(radius, intensity, r, g, b, pos)` (the bank at 0x1c6ec0): the first free slot gets
+    /// `l` (None when all eight are taken; no frame-load test, unlike R&C1's).
+    pub fn alloc(&mut self, l: PointLight) -> Option<usize> {
+        let i = self.slots.iter().position(|s| s.is_none())?;
+        self.slots[i] = Some(l);
+        self.generation[i] = self.generation[i].wrapping_add(1);
+        Some(i)
+    }
+
+    /// The owner's per-tick rewrite of slot `i`.
+    pub fn set(&mut self, i: usize, l: PointLight) {
+        if let Some(s) = self.slots.get_mut(i) { *s = Some(l); }
+    }
+
+    /// `0x2fdc48`.
+    pub fn free(&mut self, i: usize) {
+        if let Some(s) = self.slots.get_mut(i) { *s = None; }
+    }
+
+    /// The active slots.
+    pub fn active(&self) -> impl Iterator<Item = &PointLight> { self.slots.iter().flatten() }
 }
 
 /// The world instances' bounding spheres the attachment tests, in the game's run-time records: ties and shrubs

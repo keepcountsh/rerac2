@@ -460,6 +460,9 @@ pub struct MobyWorld {
     pub nanotech: classes::nanotech::Globals,
     /// The Gravity Bomb's blast effect (classes::gravity_bomb).
     pub gravity_bomb: classes::gravity_bomb::Effect,
+    /// The point lights (`0x1c6ec0`), owned by the explosion lights (classes::light); the engine lights the world and
+    /// the mobys with them.
+    pub point_lights: crate::point_lights::PointLights,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).

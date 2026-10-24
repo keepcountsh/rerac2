@@ -18,7 +18,7 @@
 //! binding changes the bind-group layout, which reorders draws (the alpha-test and blended passes are order
 //! dependent), so frames without any light would change.
 //!
-//! The bank is the game tick's (`Services::point_lights`, the same one the mobys merge); without a game tick there
+//! The bank is the game tick's (`MobyWorld::point_lights`, the same one the mobys merge); without a game tick there
 //! are no lights. `RC_WORLD_LIGHTS=0` keeps every list empty (the baked colours only, for comparisons);
 //! `RC_WORLD_LIGHTS_TRACE=1` prints, every frame, the wall-clock frame time, the bank and the listed counts.
 
@@ -111,12 +111,14 @@ fn update(
     tfrags: Option<ResMut<crate::tfrag_lod::TfragLodState>>,
     ties: Option<ResMut<crate::tie_lod::TieLodState>>,
     shrubs: Option<ResMut<crate::shrub_render::ShrubSway>>,
+    play: Option<Res<crate::play::Play>>,
 ) {
     // A runtime level change (crate::level_switch): the new level's lights.
     if generation.is_changed() { *state = None; }
     let w = state.get_or_insert_with(|| setup(&level, &assets));
-    // The game's point lights (none yet: G-REN-006).
-    let bank = &PointLights::default();
+    // The game's point lights (rc_game::moby::MobyWorld::point_lights); none without a running game.
+    let none = PointLights::default();
+    let bank = play.as_deref().and_then(|p| p.point_lights()).unwrap_or(&none);
     let changed = w.lists.update(bank, &w.spheres);
     let bytes = bank_bytes(bank);
     let bank_changed = bytes != w.bank;

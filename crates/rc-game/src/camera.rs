@@ -32,8 +32,9 @@
 //! mobys `0x1b8e84` / `0x18b270` (nothing sets them on Aranos), the stick auto-centre (`$gp+0x2540` is 0 on the disc),
 //! the water settle (D+0x14e), the knock-down view (state 0x74, mode 11), the camera's own shift `0x1b8fc0`, the
 //! underwater test `0x2d9a58`; the other camera classes (first person `0x427bf8` needs Ratchet's camera mode 4 / 0x51,
-//! script 5, 6, the Swingshot's 7, 0x1b), the blends between cameras (`0x2d8168` / `0x2d8ab0` / `0x2d9488`), the
-//! shakes (`0x2d9528`: their users, the blast `0x320538` among them, are not ported) and the FOV blend `0x2d7b70`.
+//! script 5, 6, the Swingshot's 7, 0x1b), the blends between cameras (`0x2d8168` / `0x2d8ab0` / `0x2d9488`) and the
+//! FOV blend `0x2d7b70`. The shakes are [`Shakes`] (set by the Gravity Bomb's blast; the blast `0x320538` and the
+//! others that ask for one are not ported).
 
 use crate::hero::physics::{add, dot, len, scale, sub, V3};
 use crate::hero::Hero;
@@ -42,6 +43,56 @@ use crate::collision::mobys::MobyScene;
 use crate::collision::{coll_line_m, coll_sphere_m, QueryFlags};
 
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
+
+/// One camera shake (`{amplitude, value, timer, length}`): the asker sets the amplitude and the timer, and the length
+/// to 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shake {
+    pub amp: f32,
+    pub value: f32,
+    pub timer: i32,
+    pub max: i32,
+}
+
+/// The camera shakes (`0x1b8d60` / `0x1b8d70` / `0x1b8d80`): up and down, back and forth, and a roll.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shakes(pub [Shake; 3]);
+
+impl Shakes {
+    /// `0x2d9f38`'s three `0x2d9528` calls after the camera's update, on the frame's eye and rows (forward, left, up)
+    /// — the camera itself keeps its own. While its timer runs (the length the largest it was, the timer one down,
+    /// t = timer / length): the eye moves `amp · cos(2·timer) · t²` along up (0) or forward (1); the rows roll about
+    /// forward by the quaternion of half-angle sine `amp · sin(elapsed · 2001° / 60 − 10 · 2001°) · t³` eased in over the
+    /// first 10 ticks (2). Not ported: the current camera of type 6 (`0x1b8d90 + 0x86`) stopping them.
+    pub fn apply(&mut self, eye: &mut V3, rows: &mut [V3; 3]) {
+        for (axis, s) in self.0.iter_mut().enumerate() {
+            if s.timer == 0 {
+                s.max = 0;
+                continue;
+            }
+            if s.max < s.timer { s.max = s.timer; }
+            crate::moby::countdown(&mut s.timer);
+            let t = s.timer as f32 / s.max as f32;
+            if axis < 2 {
+                s.value = s.amp * wrap(s.timer as f32 * 2.0).cos() * t * t;
+                *eye = add(*eye, crate::hero::physics::set_len(if axis == 0 { rows[2] } else { rows[0] }, s.value));
+            } else {
+                let k = 2001.0 * 0.017_453_294;
+                let gone = (s.max - s.timer) as f32;
+                let ease = (gone * 0.016_666_668 * 6.0).min(1.0);
+                s.value = s.amp * wrap(gone * 0.016_666_668 * k - k * 10.0).sin() * t * t * t * ease;
+                let q = crate::moby::shards::axis_quat(s.value, rows[0]);
+                *rows = rows.map(|r| crate::moby::shards::rotate(q, r));
+            }
+        }
+    }
+}
+
+/// `0x2efef0`: `a` wrapped to [−π, π) by its fraction of a turn.
+fn wrap(a: f32) -> f32 {
+    let f = a * 0.159_154_94 + 0.5;
+    ((f - f.floor()) - 0.5) * std::f32::consts::TAU
+}
 /// `$gp+0x2474` (40°) and `+0x2470` (1.75°): the stick pitch's range and step.
 const DEG40: f32 = 0.698_131_7;
 const DEG1_75: f32 = 0.030_543_262;
