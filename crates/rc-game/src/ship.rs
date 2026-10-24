@@ -20,7 +20,7 @@
 //! Not ported: the other modes (the fades, the death `0x434ad0`, the U-turn `0x434c98`), the auto level `0x4356c8`,
 //! the boost (`0x22183c`, `0x375168`), Gorn's and Hrugis's special cases (levels 0xf, 0x14, 5 / 10), the spheres the
 //! ship must stay in (the mission object 0x0eee's `+0x68`[0]), the collision `0x437a70`, the guns but the
-//! lasers (the missiles ○ `0x3caae8`, the weapons 2 / 3 / 4, the boost □ and its fuel `0x29c300` slot 7), the
+//! lasers and the boost (the missiles ○ `0x3caae8`, the weapons 2 / 3 / 4), the
 //! upgrades' parts, the ship's light and draws (`0x436d20`, `0x437258`, `0x4383d8`).
 //!
 //! **The lasers** (`0x436440`, ✕): every 10 ticks (`$gp+0x25b0`; during a barrel roll only on even frames) a shot
@@ -32,6 +32,12 @@
 //! step takes a hit (1, flags 0x110000; `0x32f910`) and ends it. Its draw (`0x4137d0`, meshes of FX 0xb and 8 with a
 //! spinning star) is drawn here as an additive streak. Not ported: the shots' sounds (`0x36cb90`), the burst of the
 //! end (`0x4134b0`), an enemy's shots hitting the ship.
+//!
+//! **The boost** (`0x436440`, □; the weapon slot 7 of `0x29c300`, 0x28 each: `+0` had, `+0x10` the most fuel 600,
+//! `+0x14` the fuel): held with fuel, the ship's `+0x34` counts up to 8 and the fuel down by 1 a tick; else `+0x34`
+//! counts down, and at 0 with □ up the fuel comes back by 1 every third frame. With `+0x34` the move (`0x435a18`)
+//! springs the speed to 50 a second (`$gp+0x25d4`; 30 with `0x375168`) at 0.005 (`+0x2700`) instead of the cruise.
+//! Not ported: its sound (`0x36cc38(0x11, …)`).
 
 use crate::hero::physics::{add, cross, dot, scale, set_len, sub, unit, V3};
 use crate::moby::hits::HitTemplate;
@@ -84,6 +90,9 @@ pub struct Flight {
     gun_wait: i16,
     aim: V3,
     frame: u32,
+    /// The ship's `+0x34` (the boost's ramp, 0..8) and the boost's fuel (slot 7's `+0x14`).
+    boost: i32,
+    fuel: i32,
     /// `$gp+0x2630`.
     pub mode: i32,
     /// `$gp+0x2684` / `+0x2688`: the d-pad's yaw and pitch ramps (0.1 a tick to 1).
@@ -124,9 +133,13 @@ mod k {
     /// yaw's.
     pub const PITCH: (f32, f32, f32, f32) = (0.005, 0.3, 0.0, 2.5);
     pub const YAW: (f32, f32, f32, f32) = (0.0125, 0.3, 0.0, 1.5);
-    /// `+0x25d0`: the cruise speed a second; `+0x2704` / 0.2: its spring.
+    /// `+0x25d0`: the cruise speed a second; `+0x2704` / 0.2: its spring; `+0x25d4` / `+0x2700` the boost's.
     pub const CRUISE: f32 = 8.0;
     pub const SPEED_K: f32 = 0.02;
+    pub const BOOST: f32 = 50.0;
+    pub const BOOST_K: f32 = 0.005;
+    /// The boost's fuel (slot 7's `+0x10`).
+    pub const FUEL: i32 = 600;
     pub const SPEED_D: f32 = 0.2;
     /// `+0x25f8` the barrel roll's ticks, `+0x25fc` the wait after it.
     pub const ROLL_TICKS: i16 = 60;
@@ -164,6 +177,8 @@ impl Flight {
             gun_wait: 0,
             aim: pos,
             frame: 0,
+            boost: 0,
+            fuel: k::FUEL,
             mode: 0,
             ramp_yaw: 0.0,
             ramp_pitch: 0.0,
@@ -197,9 +212,17 @@ impl Flight {
         self.fire(pad, w, host);
     }
 
-    /// `0x436440`'s lasers.
+    /// `0x436440`'s lasers and boost.
     fn fire(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
         if self.roll_dir != 0 && self.frame & 1 != 0 { return; }
+        let square = pad.held & button::SQUARE != 0;
+        if self.fuel == 0 || !square {
+            countdown(&mut self.boost);
+            if self.boost == 0 && self.frame % 3 == 0 && !square { self.fuel = (self.fuel + 1).min(k::FUEL); }
+        } else {
+            self.boost = (self.boost + 1).min(8);
+            countdown(&mut self.fuel);
+        }
         let Some(ship) = self.ship else { return };
         if dec_timer(&mut self.gun_wait) == 0 || pad.held & button::CROSS == 0 { return; }
         self.gun_wait = laser::WAIT;
@@ -342,7 +365,8 @@ impl Flight {
     /// `0x435a18`: the speed springs to the cruise; the camera moves along the ship's forward; the barrel roll's side
     /// step; each axis kept within 5..1000.
     fn advance(&mut self, w: &MobyWorld) {
-        self.speed = spring(self.speed, k::CRUISE / 60.0, k::SPEED_K, k::SPEED_D, 0.0, &mut self.speed_v);
+        let (top, rate) = if self.boost == 0 { (k::CRUISE, k::SPEED_K) } else { (k::BOOST, k::BOOST_K) };
+        self.speed = spring(self.speed, top / 60.0, rate, k::SPEED_D, 0.0, &mut self.speed_v);
         let fwd = self.ship.and_then(|i| w.mobys.get(i)).map_or(self.rows[0], |m| m.rows[0]);
         self.pos = add(self.pos, scale(fwd, self.speed));
         if self.roll_dir != 0 {
