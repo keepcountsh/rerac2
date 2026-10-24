@@ -259,6 +259,12 @@ impl Flight {
     /// the ship gone, 60 ticks).
     fn take_hits(&mut self, w: &mut MobyWorld) {
         let Some(ship) = self.ship else { return };
+        let add = w.mobys[ship].pv_i(SHIELD_ADD);
+        if add != 0 {
+            self.shield = (self.shield + add).min(k::SHIELD);
+            w.mobys[ship].set_pv_i(SHIELD_ADD, 0);
+        }
+        w.mobys[ship].set_pv_i(SHIELD_NOW, self.shield);
         let n = w.mobys[ship].pv_i(HITS);
         if n == 0 { return; }
         w.mobys[ship].set_pv_i(HITS, 0);
@@ -593,8 +599,13 @@ pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::Fx
     }
 }
 
-/// The ship moby's word the enemy shots add their hits to (read and cleared by [`Flight::tick`]).
+/// The ship moby's words: the enemy shots add their hits to `HITS`, the shield's pickups their shield to
+/// `SHIELD_ADD` (both read and cleared by [`Flight::tick`]); `SHIELD_NOW` the shield as the flight left it.
 pub const HITS: usize = 0x300;
+pub const SHIELD_ADD: usize = 0x304;
+pub const SHIELD_NOW: usize = 0x308;
+/// The shield's most (the weapon slot 6's `+0x10`).
+pub const SHIELD_MAX: i32 = k::SHIELD;
 
 /// `0x375198`'s shot from `from` toward `at` (a fighter's: the pool `0x2218c0`, 0x80 each; here a 0xffa moby with
 /// `+0x44` set): a streak 2 long (`+0x10` its step's direction, the tail `+0x50`), `+0x48` the distance flown,

@@ -119,6 +119,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0873 => Some(maktar::update_0873),
         crate::ship::LASER_CLASS => Some(crate::ship::update_laser),
         space::FIGHTER => Some(space::update_fighter),
+        space::SHIELD_PICKUP | space::BOLT_PICKUP => Some(space::update_pickup),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),
         _ => None,

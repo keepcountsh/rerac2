@@ -30,6 +30,9 @@
 //!
 //! Its gun (`0x3ca5a8`): in range and in the cone, every 20 ticks a shot ([`crate::ship::spawn_enemy_shot`]).
 //!
+//! Its death (`0x40f270`): the blast `0x4184c8` ([`crate::moby::blast::burst`]) and a drop ([`drop`], the pickups'
+//! [`update_pickup`]).
+//!
 //! Not ported: the formations (3: the leader `+0x10`'s place),
 //! the states 2, 6, 7, 8, 0xb, 0xc, 0xd, the leaders' list (`0x3750e8`: only those classes attack), the goal's and
 //! the step's collision (`0x378570`, `0x376650`'s push), the burst (`0x4184c8`) and the bolts (`0x40fbc8`), the
@@ -242,13 +245,17 @@ fn think(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 
 /// `0x40f270` (the mission's hit handler): a hit with the flags 0x230000 takes its damage; at 0 the fighter is put
 /// away (`0x375fe8`).
-fn hits(w: &mut MobyWorld, id: usize) {
+fn hits(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let Some(h) = w.hit_message(id) else { return };
     w.clear_hit(id);
     if h.tmpl.flags & 0x0023_0000 == 0 { return; }
     let hp = (w.mobys[id].pv_f(HEALTH) - h.tmpl.damage).max(0.0);
     w.mobys[id].set_pv_f(HEALTH, hp);
     if hp <= 0.0 {
+        // `0x4184c8(0.5, …)`: its blast (the same as the ground's, crate::moby::blast), then its drop.
+        let at = w.mobys[id].pos;
+        crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.5, bursts: [0x32, 0x1e, 0x1e], puffs: 0x1e, streaks: 0x28 });
+        drop(w, id, ctx);
         set_ai_i(w, id, a::ATTACKING, 0);
         set_ai_i(w, id, a::ACTIVE, 0);
         let m = &mut w.mobys[id];
@@ -369,10 +376,75 @@ pub fn update_fighter(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if w.mobys[id].pv_i(REVIVE) != 0 { revive(w, id, ctx); }
     if ai_i(w, id, a::ACTIVE) != 1 { return; }
     think(w, id, ctx);
-    hits(w, id);
+    hits(w, id, ctx);
     if ai_i(w, id, a::ACTIVE) != 1 { return; }
     range(w, id, ctx);
     fire(w, id, ctx);
     maybe_attack(w, id, ctx);
+    w.rebuild(id, &*ctx.host);
+}
+
+/// The pickups the fighters drop: the shield's 0x0946 (`0x3c7408`) and the bolts' 0x10cf (`0x415790`).
+pub const SHIELD_PICKUP: i16 = 0x0946;
+pub const BOLT_PICKUP: i16 = 0x10cf;
+
+/// `0x40fbc8(m, 1)`: a dead fighter's drop. Three times in four nothing; else one in 48 draws: 0..3 the shield's
+/// (`0x3c7330`) while the shield is not full, 4 (`0x40fb20`) and 5..7 (the weapons 2..4 none has) the missiles' while
+/// they are not full (`0x415e00`, not ported: the bolts' instead), the rest the bolts' (`0x4156b8`). Not ported: the
+/// second chance of the shield's by the level's table (`0x13a148`).
+fn drop(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let g = &mut ctx.game.rng;
+    if g.randi(4) != 0 { return; }
+    let r = g.randi(0x30);
+    let ship = w.mobys.iter().position(|m| m.o_class == crate::ship::SHIP_CLASS && m.state < 0x80);
+    let shield_full = ship.is_none_or(|s| w.mobys[s].pv_i(crate::ship::SHIELD_NOW) >= crate::ship::SHIELD_MAX);
+    let class = if r < 4 && !shield_full { SHIELD_PICKUP } else { BOLT_PICKUP };
+    if w.class(class).is_none() { return; }
+    let at = w.mobys[id].pos;
+    let p = w.create(class);
+    let base = w.class(class).map_or(1.0, |c| c.scale);
+    let yaw = ctx.game.rng.rand_angle();
+    let m = &mut w.mobys[p];
+    m.state = 0;
+    m.update_dist = 0xff;
+    m.draw_dist = 0xff;
+    m.drawn = 1;
+    m.pos = at;
+    m.rot = [0.0, 0.0, yaw];
+    m.scale = base;
+    w.rebuild(p, &*ctx.host);
+}
+
+/// `0x3c7408` / `0x415790`: within 60 of the ship the pickup closes on it (`0x331058`: a spring on the distance,
+/// 0.0056 / 0.0017, at most 0.5 a tick) shrinking (its scale · d / 45, at least 0.3); within 0.5 it is taken — the
+/// shield's adds 33 (one time in four all of it, `0x29c310` slot 6), the bolts' are counted (`0x1a7a04`). It turns
+/// (0.03 a tick about z; the bolts' also 0.01 about x). Not ported: the shield's sparkles (`0x3c7720`), the voices
+/// and sounds.
+pub fn update_pickup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let class = w.mobys[id].o_class;
+    let base = w.class(class).map_or(1.0, |c| c.scale);
+    if let Some(s) = w.mobys.iter().position(|m| m.o_class == crate::ship::SHIP_CLASS && m.state < 0x80 && m.draw_dist != 0) {
+        let to = w.mobys[s].pos;
+        let d = dist(to, w.mobys[id].pos);
+        if d < 60.0 {
+            let m = &mut w.mobys[id];
+            m.scale = (base * 0.022_222_223 * d).max(base * 0.3);
+            let mut v = m.pv_f(0x40);
+            crate::hero::physics::spring_vel(d, 0.005_555_556, 0.001_666_667, 0.5, &mut v);
+            m.set_pv_f(0x40, v);
+            m.pos = add(m.pos, set_len(sub(to, m.pos), v));
+        }
+        if d < 0.5 {
+            if class == SHIELD_PICKUP {
+                let add = if ctx.game.rng.randi(4) != 0 { 0x21 } else { crate::ship::SHIELD_MAX };
+                let n = w.mobys[s].pv_i(crate::ship::SHIELD_ADD) + add;
+                w.mobys[s].set_pv_i(crate::ship::SHIELD_ADD, n);
+            }
+            return w.delete(id);
+        }
+    }
+    let m = &mut w.mobys[id];
+    m.rot[2] = crate::hero::physics::add_rot(m.rot[2], 0.03);
+    if class == BOLT_PICKUP { m.rot[0] = crate::hero::physics::add_rot(m.rot[0], 0.01); }
     w.rebuild(id, &*ctx.host);
 }
