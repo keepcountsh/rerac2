@@ -128,6 +128,8 @@ pub struct Flight {
     lock_heard: bool,
     /// The lock marker's turn (`+0x27c`).
     lock_spin: f32,
+    /// This tick's scrape against the world or a moby (`+0x90`, its draw registered by the collision).
+    scrape: Option<V3>,
     hits_heard: u32,
     hit_sound: bool,
     /// The shield bubble's texels' turns, its hit flash's ticks (a hit this tick); the dust's specks and their runs.
@@ -266,6 +268,7 @@ impl Flight {
             lock_sound: -1,
             lock_heard: false,
             lock_spin: 0.0,
+            scrape: None,
             hits_heard: 0,
             hit_sound: false,
             shell_spin: [0.0; 3],
@@ -1330,10 +1333,12 @@ impl Flight {
     /// `0x437a70`: the ship's step swept in 0.25 spheres (0.075 up in its frame; at most 30 long) against the world
     /// and the mobys. The world met nose-on (|n · forward| > 0.75) is the death (`0x434ad0`); else the camera and the
     /// ship are pushed out and the hull takes 1 every fourth frame. A moby met head-on (its facing against the ship's)
-    /// takes 1 (flags 0x10000) and the hull 30, once in 15 ticks (the record's `+0x58`). Not ported: the Hrugis
-    /// special case, the sparks (`0x4382b0`), the camera shake.
+    /// takes 1 (flags 0x10000) and the hull 30, once in 15 ticks (the record's `+0x58`). Either way the scrape
+    /// (`+0x90`, drawn by [`Flight::draw_scrape`]) at the contact. Not ported: the Hrugis special case, the pad's
+    /// rumble (`0x2e9f18(0x2b3200)`).
     fn collide(&mut self, w: &mut MobyWorld, coll: Option<&rc_formats::collision::Collision>, scene: Option<&crate::collision::mobys::MobyScene>, from: V3) {
         countdown(&mut self.ram_wait);
+        self.scrape = None;
         let (Some(ship), Some(c)) = (self.ship, coll) else { return };
         let to = w.mobys[ship].pos;
         let up = scale(w.mobys[ship].rows[2], 0.075);
@@ -1347,13 +1352,16 @@ impl Flight {
             match h.moby {
                 Some(m) if w.mobys.get(m).is_some_and(|x| x.o_class != SHIP_CLASS) => {
                     let facing = dot(w.mobys[m].rows[0], w.mobys[ship].rows[0]);
-                    if facing <= 0.0 && self.ram_wait == 0 {
-                        let dir = unit(sub(w.mobys[m].pos, to));
-                        let tmpl = HitTemplate::new(1.0, Some(ship), 0x0001_0000, [dir[0], dir[1], dir[2], 0.0]);
-                        let q = w.mobys[m].pos;
-                        w.deliver_hit_any(m, &tmpl, [q[0], q[1], q[2], 1.0]);
-                        self.damage(w, 30);
-                        self.ram_wait = 15;
+                    if facing <= 0.0 {
+                        if self.ram_wait == 0 {
+                            let dir = unit(sub(w.mobys[m].pos, to));
+                            let tmpl = HitTemplate::new(1.0, Some(ship), 0x0001_0000, [dir[0], dir[1], dir[2], 0.0]);
+                            let q = w.mobys[m].pos;
+                            w.deliver_hit_any(m, &tmpl, [q[0], q[1], q[2], 1.0]);
+                            self.damage(w, 30);
+                            self.ram_wait = 15;
+                        }
+                        self.scrape = Some(h.point);
                     }
                 }
                 _ => {
@@ -1368,6 +1376,8 @@ impl Flight {
                         w.mobys[ship].pos = add(w.mobys[ship].pos, out);
                     }
                     if self.frame % 4 == 0 { self.damage(w, 1); }
+                    // `+0x90`: the contact, out along the face by 0.8 of the sphere (`$gp+0x272c` 0.25).
+                    self.scrape = Some(add(h.point, scale(nrm, 0.25 * 0.8)));
                 }
             }
             return;
@@ -1564,6 +1574,27 @@ impl Flight {
             let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
             let corner = |x: f32, y: f32| add(at, add(scale(rr, x * size), scale(uu, y * size)));
             out.push(crate::fx::FxQuad { fx, additive: true, corners: [corner(-1.0, 1.0), corner(1.0, 1.0), corner(-1.0, -1.0), corner(1.0, -1.0)], st, rgba: [rgba; 4] });
+        }
+    }
+
+    /// `0x4382b0`, the scrape: 40 sprites (`0x300aa0`, FX 0x39, 0x40404080) from the contact toward the camera, 0.015
+    /// apart along its facing, each jittered ±0.07 with a random roll, 0.075 across shrinking to 0.02.
+    pub fn draw_scrape(&self, cam: V3, rng: &mut crate::rng::Rng, out: &mut Vec<crate::fx::FxQuad>) {
+        let Some(mut p) = self.scrape else { return };        let back = scale(self.rows[0], -0.015);
+        let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+        for i in 0..40 {
+            let size = 0.075 + (0.02 - 0.075) * (i as f32 / 40.0);
+            let roll = rng.rand_angle();
+            let q = [p[0] + rng.randf(-0.07, 0.07), p[1] + rng.randf(-0.07, 0.07), p[2] + rng.randf(-0.07, 0.07)];
+            let f = unit(sub(cam, q));
+            let up = if f[2].abs() < 0.99 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+            let a = unit(cross(up, f));
+            let b = cross(f, a);
+            let (s, c) = roll.sin_cos();
+            let (a, b) = (add(scale(a, c), scale(b, s)), sub(scale(b, c), scale(a, s)));
+            let corner = |x: f32, y: f32| add(q, add(scale(a, x * size), scale(b, y * size)));
+            out.push(crate::fx::FxQuad { fx: 0x39, additive: true, corners: [corner(-1.0, -1.0), corner(1.0, -1.0), corner(-1.0, 1.0), corner(1.0, 1.0)], st, rgba: [0x4040_4080; 4] });
+            p = add(p, back);
         }
     }
 

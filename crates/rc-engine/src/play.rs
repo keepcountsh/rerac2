@@ -731,6 +731,7 @@ fn tick(
             if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }
             f.draw_shield(&mobys.world, f.pos, &mut p.fx_quads);
             f.draw_dust(&mobys.world, f.pos, &mut p.game.rng, &mut p.fx_quads);
+            f.draw_scrape(f.pos, &mut p.game.rng, &mut p.fx_quads);
             if 0 < p.game.space_bolts_shown { p.game.space_bolts_shown -= 1; }
             // `0x2c63f0`: the ship's death starts the fight again; `0x307bf0(2, 1)`: the fight won, Maktar Nebula.
             if f.restart && p.game.next_level.is_none() { p.game.go_to_level(p.game.level, false); }
