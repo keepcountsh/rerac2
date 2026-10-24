@@ -377,8 +377,8 @@ fn fire(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 
 /// `0x3769a0` / `0x3767e8`: the attack's start (not attacking, fewer than 4 attacking, not in a formation or
-/// dodging): a gunship takes the circling one (kind 5: → 7) while none of its group does (`0x377f20`), else → 4,
-/// for 120..500 ticks.
+/// dodging): a gunship takes the circling one (kind 5: → 7) while none of its group's last attack was one
+/// (`0x377f20`), else → 4, for 120..500 ticks.
 fn maybe_attack(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if target(w, id).is_none() || ai_i(w, id, a::ATTACKING) == 1 || matches!(ai_i(w, id, a::STATE), 3 | 0xd) { return; }
     let attacking = w.mobys.iter().filter(|m| is_ai(m.o_class) && m.state < 0x80 && m.pv_i(AI + a::ATTACKING) == 1).count();
@@ -386,7 +386,9 @@ fn maybe_attack(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let class = w.mobys[id].o_class;
     // Only the tick's leading group (`0x3769a0`).
     if w.mobys.iter().find(|m| m.o_class == 0x0eee && m.state < 0x80).is_some_and(|m| m.pv_i(LEADER) != 0 && m.pv_i(LEADER) != class as i32) { return; }
-    let circling = w.mobys.iter().any(|m| m.o_class == class && m.state < 0x80 && m.pv_i(AI + a::ATTACKING) == 1 && m.pv_i(AI + a::KIND) == 5);
+    // `0x377f20(m, 5)`: its group's active ships whose last kind was 5 — itself too, so one that just circled makes a
+    // run next.
+    let circling = w.mobys.iter().any(|m| m.o_class == class && m.state < 0x80 && m.pv_i(AI + a::ACTIVE) == 1 && m.pv_i(AI + a::KIND) == 5);
     let kind = if spec(class).circles && !circling { 5 } else { 1 };
     set_ai_i(w, id, a::KIND, kind);
     set_ai_i(w, id, a::ATTACKING, 1);
