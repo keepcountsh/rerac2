@@ -47,6 +47,10 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         m.state = 1;
         m.set_pv_i(0x18, 0);
     }
+    // Out of its unfold (sequence 0) it holds sequence 1, as the live one does (the Lancer's and the bomb's way).
+    if let Some(a) = ctx.host.anim(&w.mobys[id]) {
+        if a.seq_b == 0 && a.seq_a == a.seq_b && a.flags & 2 != 0 { ctx.host.set_anim(&w.mobys[id], 1, 0, 2); }
+    }
     if ctx.hero.state == 1 { ctx.hero.request_state(0x1d, true); }
     let muzzle = ctx.host.joint(&w.mobys[id], 0).unwrap_or(w.mobys[id].pos);
     let air = ctx.hero.grounded_ticks == 0;
