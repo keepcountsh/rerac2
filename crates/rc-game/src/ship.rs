@@ -675,3 +675,77 @@ pub fn draw_flame(w: &MobyWorld, id: usize, cam: V3, rng: &mut crate::rng::Rng, 
         }
     }
 }
+
+/// The radar (`0x3757f0`, `$gp−0x2a90..`): its centre (440, 340), the dot's size 8, its reach 48 pixels for 128
+/// units, the FX texture 0x3c; the crosshair's (`0x4383d8`) FX texture 0x3f, 0.2 across, green (`$gp+0x27a4`).
+mod hud {
+    pub const RADAR: [f32; 2] = [440.0, 340.0];
+    pub const DOT: f32 = 8.0;
+    pub const REACH: f32 = 48.0;
+    pub const RANGE: f32 = 128.0;
+    pub const DOT_FX: u16 = 0x3c;
+    pub const CROSS_FX: u16 = 0x3f;
+    pub const CROSS: f32 = 0.2;
+    pub const CROSS_RGBA: u32 = 0x8020_8020;
+    /// `0x2b32e0`: the corners (across, up); `0x2b3370`: the texels; `$gp+0x2750`: each strip's (corner, texel).
+    pub const CROSS_CORNERS: [[f32; 2]; 9] = [[-0.5, 0.5], [-0.5, 0.0], [0.0, 0.0], [0.0, 0.5], [-0.5, -0.5], [0.0, -0.5], [0.5, 0.0], [0.5, 0.5], [0.5, -0.5]];
+    pub const CROSS_TEXELS: [[f32; 2]; 16] = [
+        [0.1, 0.1], [0.99, 0.1], [0.99, 0.99], [0.1, 0.99], [0.1, 0.99], [0.1, 0.1], [0.99, 0.1], [0.99, 0.99],
+        [0.99, 0.1], [0.99, 0.99], [0.1, 0.99], [0.1, 0.1], [0.99, 0.99], [0.1, 0.99], [0.1, 0.1], [0.99, 0.1],
+    ];
+    pub const CROSS_STRIPS: [[(usize, usize); 4]; 4] = [
+        [(0, 0), (1, 1), (3, 3), (2, 2)],
+        [(1, 4), (4, 5), (2, 7), (5, 6)],
+        [(3, 8), (2, 9), (7, 11), (6, 10)],
+        [(2, 12), (5, 13), (6, 15), (8, 14)],
+    ];
+}
+
+/// The FX textures the flight's HUD draws with.
+pub const HUD_FX: [u16; 2] = [hud::DOT_FX, hud::CROSS_FX];
+
+impl Flight {
+    /// The flight's HUD: the crosshair (`0x4383d8`: at the aim point, facing the camera; drawn here as one sprite) and
+    /// the radar (`0x3757f0`: the ship's dot in the middle; each active fighter within 128 a dot across (left, right)
+    /// and ahead (up) of the middle by its distance · 48 / 128, its size by its height (4 + up / 8, 0..16), fading
+    /// out with the distance (√(1 − d / 128)), in its colour `+0x150` (0x80)). `tan`: the view's half-angle tangent.
+    pub fn hud_quads(&self, w: &MobyWorld, tan: f32, tex: &dyn Fn(u16) -> Option<(crate::gui::Tex, [f32; 2])>) -> Vec<crate::gui::Quad> {
+        use crate::gui::{Quad, SCREEN_H, SCREEN_W};
+        let mut out = Vec::new();
+        let sprite = |out: &mut Vec<Quad>, fx: u16, x: f32, y: f32, h: f32, rgba: u32| {
+            let Some((t, [tw, th])) = tex(fx) else { return };
+            out.push(Quad { pos: [[x - h, y + h], [x + h, y + h], [x - h, y - h], [x + h, y - h]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex: t, rgba: rgba.to_le_bytes() });
+        };
+        if self.mode == 6 { return out; }
+        let r = self.rows;
+        let (cx, cy) = (SCREEN_W * 0.5, SCREEN_H * 0.5);
+        // The crosshair at the aim point: four strips (`$gp+0x2750`: the corner and texel pairs into `0x2b32e0` /
+        // `0x2b3370`) of the quarter reticle, 0.2 across.
+        let d = sub(self.aim, self.pos);
+        let z = dot(r[0], d);
+        if let (true, Some((t, [tw, th]))) = (0.0 < z, tex(hud::CROSS_FX)) {
+            let (sx, sy) = (cx / tan / z, cy / (tan * 0.775) / z);
+            let x = cx - dot(r[1], d) * sx;
+            let y = cy - dot(r[2], d) * sy;
+            for strip in hud::CROSS_STRIPS {
+                let pos = strip.map(|(c, _)| { let [a, u] = hud::CROSS_CORNERS[c]; [x - a * hud::CROSS * sx, y - u * hud::CROSS * sy] });
+                let uv = strip.map(|(_, k)| { let [u, v] = hud::CROSS_TEXELS[k]; [u * tw, v * th] });
+                out.push(Quad { pos, uv, tex: t, rgba: hud::CROSS_RGBA.to_le_bytes() });
+            }
+        }
+        // The radar.
+        let [rx, ry] = hud::RADAR;
+        sprite(&mut out, hud::DOT_FX, rx, ry, hud::DOT * 0.5, 0x8080_8080);
+        for m in w.mobys.iter().filter(|m| m.o_class == crate::moby::classes::space::FIGHTER && m.state < 0x80 && m.draw_dist != 0) {
+            let rel = sub(m.pos, self.pos);
+            let dist = crate::hero::physics::len(rel);
+            if hud::RANGE < dist || dist == 0.0 { continue; }
+            let v = scale(rel, hud::REACH / hud::RANGE);
+            let (ahead, left, up) = (dot(r[0], v), dot(r[1], v), dot(r[2], v));
+            let size = (up * 0.125 + hud::DOT * 0.5).clamp(0.0, hud::DOT * 2.0);
+            let alpha = ((1.0 - dist / hud::RANGE).max(0.0).sqrt() * 128.0) as u32;
+            sprite(&mut out, hud::DOT_FX, rx - left, ry - ahead, size * 0.5, 0x80 | alpha << 24);
+        }
+        out
+    }
+}

@@ -1275,11 +1275,13 @@ fn draw_hud(
             }
             Err(e) => eprintln!("play: no HUD icons ({e:#})"),
         }
-        // The markers' FX textures (the Lancer's reticle).
+        // The markers' FX textures (the Lancer's reticle) and the space fights' HUD's (rc_game::ship).
         let mut fx = std::collections::HashMap::new();
-        if let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(0x26)).and_then(Option::as_ref) {
-            fx.insert(0x26u16, (textures.len(), [t.width as f32, t.height as f32]));
-            textures.push(t.clone());
+        for id in std::iter::once(0x26u16).chain(rc_game::ship::HUD_FX) {
+            if let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(id as usize)).and_then(Option::as_ref) {
+                fx.insert(id, (textures.len(), [t.width as f32, t.height as f32]));
+                textures.push(t.clone());
+            }
         }
         // The pause pages' item pictures.
         let pictures = ItemPictures::new(&root, [textures.len(), textures.len() + 1]);
@@ -1314,6 +1316,11 @@ fn draw_hud(
             let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
             let alive = |id: usize| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id)).is_some_and(|m| m.state != 0xfe && m.state != 0xfd);
             quads.extend(rc_game::hud::marker_quads(&markers, p.camera.pos, p.camera.rows, crate::play_camera::GAME_TAN_HALF_FOV, &tex, &alive));
+        }
+        // The space fight's crosshair and radar.
+        if let (Some(f), Some(m)) = (p.ship.as_ref(), p.mobys.as_ref()) {
+            let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+            quads.extend(f.hud_quads(&m.world, crate::play_camera::GAME_TAN_HALF_FOV, &tex));
         }
         let mut draws = p.hud.draw(p.game.bolts);
         // The quick select's ring and texts (rc_game::quick_select).
