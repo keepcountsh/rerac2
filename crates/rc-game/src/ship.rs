@@ -126,6 +126,8 @@ pub struct Flight {
     boost_sound: i32,
     lock_sound: i32,
     lock_heard: bool,
+    /// The lock marker's turn (`+0x27c`).
+    lock_spin: f32,
     hits_heard: u32,
     hit_sound: bool,
     /// The shield bubble's texels' turns, its hit flash's ticks (a hit this tick); the dust's specks and their runs.
@@ -263,6 +265,7 @@ impl Flight {
             boost_sound: -1,
             lock_sound: -1,
             lock_heard: false,
+            lock_spin: 0.0,
             hits_heard: 0,
             hit_sound: false,
             shell_spin: [0.0; 3],
@@ -895,8 +898,6 @@ mod hud {
     pub const CROSS_RGBA: u32 = 0x8020_8020;
     /// The PS2's crosshair against the template's square (its 3D draw's scale on screen).
     pub const CROSS_FIT: [f32; 2] = [1.11, 1.41];
-    /// The lock's corners' half size, pixels.
-    pub const LOCK: f32 = 12.0;
     /// `0x2b32e0`: the corners (across, up); `0x2b3370`: the texels; `$gp+0x2750`: each strip's (corner, texel).
     pub const CROSS_CORNERS: [[f32; 2]; 9] = [[-0.5, 0.5], [-0.5, 0.0], [0.0, 0.0], [0.0, 0.5], [-0.5, -0.5], [0.0, -0.5], [0.5, 0.0], [0.5, 0.5], [0.5, -0.5]];
     pub const CROSS_TEXELS: [[f32; 2]; 16] = [
@@ -942,23 +943,31 @@ impl Flight {
                 out.push(Quad { pos, uv, tex: t, rgba: hud::CROSS_RGBA.to_le_bytes() });
             }
         }
-        // The lock (`0x437258` → `0x437530`: the candidate's four turning corners closing in as the lock builds, red
-        // once locked; drawn here with the crosshair's texture).
+        // The lock (`0x437258` → `0x437530`): on the candidate, four quarters of FX 0x3f (`0x437708`: each a square of
+        // `$gp+0x262c` (20) pixels × its scale, its texel (63, 63) at the middle, turned a quarter more each). Until the
+        // lock, green (0x60) and still; locked, red, turning 1° a tick (`+0x27c`) and growing by 5 × its ticks past
+        // the lock / 75, fading past half.
         if let Some(t) = self.locked.or(self.candidate).filter(|&t| w.mobys.get(t).is_some()) {
             let d = sub(w.mobys[t].pos, self.pos);
             let z = dot(r[0], d);
             if let (true, Some((tx, [tw, th]))) = (0.0 < z, tex(hud::CROSS_FX)) {
                 let x = cx - dot(r[1], d) / z * (cx / tan);
                 let y = cy - dot(r[2], d) / z * (cy / (tan * 0.775));
-                let share = self.lock_ticks as f32 / missile::LOCK_TICKS as f32;
-                let h = hud::LOCK * (1.0 + 4.0 * (1.0 - share));
-                let rgba: u32 = if self.locked.is_some() { 0x8020_20ff } else { 0x6020_8080 };
-                let spin = self.frame as f32 * 0.05;
+                let (scale, spin, rgba) = if self.locked.is_some() {
+                    let share = (self.lock_ticks - missile::LOCK_AT) as f32 / missile::LOCK_TICKS as f32;
+                    let a = (2.0 * (1.0 - share)).min(1.0) * 96.0;
+                    (1.0 + share * 5.0, self.lock_spin, [0xff, 0, 0, a as u8])
+                } else {
+                    (1.0, 0.0, [0, 0xff, 0, 0x60])
+                };
+                let h = missile::LOCK_PIXELS * scale;
+                let (u0, u1) = (tw / 64.0, tw * 63.0 / 64.0);
+                let (v0, v1) = (th / 64.0, th * 63.0 / 64.0);
                 for k in 0..4 {
-                    let a = spin + k as f32 * std::f32::consts::FRAC_PI_2;
-                    let (s, c) = a.sin_cos();
-                    let corner = |u: f32, v: f32| [x + (u * c - v * s) * h, y + (u * s + v * c) * h];
-                    out.push(Quad { pos: [corner(0.2, 1.0), corner(1.0, 1.0), corner(0.2, 0.2), corner(1.0, 0.2)], uv: [[0.1 * tw, 0.1 * th], [0.99 * tw, 0.1 * th], [0.1 * tw, 0.99 * th], [0.99 * tw, 0.99 * th]], tex: tx, rgba: rgba.to_le_bytes() });
+                    let (s, c) = (spin + k as f32 * std::f32::consts::FRAC_PI_2).sin_cos();
+                    let (a, b) = ([h * s, h * c], [h * c, -h * s]);
+                    let pos = [[x + a[0] + b[0], y + a[1] + b[1]], [x + a[0], y + a[1]], [x + b[0], y + b[1]], [x, y]];
+                    out.push(Quad { pos, uv: [[u0, v0], [u1, 0.0], [0.0, v1], [u1, v1]], tex: tx, rgba });
                 }
             }
         }
@@ -1131,8 +1140,8 @@ impl Flight {
 pub const MISSILE_CLASS: i16 = 0x0974;
 
 /// The missiles' tuning (`$gp+0xbe4` 90 a second, `+0xbec` 500 far, `+0xbf4` its scale 0.3, `+0xc04` the damage 5,
-/// `+0x25b4` 90 ticks between, the weapon slot 1's 10; the lock `+0x2618` 75 ticks, `+0x2624` 25°, `+0x2628` 60 far,
-/// `+0x262c` 20 pixels round the crosshair plus the class's own from `0x2b3280`).
+/// `+0x25b4` 90 ticks between, the weapon slot 1's 10; the lock past `+0x2610` 60 ticks, held to `+0x2618` 75,
+/// `+0x2624` 25°, `+0x2628` 60 far, `+0x262c` 20 pixels round the crosshair plus the class's own from `0x2b3280`).
 mod missile {
     pub const SPEED: f32 = 90.0;
     pub const RANGE: f32 = 500.0;
@@ -1140,6 +1149,7 @@ mod missile {
     pub const DAMAGE: f32 = 5.0;
     pub const WAIT: i16 = 90;
     pub const AMMO: i32 = 10;
+    pub const LOCK_AT: i32 = 60;
     pub const LOCK_TICKS: i32 = 75;
     pub const LOCK_CONE: f32 = 25.0;
     pub const LOCK_PIXELS: f32 = 20.0;
@@ -1187,11 +1197,9 @@ impl Flight {
             screen(m.pos).is_some_and(|p| (p[0] - aim[0]).abs() < win && (p[1] - aim[1]).abs() < win)
         });
         if found == self.candidate && found.is_some() {
-            self.lock_ticks += 1;
-            if missile::LOCK_TICKS < self.lock_ticks {
-                self.lock_ticks = missile::LOCK_TICKS;
-                self.locked = found;
-            }
+            self.lock_ticks = (self.lock_ticks + 1).min(missile::LOCK_TICKS);
+            // `0x437258`: past 60 ticks the candidate becomes the lock.
+            if missile::LOCK_AT < self.lock_ticks { self.locked = found; }
         } else {
             self.candidate = found;
             self.lock_ticks = 0;
@@ -1247,17 +1255,17 @@ impl Flight {
     /// lock's (8, once, `+0x26c`).
     fn lock_sounds(&mut self, w: &MobyWorld, host: &mut dyn MobyHost) {
         let Some(s) = self.ship else { return };
-        let building = self.candidate.is_some() && self.locked.is_none();
-        if building {
-            if self.lock_sound < 0 || !host.sound_playing(self.lock_sound) { self.lock_sound = host.play_sound_of(&w.mobys[s], SHIP_CLASS, 9, 4); }
-        } else if 0 <= self.lock_sound {
-            host.stop_sound(self.lock_sound);
-            self.lock_sound = -1;
-        }
+        // `0x437258`: the candidate's beep (8) once; locked, the lock's loop (9) kept playing and its marker turning;
+        // none, both reset.
         if self.locked.is_some() {
+            self.lock_spin += DEG;
+            if self.lock_sound < 0 || !host.sound_playing(self.lock_sound) { self.lock_sound = host.play_sound_of(&w.mobys[s], SHIP_CLASS, 9, 4); }
+        } else if self.candidate.is_some() {
             if !self.lock_heard { host.play_sound_of(&w.mobys[s], SHIP_CLASS, 8, 0); }
             self.lock_heard = true;
         } else {
+            if 0 <= self.lock_sound { host.stop_sound(self.lock_sound); }
+            self.lock_sound = -1;
             self.lock_heard = false;
         }
     }
