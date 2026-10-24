@@ -713,10 +713,17 @@ fn tick(
         if std::env::var("RC_SPACE_CLEAR").is_ok_and(|v| v.split(',').any(|t| t.trim().parse::<u64>() == Ok(p.ticks))) {
             rc_game::moby::classes::space::clear_all(&mut mobys.world);
         }
+        let heard = listener(&p.camera);
         if let Some(f) = p.ship.as_mut() {
-            let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, sound: None };
+            let sound = audio.as_deref_mut().map(|o| crate::mobys::HostSound { system: o.system(), listener: heard, tick: p.ticks, loops: &mut mobys.loop_slots });
+            let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, sound };
             let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-            f.tick(&p.pad, &mut mobys.world, &host, Some(coll), scene.as_ref());
+            f.tick(&p.pad, &mut mobys.world, &mut host, Some(coll), scene.as_ref());
+            // `0x307d80`: the mission's help texts.
+            if let Some((text, slot)) = f.help.take() {
+                let shown = p.game.help(text, slot);
+                if text == 0xa16 && (shown || p.game.help_state != 0) { f.opening_shown = true; }
+            }
             cam.view = Some((f.pos, f.rows));
             // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it.
             if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }

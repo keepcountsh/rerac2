@@ -57,8 +57,9 @@ pub const PASSIVE: usize = 0x100;
 pub const ACTIVE_COUNT: usize = 0x104;
 /// The group that may start attacks this tick (`0x2258c0[$gp−0x2a94]`, the class).
 pub const LEADER: usize = 0x108;
-/// The gun's wait (`+0x1b8`).
+/// The gun's wait (`+0x1b8`); the engine loop's handle + 1.
 const GUN: usize = 0x1b8;
+const ENGINE: usize = 0x1fc;
 
 /// The AI block's words.
 mod a {
@@ -322,6 +323,8 @@ fn hits(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let Some(h) = w.hit_message(id) else { return };
     w.clear_hit(id);
     if h.tmpl.flags & 0x0023_0000 == 0 { return; }
+    // `0x36cc38(2, 0, m, 0x957)`.
+    ctx.host.play_sound_of(&w.mobys[id], FIGHTER, 2, 0);
     let hp = (w.mobys[id].pv_f(HEALTH) - h.tmpl.damage).max(0.0);
     w.mobys[id].set_pv_f(HEALTH, hp);
     if hp <= 0.0 {
@@ -374,6 +377,8 @@ fn fire(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let from = w.mobys[id].pos;
     crate::ship::spawn_enemy_shot(w, &*ctx.host, from, at, t, sp.shot);
     w.mobys[id].set_pv_i(GUN, sp.wait);
+    // `0x36cc38(0, 0, m, class)` one shot in three.
+    if ctx.game.rng.randi(3) == 0 { let c = w.mobys[id].o_class; ctx.host.play_sound_of(&w.mobys[id], c, 0, 0); }
 }
 
 /// `0x3769a0` / `0x3767e8`: the attack's start (not attacking, fewer than 4 attacking, not in a formation or
@@ -476,7 +481,18 @@ pub fn update_fighter(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if ai_i(w, id, a::ACTIVE) != 1 { return; }
     think(w, id, ctx);
     hits(w, id, ctx);
-    if ai_i(w, id, a::ACTIVE) != 1 { return; }
+    if ai_i(w, id, a::ACTIVE) != 1 {
+        let h = w.mobys[id].pv_i(ENGINE) - 1;
+        if 0 <= h { ctx.host.stop_sound(h); w.mobys[id].set_pv_i(ENGINE, 0); }
+        return;
+    }
+    // The engine's loop (`0x36cc38(3, 6, m, 0x957)` / `(1, 6, m, 0x97c)`, `+0x1bc` / `+0x2f0`).
+    let h = w.mobys[id].pv_i(ENGINE) - 1;
+    if h < 0 || !ctx.host.sound_playing(h) {
+        let (c, i) = if w.mobys[id].o_class == GUNSHIP { (GUNSHIP, 1) } else { (FIGHTER, 3) };
+        let n = ctx.host.play_sound_of(&w.mobys[id], c, i, 4);
+        w.mobys[id].set_pv_i(ENGINE, n + 1);
+    }
     range(w, id, ctx);
     fire(w, id, ctx);
     maybe_attack(w, id, ctx);
@@ -534,6 +550,9 @@ pub fn update_pickup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             m.pos = add(m.pos, set_len(sub(to, m.pos), v));
         }
         if d < 0.5 {
+            // `0x36cc38(0xc, 0, m, 0xfbf)`; the bolts' first one's help (`0x307d80(0xa3b, 0x92)`).
+            ctx.host.play_sound_of(&w.mobys[id], crate::ship::SHIP_CLASS, 0xc, 0);
+            if class == BOLT_PICKUP && !ctx.game.bolt_help_done { ctx.game.bolt_help_done = ctx.game.help(0xa3b, 0x92); }
             if class == SHIELD_PICKUP {
                 let add = if ctx.game.rng.randi(4) != 0 { 0x21 } else { crate::ship::SHIELD_MAX };
                 let n = w.mobys[s].pv_i(crate::ship::SHIELD_ADD) + add;
@@ -634,6 +653,11 @@ pub fn update_asteroid(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let p = w.mobys[id].pos;
     let out = p.iter().any(|&c| !(2.0..=1021.0).contains(&c));
     if let Some((dir, ram)) = push {
+        // `0x36cc38(7, 0, m, 0xfbf)` for the ram; the break's own (`0x36cc38(0, 0, m, class)`: 0x956's for the big
+        // ones, 0x954 / 0x955 their own).
+        if ram { ctx.host.play_sound_of(&w.mobys[id], crate::ship::SHIP_CLASS, 7, 0); }
+        let own = if 5.0 <= AST_SIZE[k] { Some(0x0956) } else if matches!(class, 0x0954 | 0x0955) { Some(class) } else { None };
+        if let Some(c) = own { ctx.host.play_sound_of(&w.mobys[id], c, 0, 0); }
         let along = scale(dir, 24.0 / 60.0 * if ram { 3.0 } else { 1.0 });
         let half = AST_SIZE[k] * 0.5;
         let jitter = |g: &mut crate::rng::Rng| [p[0] + g.randf(-half, half), p[1] + g.randf(-half, half), p[2] + g.randf(-half, half)];

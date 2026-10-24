@@ -115,6 +115,19 @@ pub struct Flight {
     pub restart: bool,
     /// The ram's wait (the camera record's `+0x58`, 15 ticks).
     ram_wait: i32,
+    /// The sounds' handles: the engine's hum (the ship's `+0xc`), the boost's loop, the lock's loop (`+0x270`), the
+    /// lock heard (`+0x26c`).
+    hum: i32,
+    boost_sound: i32,
+    lock_sound: i32,
+    lock_heard: bool,
+    hits_heard: u32,
+    hit_sound: bool,
+    /// The opening help shown; the closing one asked.
+    pub opening_shown: bool,
+    closing_asked: bool,
+    /// The help texts the mission asks for (`0x307d80(text, slot)`, the engine's [`crate::game::GameState::help`]).
+    pub help: Option<(i32, i32)>,
     /// The fight's sphere (its centre and radius), for the camera's clamp.
     pub arena: Option<(V3, f32)>,
     /// The mission (0x0eee, [`Flight::mission`]): its state (1 fighting, 3 the cut), the quiet start's ticks, the
@@ -227,6 +240,15 @@ impl Flight {
             dying: 0,
             restart: false,
             ram_wait: 0,
+            hum: -1,
+            boost_sound: -1,
+            lock_sound: -1,
+            lock_heard: false,
+            hits_heard: 0,
+            hit_sound: false,
+            opening_shown: false,
+            closing_asked: false,
+            help: None,
             arena: None,
             mission_state: 0,
             quiet: 0,
@@ -257,9 +279,11 @@ impl Flight {
     }
 
     /// `0x434670`, mode 0; the ship's parts made on the first tick (0x0fbf's start) and moved with it.
-    pub fn tick(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost, coll: Option<&rc_formats::collision::Collision>, scene: Option<&crate::collision::mobys::MobyScene>) {
-        if self.ship.is_some() && self.parts.is_empty() { self.make_parts(w, host); }
+    pub fn tick(&mut self, pad: &PadState, w: &mut MobyWorld, host: &mut dyn MobyHost, coll: Option<&rc_formats::collision::Collision>, scene: Option<&crate::collision::mobys::MobyScene>) {
+        if self.ship.is_some() && self.parts.is_empty() { self.make_parts(w, &*host); }
+        self.engine_hum(w, host);
         self.take_hits(w);
+        if let (true, Some(s)) = (self.hit_sound, self.ship) { host.play_sound_of(&w.mobys[s], SHIP_CLASS, 0xe, 0); }
         if self.mode == 6 { return self.dying(w); }
         self.mission(w);
         if !self.cut() { return; }
@@ -271,9 +295,10 @@ impl Flight {
         self.place_ship(w);
         if let Some(from) = before { self.collide(w, coll, scene, from); }
         if self.mode == 6 { return; }
-        self.follow(w, host);
+        self.follow(w, &*host);
         self.fire(pad, w, host);
         self.lock(w, TAN);
+        self.lock_sounds(w, host);
         self.fire_missile(pad, w, host);
         // The boost's ramp in the ship's `+0x34` (its flame's, [`draw_flame`]).
         if let Some(ship) = self.ship { w.mobys[ship].set_pv_i(0x34, self.boost); }
@@ -283,6 +308,7 @@ impl Flight {
     /// `0x375e78(1)` for each shot that hit: the shield first, then the hull; at 0 the death (`0x434ad0`: mode 6,
     /// the ship gone, 60 ticks).
     fn take_hits(&mut self, w: &mut MobyWorld) {
+        self.hit_sound = false;
         let Some(ship) = self.ship else { return };
         let add = w.mobys[ship].pv_i(SHIELD_ADD);
         if add != 0 {
@@ -293,6 +319,9 @@ impl Flight {
         let n = w.mobys[ship].pv_i(HITS);
         if n == 0 { return; }
         w.mobys[ship].set_pv_i(HITS, 0);
+        // `0x375410`: one hit in six is heard (`0x36cc38(0xe, 0, ship, 0xfbf)`).
+        self.hits_heard = self.hits_heard.wrapping_add(1);
+        if self.hits_heard % 6 == 1 { self.hit_sound = true; }
         if self.mode == 6 { return; }
         self.damage(w, n);
     }
@@ -330,24 +359,35 @@ impl Flight {
     }
 
     /// `0x436440`'s lasers and boost.
-    fn fire(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
+    fn fire(&mut self, pad: &PadState, w: &mut MobyWorld, host: &mut dyn MobyHost) {
         if self.roll_dir != 0 && self.frame & 1 != 0 { return; }
         let square = pad.held & button::SQUARE != 0;
         if self.fuel == 0 || !square {
             countdown(&mut self.boost);
             if self.boost == 0 && self.frame % 3 == 0 && !square { self.fuel = (self.fuel + 1).min(k::FUEL); }
+            // `0x36c890`: the boost's loop stops.
+            if 0 <= self.boost_sound {
+                host.stop_sound(self.boost_sound);
+                self.boost_sound = -1;
+            }
         } else {
             self.boost = (self.boost + 1).min(8);
             countdown(&mut self.fuel);
+            // `0x36cc38(0x11, 4, ship, 0xfbf)`: its loop while it burns.
+            if let Some(s) = self.ship {
+                if self.boost_sound < 0 || !host.sound_playing(self.boost_sound) { self.boost_sound = host.play_sound_of(&w.mobys[s], SHIP_CLASS, 0x11, 4); }
+            }
         }
         let Some(ship) = self.ship else { return };
         if dec_timer(&mut self.gun_wait) == 0 || pad.held & button::CROSS == 0 { return; }
         self.gun_wait = laser::WAIT;
         let target = add(self.pos, set_len(sub(self.aim, self.pos), laser::AIM));
         let (pos, rows) = (w.mobys[ship].pos, w.mobys[ship].rows);
+        // `0x36cb90(3, 0, ship)`: the volley's sound.
+        host.play_sound(&w.mobys[ship], 3, 0);
         for gun in laser::GUNS {
             let at = add(pos, through(&rows, gun));
-            spawn_laser(w, host, at, sub(target, at), rows, ship);
+            spawn_laser(w, &*host, at, sub(target, at), rows, ship);
         }
     }
 
@@ -597,6 +637,8 @@ pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let r = w.mobys[id].pv_f(0x3c) + w.mobys[id].pv_f(0x40);
     w.mobys[id].set_pv_f(0x3c, r);
     if ctx.coll.and_then(|c| crate::collision::coll_line_m(c, ctx.scene, from, to, crate::collision::QueryFlags(0), ctx.hero_moby)).is_some() {
+        // `0x36cc38(7, 0, laser, 0xfbf)`.
+        ctx.host.play_sound_of(&w.mobys[id], SHIP_CLASS, 7, 0);
         return w.delete(id);
     }
     let owner = w.mobys[id].pv_i(4) - 1;
@@ -616,6 +658,7 @@ pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let tmpl = HitTemplate::new(1.0, Some(id), 0x0011_0000, [d[0], d[1], d[2], 0.0]);
         let p = w.mobys[t].pos;
         w.deliver_hit(t, &tmpl, [p[0], p[1], p[2], 1.0]);
+        ctx.host.play_sound_of(&w.mobys[id], SHIP_CLASS, 7, 0);
         return w.delete(id);
     }
     w.register_draw(id);
@@ -886,6 +929,8 @@ impl Flight {
             self.wave_wait = mission::WAVE_WAIT;
         }
         countdown(&mut self.quiet);
+        // `0x307d80(0xa16, 0x6d)`: the fight's opening help (asked until shown).
+        if !self.opening_shown { self.help = Some((0xa16, 0x6d)); }
         let mut passive = self.quiet != 0;
         let active = crate::moby::classes::space::active_count(w);
         if self.mission_state == 3 {
@@ -913,6 +958,10 @@ impl Flight {
                 }
             } else if countdown(&mut self.wave_wait) {
                 self.done = true;
+            } else if !self.closing_asked {
+                // `0x307d80(0xa36, 0x8d)`: the win's.
+                self.help = Some((0xa36, 0x8d));
+                self.closing_asked = true;
             }
         }
         w.mobys[mid].set_pv_i(crate::moby::classes::space::PASSIVE, passive as i32);
@@ -1053,13 +1102,15 @@ impl Flight {
 
     /// `0x436440`'s missiles (○, slot 1): with ammo every 90 ticks one from just under the ship (0, 0, −0.1 in its
     /// frame) along its facing, at the lock (`0x3caae8`).
-    fn fire_missile(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
+    fn fire_missile(&mut self, pad: &PadState, w: &mut MobyWorld, host: &mut dyn MobyHost) {
         let fired = dec_timer(&mut self.missile_wait) != 0 && pad.held & button::CIRCLE != 0 && 0 < self.missiles;
         if !fired { return; }
         let Some(ship) = self.ship else { return };
         if w.class(MISSILE_CLASS).is_none() { return; }
         self.missiles -= 1;
         self.missile_wait = missile::WAIT;
+        // `0x36cb90(2, 0, ship)`.
+        host.play_sound(&w.mobys[ship], 2, 0);
         let (pos, rows) = (w.mobys[ship].pos, w.mobys[ship].rows);
         let at = add(pos, through(&rows, [0.0, 0.0, -0.1]));
         let speed = missile::SPEED / 60.0;
@@ -1081,7 +1132,36 @@ impl Flight {
         m.set_pv_f(0x1c, 1.0 / ticks as f32);
         m.set_pv_i(0x20, ship as i32 + 1);
         m.set_pv_f(0x30, base);
-        w.rebuild(id, host);
+        w.rebuild(id, &*host);
+    }
+
+    /// `0x4112e8`'s tick: the engine's hum (`0x36cb90(0, 4, ship)`, kept going: the ship's `+0xc`).
+    fn engine_hum(&mut self, w: &MobyWorld, host: &mut dyn MobyHost) {
+        let Some(s) = self.ship else { return };
+        if self.mode == 6 {
+            if 0 <= self.hum { host.stop_sound(self.hum); self.hum = -1; }
+            return;
+        }
+        if self.hum < 0 || !host.sound_playing(self.hum) { self.hum = host.play_sound(&w.mobys[s], 0, 4); }
+    }
+
+    /// `0x437258`'s sounds: while a lock builds its loop (`0x36cc38(9, 4, ship, 0xfbf)`, `+0x270`); once locked the
+    /// lock's (8, once, `+0x26c`).
+    fn lock_sounds(&mut self, w: &MobyWorld, host: &mut dyn MobyHost) {
+        let Some(s) = self.ship else { return };
+        let building = self.candidate.is_some() && self.locked.is_none();
+        if building {
+            if self.lock_sound < 0 || !host.sound_playing(self.lock_sound) { self.lock_sound = host.play_sound_of(&w.mobys[s], SHIP_CLASS, 9, 4); }
+        } else if 0 <= self.lock_sound {
+            host.stop_sound(self.lock_sound);
+            self.lock_sound = -1;
+        }
+        if self.locked.is_some() {
+            if !self.lock_heard { host.play_sound_of(&w.mobys[s], SHIP_CLASS, 8, 0); }
+            self.lock_heard = true;
+        } else {
+            self.lock_heard = false;
+        }
     }
 }
 
@@ -1121,6 +1201,7 @@ pub fn update_missile(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             w.deliver_hit_any(t, &tmpl, [p[0], p[1], p[2], 1.0]);
         }
         crate::moby::blast::burst(ctx, h.point, &crate::moby::blast::Blast { size: 0.3, bursts: [0x14, 0x0a, 0x0a], puffs: 0x0a, streaks: 0x10 });
+        ctx.host.play_sound_of(&w.mobys[id], SHIP_CLASS, 7, 0);
         return w.delete(id);
     }
     w.rebuild(id, &*ctx.host);
