@@ -704,6 +704,10 @@ fn tick(
             let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, sound: None };
             f.tick(&p.pad, &mut mobys.world, &host);
             cam.view = Some((f.pos, f.rows));
+            // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it.
+            if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }
+            // `0x2c63f0`: the ship's death starts the fight again.
+            if f.restart && p.game.next_level.is_none() { p.game.go_to_level(p.game.level, false); }
             // The mobys' distances, the sounds and the draw callbacks go by this camera next tick.
             (p.camera.pos, p.camera.rows) = (f.pos, f.rows);
         }

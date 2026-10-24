@@ -33,6 +33,10 @@
 //! spinning star) is drawn here as an additive streak. Not ported: the shots' sounds (`0x36cb90`), the burst of the
 //! end (`0x4134b0`), an enemy's shots hitting the ship.
 //!
+//! **The hits** (`0x375e78`): each takes 1 from the shield (34), then from the hull (100); the hull at 0 is the
+//! death (`0x434ad0`, mode 6: the ship gone, the camera drifting back 0.133 a tick for 60 ticks, then `0x2c63f0`,
+//! here the level again). Not ported: the shield's upgrades, the half damage of `0x4380b8`, the burst.
+//!
 //! **The boost** (`0x436440`, □; the weapon slot 7 of `0x29c300`, 0x28 each: `+0` had, `+0x10` the most fuel 600,
 //! `+0x14` the fuel): held with fuel, the ship's `+0x34` counts up to 8 and the fuel down by 1 a tick; else `+0x34`
 //! counts down, and at 0 with □ up the fuel comes back by 1 every third frame. With `+0x34` the move (`0x435a18`)
@@ -93,6 +97,13 @@ pub struct Flight {
     /// The ship's `+0x34` (the boost's ramp, 0..8) and the boost's fuel (slot 7's `+0x14`).
     boost: i32,
     fuel: i32,
+    /// `0x221828` the hull (100), the shield (the weapon slot 6's `+0x14`, 34); `$gp+0x2634` the death's ticks; the
+    /// camera's place at the death (`0x1b3100`).
+    pub hull: i32,
+    pub shield: i32,
+    dying: i32,
+    /// The death is over: the fight starts again (`0x2c63f0`, the engine's).
+    pub restart: bool,
     /// `$gp+0x2630`.
     pub mode: i32,
     /// `$gp+0x2684` / `+0x2688`: the d-pad's yaw and pitch ramps (0.1 a tick to 1).
@@ -140,6 +151,10 @@ mod k {
     pub const BOOST_K: f32 = 0.005;
     /// The boost's fuel (slot 7's `+0x10`).
     pub const FUEL: i32 = 600;
+    /// The shield (slot 6's `+0x10`); `+0x25ec` the death's ticks; `0x434670`'s 0.133 back a tick.
+    pub const SHIELD: i32 = 34;
+    pub const DEATH_TICKS: i32 = 60;
+    pub const DEATH_BACK: f32 = 0.133_333_34;
     pub const SPEED_D: f32 = 0.2;
     /// `+0x25f8` the barrel roll's ticks, `+0x25fc` the wait after it.
     pub const ROLL_TICKS: i16 = 60;
@@ -179,6 +194,10 @@ impl Flight {
             frame: 0,
             boost: 0,
             fuel: k::FUEL,
+            hull: 100,
+            shield: k::SHIELD,
+            dying: 0,
+            restart: false,
             mode: 0,
             ramp_yaw: 0.0,
             ramp_pitch: 0.0,
@@ -202,6 +221,8 @@ impl Flight {
     /// `0x434670`, mode 0; the ship's parts made on the first tick (0x0fbf's start) and moved with it.
     pub fn tick(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
         if self.ship.is_some() && self.parts.is_empty() { self.make_parts(w, host); }
+        self.take_hits(w);
+        if self.mode == 6 { return self.dying(w); }
         if self.mode != 0 { return; }
         self.frame = self.frame.wrapping_add(1);
         let (pitch, yaw) = self.steer(pad);
@@ -210,6 +231,44 @@ impl Flight {
         self.place_ship(w);
         self.follow(w, host);
         self.fire(pad, w, host);
+        // The boost's ramp in the ship's `+0x34` (its flame's, [`draw_flame`]).
+        if let Some(ship) = self.ship { w.mobys[ship].set_pv_i(0x34, self.boost); }
+    }
+
+    /// `0x375e78(1)` for each shot that hit: the shield first, then the hull; at 0 the death (`0x434ad0`: mode 6,
+    /// the ship gone, 60 ticks).
+    fn take_hits(&mut self, w: &mut MobyWorld) {
+        let Some(ship) = self.ship else { return };
+        let n = w.mobys[ship].pv_i(HITS);
+        if n == 0 { return; }
+        w.mobys[ship].set_pv_i(HITS, 0);
+        if self.mode == 6 { return; }
+        for _ in 0..n {
+            if 0 < self.shield {
+                self.shield -= 1;
+                continue;
+            }
+            self.hull -= 1;
+            if self.hull < 1 {
+                self.hull = 0;
+                self.mode = 6;
+                self.dying = k::DEATH_TICKS;
+                for id in std::iter::once(ship).chain(self.parts.iter().map(|p| p.0)) {
+                    let m = &mut w.mobys[id];
+                    m.draw_dist = 0;
+                    m.drawn = 0;
+                }
+                w.changed = true;
+                return;
+            }
+        }
+    }
+
+    /// `0x434670` mode 6: the camera drifts back (`0x434bf0`) until the death's ticks run out.
+    fn dying(&mut self, _w: &mut MobyWorld) {
+        self.pos = sub(self.pos, scale(self.rows[0], k::DEATH_BACK));
+        self.dying -= 1;
+        if self.dying <= 0 { self.restart = true; }
     }
 
     /// `0x436440`'s lasers and boost.
@@ -251,6 +310,8 @@ impl Flight {
             m.draw_dist = 0xff;
             m.drawn = 1;
             m.mode |= mode::KEEP_ROWS;
+            // `+0x98` = 0: no collision.
+            m.has_collision = false;
             if class == 0x10e3 {
                 m.alpha = 0x60;
                 m.mode |= 0x8;
@@ -458,8 +519,9 @@ fn spawn_laser(w: &mut MobyWorld, host: &dyn MobyHost, at: V3, dir: V3, rows: [V
     w.rebuild(id, host);
 }
 
-/// `0x412e38`.
+/// `0x412e38` (and the fighters' shots, `+0x44`).
 pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if w.mobys[id].pv_i(0x44) != 0 { return update_enemy_shot(w, id, ctx); }
     let from = w.mobys[id].pos;
     let step = w.mobys[id].pv_v(0x10);
     let to = add(from, step);
@@ -496,12 +558,120 @@ pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// bright core and a wide faint glow in its colour.
 pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::FxQuad>) {
     let m = &w.mobys[id];
-    let step = m.pv_v(0x10);
-    let (a, b) = (sub(m.pos, scale(step, 1.5)), m.pos);
-    let rgb = m.pv_i(0x20) as u32 & 0xff_ffff;
     let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
-    for (half, c) in [(0.03, 0x7fa0_a0ffu32), (0.12, 0x6000_0000 | rgb)] {
+    // A fighter's shot (`0x378960` twice: 0.05 white, 0.1 in its colour 0x60008000, from its tail to its head).
+    let (a, b, layers) = if m.pv_i(0x44) != 0 {
+        (m.pv_v(0x50), m.pos, [(0.05, 0x807f_7f7fu32), (0.1, 0x6000_8000)])
+    } else {
+        let step = m.pv_v(0x10);
+        let rgb = m.pv_i(0x20) as u32 & 0xff_ffff;
+        (sub(m.pos, scale(step, 1.5)), m.pos, [(0.03, 0x7fa0_a0ff), (0.12, 0x6000_0000 | rgb)])
+    };
+    for (half, c) in layers {
         let side = set_len(cross(sub(b, a), sub(cam, a)), half);
         out.push(crate::fx::FxQuad { fx: 0xe, additive: true, corners: [add(a, side), sub(a, side), add(b, side), sub(b, side)], st, rgba: [c; 4] });
+    }
+}
+
+/// The ship moby's word the enemy shots add their hits to (read and cleared by [`Flight::tick`]).
+pub const HITS: usize = 0x300;
+
+/// `0x375198`'s shot from `from` toward `at` (a fighter's: the pool `0x2218c0`, 0x80 each; here a 0xffa moby with
+/// `+0x44` set): a streak 2 long (`+0x10` its step's direction, the tail `+0x50`), `+0x48` the distance flown,
+/// `+0x4c` the ship it may hit (index + 1).
+pub fn spawn_enemy_shot(w: &mut MobyWorld, host: &dyn MobyHost, from: V3, at: V3, ship: usize) {
+    if w.class(LASER_CLASS).is_none() { return; }
+    let dir = set_len(sub(at, from), 2.0);
+    let id = w.create(LASER_CLASS);
+    let m = &mut w.mobys[id];
+    m.state = 0;
+    m.update_dist = 0xff;
+    m.draw_dist = 0xff;
+    m.drawn = 1;
+    m.mode |= mode::KEEP_ROWS;
+    m.pos = add(from, dir);
+    m.set_pv_i(0x44, 1);
+    m.set_pv_v(0x10, dir);
+    m.set_pv_v(0x50, from);
+    m.set_pv_f(0x48, 0.0);
+    m.set_pv_i(0x4c, ship as i32 + 1);
+    w.rebuild(id, host);
+}
+
+/// `0x375410`'s shot: a step of 0.6..1.1 along its direction; gone after 350; within 1 of the ship a hit (1, through
+/// `0x375e78`).
+fn update_enemy_shot(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let r = ctx.game.rng.randf(1.1, 0.6);
+    let m = &mut w.mobys[id];
+    let step = set_len(m.pv_v(0x10), r);
+    m.pos = add(m.pos, step);
+    let tail = add(m.pv_v(0x50), step);
+    m.set_pv_v(0x50, tail);
+    let flown = m.pv_f(0x48) + r;
+    m.set_pv_f(0x48, flown);
+    if 350.0 <= flown { return w.delete(id); }
+    let head = m.pos;
+    if let Some(s) = usize::try_from(m.pv_i(0x4c) - 1).ok().filter(|&s| w.mobys.get(s).is_some_and(|x| x.state < 0x80 && x.draw_dist != 0)) {
+        if crate::hero::physics::dist(head, w.mobys[s].pos) < 1.0 {
+            let n = w.mobys[s].pv_i(HITS) + 1;
+            w.mobys[s].set_pv_i(HITS, n);
+            return w.delete(id);
+        }
+    }
+    w.register_draw(id);
+}
+
+/// The flame's layers (`$gp+0x1d88..+0x1dec`): (colour, first size, last size, jitter, step back, sprites), cruising and
+/// boosting.
+const FLAME: [[(u32, f32, f32, f32, f32, i32); 2]; 2] = [
+    [(0x4020_4080, 0.075, 0.02, 0.015, 0.0075, 25), (0xffff_ffff, 0.035, 0.005, 0.015, 0.005, 15)],
+    [(0x4020_5080, 0.15, 0.04, 0.03, 0.015, 30), (0xffff_ffff, 0.04, 0.01, 0.015, 0.01, 20)],
+];
+
+/// `0x302af8(t, a, b)`: the colours' bytes from `a` to `b` by `t`.
+fn lerp_rgba(t: f32, a: u32, b: u32) -> u32 {
+    (0..4).fold(0, |acc, k| {
+        let (x, y) = ((a >> (8 * k)) & 0xff, (b >> (8 * k)) & 0xff);
+        acc | (((x as f32 + (y as f32 - x as f32) * t) as u32 & 0xff) << (8 * k))
+    })
+}
+
+/// `0x411c78` (the ship's draw callback, registered by its update `0x411a80`; drawn here after the flight's tick so
+/// it sits on the ship as this tick placed it, the boost moving it 0.8 a tick): its exhaust from (−0.135, 0, 0.07) in its frame, two layers of sprites
+/// (`0x412308` → `0x300aa0`: FX 0x2e, additive, a random roll each, jittered) stepping back along its forward and
+/// shrinking, their sizes, steps and colours from the cruise's to the boost's by `+0x34` / 8. Not ported: the hull
+/// 0x10d9's three nozzles, the sparks `0x412910`, the boost's trail `0x412430`.
+pub fn draw_flame(w: &MobyWorld, id: usize, cam: V3, rng: &mut crate::rng::Rng, out: &mut Vec<crate::fx::FxQuad>) {
+    let m = &w.mobys[id];
+    if m.draw_dist == 0 { return; }
+    let t = m.pv_i(0x34) as f32 / 8.0;
+    let r = m.rows;
+    let nozzle = add(m.pos, through(&r, [-0.135, 0.0, 0.07]));
+    let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+    for layer in 0..2 {
+        let (c0, a0, b0, j0, s0, n0) = FLAME[0][layer];
+        let (c1, a1, b1, j1, s1, n1) = FLAME[1][layer];
+        let mix = |x: f32, y: f32| x + (y - x) * t;
+        let (first, last, jitter, step) = (mix(a0, a1), mix(b0, b1), mix(j0, j1), mix(s0, s1));
+        let n = (n0 as f32 + (n1 - n0) as f32 * t) as i32;
+        let rgba = lerp_rgba(t, c0, c1);
+        let back = scale(r[0], -step);
+        let mut p = nozzle;
+        for i in 0..n.max(1) {
+            let size = first + (last - first) * (i as f32 / n.max(1) as f32);
+            let roll = rng.rand_angle();
+            let q = [p[0] + rng.randf(-jitter, jitter), p[1] + rng.randf(-jitter, jitter), p[2] + rng.randf(-jitter, jitter)];
+            let f = unit(sub(cam, q));
+            let up = if f[2].abs() < 0.99 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+            let a = unit(cross(up, f));
+            let b = cross(f, a);
+            let (s, c) = roll.sin_cos();
+            let (a, b) = (add(scale(a, c), scale(b, s)), sub(scale(b, c), scale(a, s)));
+            // `0x300aa0`'s size taken as the sprite's width.
+            let h = 0.5 * size;
+            let corner = |x: f32, y: f32| add(q, add(scale(a, x * h), scale(b, y * h)));
+            out.push(crate::fx::FxQuad { fx: 0x2e, additive: true, corners: [corner(-1.0, -1.0), corner(1.0, -1.0), corner(-1.0, 1.0), corner(1.0, 1.0)], st, rgba: [rgba; 4] });
+            p = add(p, back);
+        }
     }
 }

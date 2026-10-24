@@ -28,7 +28,9 @@
 //! range; within 40.5° across and up of its facing → in the gun's cone), and the attack's start (`0x3769a0` /
 //! `0x3767e8`: not attacking while fewer than 4 attack (`0x221820`), → 4 with a timer of 120..500).
 //!
-//! Not ported: its guns (`0x3ca5a8` → the enemy shots `0x375198`), the formations (3: the leader `+0x10`'s place),
+//! Its gun (`0x3ca5a8`): in range and in the cone, every 20 ticks a shot ([`crate::ship::spawn_enemy_shot`]).
+//!
+//! Not ported: the formations (3: the leader `+0x10`'s place),
 //! the states 2, 6, 7, 8, 0xb, 0xc, 0xd, the leaders' list (`0x3750e8`: only those classes attack), the goal's and
 //! the step's collision (`0x378570`, `0x376650`'s push), the burst (`0x4184c8`) and the bolts (`0x40fbc8`), the
 //! exhaust (`0x3ca6c0`), the sounds; the waves that bring them back (the mission object 0x0eee).
@@ -43,6 +45,8 @@ pub const FIGHTER: i16 = 0x0957;
 const AI: usize = 0x200;
 const HEALTH: usize = 0x1f0;
 const STARTED: usize = 0x1f4;
+/// The gun's wait (`+0x1b8`).
+const GUN: usize = 0x1b8;
 
 /// The AI block's words.
 mod a {
@@ -256,7 +260,9 @@ fn range(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
     let Some(t) = target(w, id) else { return };
     let (p, q) = (w.mobys[id].pos, w.mobys[t].pos);
     if 176.0 < dist(p, q) { return; }
-    if ctx.coll.and_then(|c| crate::collision::coll_line_m(c, ctx.scene, p, q, crate::collision::QueryFlags(0), ctx.hero_moby)).is_some() { return; }
+    // The line clear, or ending on a moby of the target's class.
+    let hit = ctx.coll.and_then(|c| crate::collision::coll_line_m(c, ctx.scene, p, q, crate::collision::QueryFlags(0), Some(id)));
+    if hit.is_some_and(|h| h.moby.is_none_or(|m| w.mobys.get(m).is_none_or(|m| m.o_class != w.mobys[t].o_class))) { return; }
     let d = sub(q, p);
     let across = rot_dist(atan2(d[0], d[1]), ai_f(w, id, a::YAW));
     let up = rot_dist(atan2(len2(d), d[2]), 0.0);
@@ -265,6 +271,21 @@ fn range(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
 }
 
 /// `0x3769a0` / `0x3767e8`: the attack's start (not attacking, fewer than 4 attacking, not in a formation or dodging).
+/// `0x3ca5a8`: in range and in the cone with the gun ready (`+0x1b8`), a shot at the point 2 ahead of the target
+/// (`0x375198`), the gun ready again in 20 ticks.
+fn fire(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let mut wait = w.mobys[id].pv_i(GUN);
+    crate::moby::countdown(&mut wait);
+    w.mobys[id].set_pv_i(GUN, wait);
+    if wait != 0 || ai_i(w, id, a::RANGE) == 0 || ai_i(w, id, a::CONE) == 0 { return; }
+    let Some(t) = target(w, id) else { return };
+    if w.mobys[t].draw_dist == 0 { return; }
+    let at = add(w.mobys[t].pos, set_len(w.mobys[t].rows[0], 2.0));
+    let from = w.mobys[id].pos;
+    crate::ship::spawn_enemy_shot(w, &*ctx.host, from, at, t);
+    w.mobys[id].set_pv_i(GUN, 0x14);
+}
+
 fn maybe_attack(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if target(w, id).is_none() || ai_i(w, id, a::ATTACKING) == 1 || matches!(ai_i(w, id, a::STATE), 3 | 0xd) { return; }
     let attacking = w.mobys.iter().filter(|m| m.o_class == FIGHTER && m.state < 0x80 && m.pv_i(AI + a::ATTACKING) == 1).count();
@@ -283,6 +304,7 @@ pub fn update_fighter(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     hits(w, id);
     if ai_i(w, id, a::ACTIVE) != 1 { return; }
     range(w, id, ctx);
+    fire(w, id, ctx);
     maybe_attack(w, id, ctx);
     w.rebuild(id, &*ctx.host);
 }
