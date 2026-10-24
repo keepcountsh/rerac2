@@ -824,7 +824,7 @@ pub fn update_0a95(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// first row, `+0x68` · `+0x7c` a second (the mover block `+0x20`, `0x322668`: the belt's push, not the platform's
 /// slide).
 ///
-/// Not ported: its belt's draw (`0x3cac30`) and its loop sound (`+0x90`, when on screen within 255).
+/// Out, it draws its belt ([`draw_0a7b`]). Not ported: its loop sound (`+0x90`, when on screen within 255).
 pub fn update_0a7b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
     let cuboid = ctx.level.cuboid_place(w.mobys[id].pv_i(0x94)).map(|(p, _)| p);
@@ -889,8 +889,68 @@ pub fn update_0a7b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &mut w.mobys[id];
     m.timer = 0;
     if (2..=4).contains(&m.state) {
+        w.register_draw(id);
+        let m = &mut w.mobys[id];
         let push = set_len(m.rows[0], m.pv_f(0x68) * m.pv_i(0x7c) as f32 * 0.016_666_668);
         let (pos, yaw) = (m.pos, m.rot[2]);
         carry_hero(ctx, id, sub(pos, push), yaw, pos, yaw);
+    }
+}
+
+/// `0x3cac30` (0x0a7b out, registered each tick): its belt of light, five layers of strips (FX 0x3f + `+0x78`, ALPHA
+/// 0x44) behind it along its first row, scrolling with `+0x74` (down `+0x68` / 120 a frame), each edge's alpha
+/// sin(πk) × the slide `+0x70` × 102.4 (the first 0). Its scale `s` against the class's: the start 10·s back with
+/// the direction `+0x7c` 1 (else at it), stepping 2 × `+0x7c` along the row, ±2·s across. Layer 0 green
+/// (0.25, 1, 0.5), 0.02 up; 1 blue (0.25, 0.5, 1), half a texture on; 2 red, 0.04 up, three times the scroll, 0.4·s
+/// as wide and a step 0.4 as long at 0.08 a step; 3 and 4 white at 3.5 times the scroll, as 2 but 1.6·s to each side.
+pub fn draw_0a7b(w: &mut MobyWorld, id: usize, out: &mut Vec<crate::fx::FxQuad>) {
+    let class_scale = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
+    let m = &mut w.mobys[id];
+    let s = if class_scale != 0.0 { m.scale / class_scale } else { 1.0 };
+    let phase = m.pv_f(0x74) - m.pv_f(0x68) * 0.016_666_668 / 2.0;
+    m.set_pv_f(0x74, phase);
+    let (dir, slide, fx) = (m.pv_i(0x7c), m.pv_f(0x70), 0x3f + m.pv_i(0x78) as usize);
+    let (row0, row1) = (m.rows[0], m.rows[1]);
+    let mut base = m.pos;
+    if dir == 1 { base = add(base, scale(row0, s * -10.0)); }
+    let mut step_len = 2.0;
+    let mut step = 0.2;
+    let mut along = scale(row0, step_len * dir as f32);
+    let mut half = scale(row1, s * -2.0);
+    let rail = scale(row1, 2.0 * s * 0.8);
+    let rgb = |r: f32, g: f32, b: f32| (r * 255.0) as u32 | ((g * 255.0) as u32) << 8 | ((b * 255.0) as u32) << 16;
+    let frac = |x: f32| x - x.trunc();
+    for layer in 0..5 {
+        let (start, colour, v) = match layer {
+            0 => {
+                base[2] += 0.02;
+                (base, rgb(0.25, 1.0, 0.5), frac(phase))
+            }
+            1 => (base, rgb(0.25, 0.5, 1.0), frac(phase + 0.5)),
+            2 => {
+                base[2] += 0.02;
+                half = scale(half, 2.0 * s * 0.2);
+                step_len *= 0.4;
+                step *= 0.4;
+                along = scale(row0, step_len * dir as f32);
+                (base, rgb(1.0, 0.0, 0.0), frac(phase * 3.0))
+            }
+            3 => (add(base, rail), rgb(1.0, 1.0, 1.0), frac(phase * 3.5)),
+            _ => (sub(base, rail), rgb(1.0, 1.0, 1.0), frac(phase * 3.5)),
+        };
+        let st = [[0.0, v], [1.0, v], [0.0, v + 1.0], [1.0, v + 1.0]];
+        let mut e = start;
+        let mut prev = (sub(e, half), add(e, half), colour);
+        e = add(e, along);
+        let mut k = step;
+        while k < 1.0 {
+            let a = ((k * PI).sin() * slide * 102.4) as i32 as u32;
+            let c = (colour & 0xff_ffff) | a << 24;
+            let (l, r) = (sub(e, half), add(e, half));
+            e = add(e, along);
+            out.push(crate::fx::FxQuad { fx, additive: false, corners: [prev.0, prev.1, l, r], st, rgba: [prev.2, prev.2, c, c] });
+            prev = (l, r, c);
+            k += step;
+        }
     }
 }
