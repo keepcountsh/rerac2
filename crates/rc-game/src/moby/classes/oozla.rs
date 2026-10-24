@@ -20,7 +20,8 @@
 use crate::hero::physics::{add, add_rot, approach, dist2, scale, set_len, sub, sub_rot, V3};
 use crate::moby::ai;
 use crate::moby::attach::rows_of;
-use crate::moby::{carry_hero, Ctx, MobyWorld};
+use crate::moby::hits::HitTemplate;
+use crate::moby::{carry_hero, mode, Ctx, MobyWorld};
 use std::f32::consts::PI;
 
 /// 0x08fb.
@@ -1285,4 +1286,106 @@ pub fn update_0aae(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         ctx.game.cam_tweaks.release(held as usize);
         w.mobys[id].set_pv_i(0x34, 0);
     }
+}
+
+/// 0x0a1e (`0x3bd370`, Oozla's snapping flower): open (1, sequence 0) until Ratchet lands on it (his ground moby,
+/// grounded), then (2, sequence 1) `+0x50` seconds (`+0x60`; not while its rest `+0x70` runs) before it snaps (3,
+/// sequence 2 at 1.2 times). As its frame passes 4 it is a target (mode 0x1000); Ratchet still on it and under half a
+/// unit above it is caught (4, `+0x68`, its collision off): held in 0x6f, pulled 1/15 a tick toward 2 over it, still.
+/// As the frame passes 46 the caught one is bitten — under 2 health dead (`0x2b31f0`), else hit for `+0x34` (`0x31d128`
+/// / `0x31d378`) — and let go, a rest of 120 ticks; its sequence over, open again (1). It is never hit itself (`+0xa8`
+/// −1).
+///
+/// Not ported: the pad's rumbles (`0x2cc438`), the snap's sound, the hold's camera (`0x2c7c68`).
+pub fn update_0a1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let class_scale = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
+    let frame = ctx.host.frame_time(&w.mobys[id]);
+    let seq = super::props::seq(w, id, ctx);
+    let on = ctx.hero.ground_moby == Some(id);
+    match w.mobys[id].state {
+        0 => {
+            let m = &mut w.mobys[id];
+            m.set_state(1, -1);
+            m.coll_disable = 3;
+            m.mode &= !mode::TARGET;
+            if seq != 0 { ctx.host.set_anim(&w.mobys[id], 0, 0, 2); }
+        }
+        1 => {
+            if on && ctx.hero.grounded_ticks != 0 {
+                let m = &mut w.mobys[id];
+                m.set_state(2, -1);
+                m.set_pv_i(0x60, (m.pv_f(0x50) * 60.0) as i32);
+                if seq != 1 { ctx.host.set_anim(&w.mobys[id], 1, 0, 10); }
+            }
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            let mut rest = m.pv_i(0x70);
+            let rested = crate::moby::countdown(&mut rest);
+            m.set_pv_i(0x70, rest);
+            if rested {
+                let mut t = m.pv_i(0x60);
+                let snap = crate::moby::countdown(&mut t);
+                m.set_pv_i(0x60, t);
+                if snap {
+                    m.set_state(3, -1);
+                    if seq != 2 { ctx.host.set_anim(&w.mobys[id], 2, 0, 6); }
+                    ctx.host.set_anim_speed(&w.mobys[id], 1.2);
+                }
+            }
+        }
+        3 => {
+            let m = &mut w.mobys[id];
+            if m.pv_f(0x74) < 4.0 && 4.0 < frame {
+                m.mode |= mode::TARGET;
+                m.set_pv_i(0x64, 600);
+                if on && ctx.hero.height < 0.5 {
+                    m.set_pv_i(0x68, 1);
+                    m.coll_disable = u32::MAX;
+                } else {
+                    m.coll_disable = 0x8000_0000;
+                }
+                m.set_state(4, -1);
+            }
+        }
+        4 => {
+            let caught = w.mobys[id].pv_i(0x68) != 0;
+            if w.mobys[id].pv_f(0x74) < 46.0 && 46.0 < frame {
+                if caught {
+                    if ctx.hero.hp < 2 {
+                        ctx.hero.die();
+                    } else if let Some(h) = ctx.hero_moby {
+                        let dmg = w.mobys[id].pv_b(0x34) as f32;
+                        let t = HitTemplate::new(dmg, Some(id), 1, [0.0, 0.0, 0.0, 5_627.987]);
+                        let p = w.mobys[id].pos;
+                        w.deliver_hit_any(h, &t, [p[0], p[1], p[2], 1.0]);
+                    }
+                    let m = &mut w.mobys[id];
+                    m.set_pv_i(0x68, 0);
+                    m.set_pv_i(0x70, 0x78);
+                }
+                let m = &mut w.mobys[id];
+                m.coll_disable = 3;
+                m.mode &= !mode::TARGET;
+            }
+            if super::props::wrapped(w, id, ctx) {
+                w.mobys[id].set_state(1, -1);
+                if seq != 0 { ctx.host.set_anim(&w.mobys[id], 0, 0, 10); }
+            } else if w.mobys[id].pv_i(0x68) != 0 {
+                if ctx.hero.state != 0x6f { ctx.hero.request_state(0x6f, true); }
+                let p = w.mobys[id].pos;
+                let to = [p[0], p[1], p[2] + 2.0];
+                let h = &mut ctx.hero;
+                h.pos = add(h.pos, scale(sub(to, h.pos), 0.066_666_67));
+                (h.vel, h.disp, h.eff, h.eff_v) = ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+                let m = &mut w.mobys[id];
+                m.set_pv_i(0x64, m.pv_i(0x64).min(0x3c));
+            }
+        }
+        _ => {}
+    }
+    let m = &mut w.mobys[id];
+    m.hit_slot = -1;
+    m.scale = class_scale;
+    m.set_pv_f(0x74, frame);
 }
