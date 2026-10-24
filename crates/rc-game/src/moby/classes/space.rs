@@ -271,18 +271,21 @@ fn think(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             }
             None => end_attack(w, id),
         },
-        // 8: round the target in the view's plane (`$gp` camera's rows: here the target ship's, the camera's own),
-        // 0.75° a tick, facing along the circle; its timer out → the attack's end.
+        // 8: round the target in the plane across the camera's up (`0x1b91d0`'s `+0x20`: the frame (x × up, up × that,
+        // up); here the target ship's up, the camera's own), 0.75° a tick, facing along the circle; its timer out →
+        // the attack's end.
         8 => match target(w, id) {
             Some(t) => {
                 let (tp, tr) = (w.mobys[t].pos, w.mobys[t].rows);
                 let (ang, dir, r) = (ai_f(w, id, a::CIRCLE_ANGLE), ai_f(w, id, a::CIRCLE_DIR), ai_f(w, id, a::CIRCLE_RADIUS));
                 let (s, co) = ang.sin_cos();
-                let off = add(scale(tr[1], s * r), scale(tr[2], -co * r));
+                let up = tr[2];
+                let r1 = crate::hero::physics::unit(crate::hero::physics::cross([1.0, 0.0, 0.0], up));
+                let r0 = crate::hero::physics::cross(up, r1);
+                let off = add(scale(r0, s * r), scale(r1, -co * r));
                 w.mobys[id].pos = add(tp, off);
-                let fwd = crate::hero::physics::unit(scale(add(scale(tr[1], co), scale(tr[2], s)), dir));
-                let up = crate::hero::physics::unit(off);
-                let left = crate::hero::physics::cross(up, fwd);
+                let fwd = crate::hero::physics::unit(scale(add(scale(r0, co), scale(r1, s)), dir));
+                let left = crate::hero::physics::unit(crate::hero::physics::cross(up, fwd));
                 w.mobys[id].rows = [fwd, left, crate::hero::physics::cross(fwd, left)];
                 set_ai_f(w, id, a::CIRCLE_ANGLE, crate::hero::physics::add_rot(ang, dir * 0.013_089_972));
                 if arrived(w, id) { end_attack(w, id); }
