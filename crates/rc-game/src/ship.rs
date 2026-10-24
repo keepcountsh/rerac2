@@ -618,7 +618,7 @@ pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::Fx
     let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
     // A fighter's shot (`0x378960` twice: 0.05 white, 0.1 in its colour 0x60008000, from its tail to its head).
     let (a, b, layers) = if m.pv_i(0x44) != 0 {
-        (m.pv_v(0x50), m.pos, [(0.05, 0x807f_7f7fu32), (0.1, 0x6000_8000)])
+        (m.pv_v(0x50), m.pos, [(0.05, 0x807f_7f7fu32), (0.1, m.pv_i(0x68) as u32)])
     } else {
         let step = m.pv_v(0x10);
         let rgb = m.pv_i(0x20) as u32 & 0xff_ffff;
@@ -641,7 +641,8 @@ pub const SHIELD_MAX: i32 = k::SHIELD;
 /// `0x375198`'s shot from `from` toward `at` (a fighter's: the pool `0x2218c0`, 0x80 each; here a 0xffa moby with
 /// `+0x44` set): a streak 2 long (`+0x10` its step's direction, the tail `+0x50`), `+0x48` the distance flown,
 /// `+0x4c` the ship it may hit (index + 1).
-pub fn spawn_enemy_shot(w: &mut MobyWorld, host: &dyn MobyHost, from: V3, at: V3, ship: usize) {
+/// `shot`: its hit radius (`+0x68`), speed (`+0x70`) and colour (`+0x5c`), kept here in `+0x60` / `+0x64` / `+0x68`.
+pub fn spawn_enemy_shot(w: &mut MobyWorld, host: &dyn MobyHost, from: V3, at: V3, ship: usize, shot: (f32, f32, u32)) {
     if w.class(LASER_CLASS).is_none() { return; }
     let dir = set_len(sub(at, from), 2.0);
     let id = w.create(LASER_CLASS);
@@ -657,6 +658,9 @@ pub fn spawn_enemy_shot(w: &mut MobyWorld, host: &dyn MobyHost, from: V3, at: V3
     m.set_pv_v(0x50, from);
     m.set_pv_f(0x48, 0.0);
     m.set_pv_i(0x4c, ship as i32 + 1);
+    m.set_pv_f(0x60, shot.0);
+    m.set_pv_f(0x64, shot.1);
+    m.set_pv_i(0x68, shot.2 as i32);
     w.rebuild(id, host);
 }
 
@@ -665,7 +669,7 @@ pub fn spawn_enemy_shot(w: &mut MobyWorld, host: &dyn MobyHost, from: V3, at: V3
 fn update_enemy_shot(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     // The quiet (`0x22182c`) takes the shots away.
     if w.mobys.iter().any(|m| m.o_class == MISSION_CLASS && m.state < 0x80 && m.pv_i(crate::moby::classes::space::PASSIVE) != 0) { return w.delete(id); }
-    let r = ctx.game.rng.randf(1.1, 0.6);
+    let r = ctx.game.rng.randf(1.1, 0.6) * w.mobys[id].pv_f(0x64);
     let m = &mut w.mobys[id];
     let step = set_len(m.pv_v(0x10), r);
     m.pos = add(m.pos, step);
@@ -676,7 +680,7 @@ fn update_enemy_shot(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if 350.0 <= flown { return w.delete(id); }
     let head = m.pos;
     if let Some(s) = usize::try_from(m.pv_i(0x4c) - 1).ok().filter(|&s| w.mobys.get(s).is_some_and(|x| x.state < 0x80 && x.draw_dist != 0)) {
-        if crate::hero::physics::dist(head, w.mobys[s].pos) < 1.0 {
+        if crate::hero::physics::dist(head, w.mobys[s].pos) < w.mobys[id].pv_f(0x60) {
             let n = w.mobys[s].pv_i(HITS) + 1;
             w.mobys[s].set_pv_i(HITS, n);
             return w.delete(id);
@@ -903,6 +907,8 @@ impl Flight {
         }
         w.mobys[mid].set_pv_i(crate::moby::classes::space::PASSIVE, passive as i32);
         w.mobys[mid].set_pv_i(crate::moby::classes::space::ACTIVE_COUNT, active as i32);
+        let lead = crate::moby::classes::space::leader(w, self.frame);
+        w.mobys[mid].set_pv_i(crate::moby::classes::space::LEADER, lead);
     }
 
     /// `0x434670`'s modes 1..5: the fades of the cut (`$gp+0x2a70`, 0.05 a tick). 1 flying while the screen goes
