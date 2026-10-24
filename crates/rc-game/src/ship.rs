@@ -115,6 +115,11 @@ pub struct Flight {
     pub restart: bool,
     /// The ram's wait (the camera record's `+0x58`, 15 ticks).
     ram_wait: i32,
+    /// The straightening (D `+0x6e` its state, `+0x6c` its ticks, `+0x70` 1 / them; running).
+    level_state: u8,
+    level_ticks: i16,
+    level_inv: f32,
+    levelling: bool,
     /// The sounds' handles: the engine's hum (the ship's `+0xc`), the boost's loop, the lock's loop (`+0x270`), the
     /// lock heard (`+0x26c`).
     hum: i32,
@@ -250,6 +255,10 @@ impl Flight {
             dying: 0,
             restart: false,
             ram_wait: 0,
+            level_state: 0,
+            level_ticks: 0,
+            level_inv: 0.0,
+            levelling: false,
             hum: -1,
             boost_sound: -1,
             lock_sound: -1,
@@ -511,6 +520,13 @@ impl Flight {
         }
         let sq = |v: f32| if v < 0.0 { -(v * v) } else { v * v };
         let (y, p) = (sq(y), sq(p));
+        // `0x435190`'s straighten state (D `+0x6e`): 1 once steered, 2 asked by L2 / R2 with the nose within 0.7 of
+        // level; `0x4356c8` levels the ship.
+        if self.level_state == 0 && (y != 0.0 || p != 0.0) { self.level_state = 1; }
+        if self.level_state < 2 && pad.pressed & (button::L2 | button::R2) != 0 && dot([0.0, 0.0, 1.0], self.rows[0]).abs() < 0.7 {
+            self.level_state = 2;
+        }
+        self.straighten();
         let pitch_t = -p * DEG * k::PITCH.3;
         let yaw_t = y * DEG * k::YAW.3;
         self.pitch = spring(self.pitch, pitch_t, k::PITCH.0, k::PITCH.1, k::PITCH.2, &mut self.pitch_v);
@@ -529,6 +545,38 @@ impl Flight {
             dec_timer(&mut self.roll_wait);
         }
         (self.pitch, self.yaw)
+    }
+
+    /// `0x4356c8`: the straightening (D `+0x6c` its ticks, `+0x70` 1 / them): asked (state 2) and idle, 120 ticks
+    /// (`$gp+0x26d4` / `+0x26d8`); each tick the rows go from the level ones (the facing kept, the left across the
+    /// world's up) toward the current by the cosine ease of the ticks left (`0x32e480`, `0x3025d0`'s slerp; here a
+    /// normalised blend), while the nose stays within 0.75 of level; at the end (or too steep) state 0.
+    fn straighten(&mut self) {
+        if self.level_state == 2 && self.level_ticks == 0 && !self.levelling {
+            self.level_ticks = 120;
+            self.level_inv = 1.0 / 120.0;
+            self.levelling = true;
+        }
+        if !self.levelling { return; }
+        if dec_timer(&mut self.level_ticks) != 0 {
+            self.level_state = 0;
+            self.levelling = false;
+            return;
+        }
+        let f = self.rows[0];
+        if 0.75 <= dot([0.0, 0.0, 1.0], f).abs() {
+            self.level_state = 0;
+            self.levelling = false;
+            self.level_ticks = 0;
+            return;
+        }
+        let l = unit(cross([0.0, 0.0, 1.0], f));
+        let target = [f, l, cross(f, l)];
+        let t = self.level_ticks as f32 * self.level_inv;
+        let e = (1.0 - (t * std::f32::consts::PI).cos()) * 0.5;
+        let left = unit(add(scale(target[1], 1.0 - e), scale(self.rows[1], e)));
+        let u = unit(cross(f, left));
+        self.rows = [f, unit(cross(u, f)), u];
     }
 
     /// `0x4358d8`: the yaw about the up row (turning forward and left), the pitch about the left row (forward and up).
