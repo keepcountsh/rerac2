@@ -99,6 +99,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0cb5 => Some(oozla::update_0cb5),
         0x0936 | 0x08fa | 0x0a00 => Some(oozla::update_dynamo_platform),
         0x0a95 => Some(oozla::update_0a95),
+        0x0a7b => Some(oozla::update_0a7b),
         0x0825 => Some(dynamo::update),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),

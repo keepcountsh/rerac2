@@ -11,6 +11,7 @@
 //! * 0x0cb5 (`0x3efbc8`): the targets the Dynamo's shot (class 0x825) switches on ([`update_0cb5`]).
 //! * 0x0936 / 0x08fa / 0x0a00 (`0x3b3310`): the platforms those targets move ([`update_dynamo_platform`]).
 //! * 0x0a95 (`0x3d01f8`): the Dynamo to pick up ([`update_0a95`]).
+//! * 0x0a7b (`0x3cb158`): the conveyor platforms the Dynamo slides out ([`update_0a7b`]).
 //!
 //! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
 //! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
@@ -813,5 +814,83 @@ pub fn update_0a95(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             w.delete(id);
         }
         _ => {}
+    }
+}
+
+/// 0x0a7b (`0x3cb158`, 3 placed): a conveyor platform a Dynamo target slides out. Poked (`+0xbc`) at home (1, no
+/// collision there) it goes over `+0x60` ticks (2: `t` `+0x70`, eased `(1 − cos πt)/2`) toward the cuboid `+0x94`
+/// (its distance kept in `+0x98` at the set-up; −1: 10 along its first row), holds `+0x64` ticks (3), comes back (4)
+/// and, home, its group's pokes cleared, waits again (1). Out (2..4) its belt pushes whoever stands on it along its
+/// first row, `+0x68` · `+0x7c` a second (the mover block `+0x20`, `0x322668`: the belt's push, not the platform's
+/// slide).
+///
+/// Not ported: its belt's draw (`0x3cac30`) and its loop sound (`+0x90`, when on screen within 255).
+pub fn update_0a7b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
+    let cuboid = ctx.level.cuboid_place(w.mobys[id].pv_i(0x94)).map(|(p, _)| p);
+    let m = &mut w.mobys[id];
+    let place = |m: &mut crate::moby::Moby, t: f32| {
+        let f = (1.0 - (t * PI).cos()) * 0.5;
+        let home = m.pv_v(0x80);
+        let d = match cuboid {
+            Some(c) => set_len(sub(c, home), m.pv_f(0x98) * f),
+            None => set_len(m.rows[0], f * 10.0),
+        };
+        m.pos = add(home, d);
+    };
+    match m.state {
+        0 => {
+            m.set_pv_i(0x90, -1);
+            m.set_pv_f(0x70, 0.0);
+            m.set_pv_i(0x5c, m.pv_i(0x5c) | 4);
+            m.set_pv_i(0x6c, 0);
+            m.set_pv_i(0x74, 0);
+            m.has_collision = false;
+            let pos = m.pos;
+            m.set_pv_v(0x80, pos);
+            if let Some(c) = cuboid { m.set_pv_f(0x98, crate::hero::physics::dist(pos, c)); }
+            m.set_state(1, -1);
+        }
+        1 => {
+            if m.timer != 0 {
+                m.has_collision = solid;
+                m.set_state(2, -1);
+            }
+        }
+        2 => {
+            let t = (m.pv_f(0x70) + 1.0 / m.pv_f(0x60)).clamp(0.0, 1.0);
+            m.set_pv_f(0x70, t);
+            place(m, t);
+            if 1.0 <= t {
+                m.set_pv_i(0x6c, m.pv_i(0x64));
+                m.set_state(3, -1);
+            }
+        }
+        3 => {
+            let mut t = m.pv_i(0x6c);
+            if crate::moby::countdown(&mut t) { m.set_state(4, -1); }
+            m.set_pv_i(0x6c, t);
+        }
+        4 => {
+            let t = (m.pv_f(0x70) - 1.0 / m.pv_f(0x60)).clamp(0.0, 1.0);
+            m.set_pv_f(0x70, t);
+            place(m, t);
+            if t <= 0.0 {
+                m.has_collision = false;
+                let g = m.group;
+                m.set_state(1, -1);
+                if g != -1 {
+                    for i in usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default() { w.mobys[i].timer = 0; }
+                }
+            }
+        }
+        _ => {}
+    }
+    let m = &mut w.mobys[id];
+    m.timer = 0;
+    if (2..=4).contains(&m.state) {
+        let push = set_len(m.rows[0], m.pv_f(0x68) * m.pv_i(0x7c) as f32 * 0.016_666_668);
+        let (pos, yaw) = (m.pos, m.rot[2]);
+        carry_hero(ctx, id, sub(pos, push), yaw, pos, yaw);
     }
 }
