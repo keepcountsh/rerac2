@@ -1286,6 +1286,8 @@ fn draw_hud(
                 let menu = menu.chain(tables.items.iter().map(|r| (r.icon, 0)).filter(|&(i, _)| i != 0));
                 // The grids' own icons (the plain cells, `0xea85`, item 7's `0xea9a`).
                 let menu = menu.chain(tables.grids.iter().flatten().filter(|c| c.icon != 0).map(|c| (c.icon, c.frame))).chain([(0xea9a, 0)]);
+                // The space fights' HUD icons (rc_game::ship::HUD_ICONS).
+                let menu = menu.chain((0..16).map(|f| (rc_game::ship::HUD_ICONS, f)));
                 for (id, f) in menu {
                     if !h.has_icon(id) || icons.contains_key(&(id, f)) { continue; }
                     if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {
@@ -1342,16 +1344,11 @@ fn draw_hud(
         if let (Some(f), Some(m)) = (p.ship.as_ref(), p.mobys.as_ref()) {
             let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
             quads.extend(f.hud_quads(&m.world, crate::play_camera::GAME_TAN_HALF_FOV, &tex));
-            // `0x40e7a8`: the fighters left and the wave.
+            // `0x40e7a8`: the ship's HUD.
             let strings = &hud.data.assets().strings;
-            let mut draws = Vec::new();
-            for (id, n, pos) in f.counts(&m.world) {
-                let label = String::from_utf8_lossy(strings.get(id)).trim_end_matches('\0').to_string();
-                draws.push(rc_game::hud::Draw::Text { text: format!("{label}: {n}"), pos, scale: 1.0, colour: 0x8080_8080, align: rc_game::hud::Align::Left });
-            }
-            for (text, pos) in f.status() {
-                draws.push(rc_game::hud::Draw::Text { text, pos, scale: 1.0, colour: 0x8080_8080, align: rc_game::hud::Align::Left });
-            }
+            let label = |id: u32| String::from_utf8_lossy(strings.get(id)).trim_end_matches('\0').to_string();
+            let (draws, rects) = f.hud_draws(&m.world, &label);
+            quads.extend(rects);
             let icon = |id: u16, fr: u16| hud.icons.get(&(id, fr)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
             quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
         }

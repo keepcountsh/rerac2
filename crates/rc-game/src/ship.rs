@@ -978,15 +978,6 @@ impl Flight {
     pub fn counts(&self, w: &MobyWorld) -> [(u32, i32, [f32; 2]); 2] {
         [(0x3067, crate::moby::classes::space::active_count(w) as i32, [24.0, 357.0]), (0x3068, self.waves + 1, [24.0, 384.0])]
     }
-
-    /// The ship's state for the HUD (`0x40e7a8` draws the shield and the hull as bars from the level's GUI sprites and
-    /// the weapon's ammo as `"%d/%d"` at (0x43, 5); the bars' sprites are not loaded, so all three are text here).
-    pub fn status(&self) -> [(String, [f32; 2]); 2] {
-        [
-            (format!("{}/{}", self.missiles, missile::AMMO), [0x43 as f32, 5.0]),
-            (format!("Shield {}  Hull {}", self.shield, self.hull), [24.0, 330.0]),
-        ]
-    }
 }
 
 /// The missile's class (`0x3caae8`: 0x974; 0x1161 with the upgrade, not kept).
@@ -1181,5 +1172,58 @@ impl Flight {
             }
             return;
         }
+    }
+}
+
+/// The ship HUD's icon set (`0x30d5a8(0xea97, frame)`): frames 0 / 1 the backings, the weapon slots' `+0x1c` their
+/// icons (the missiles 7, the boost 15).
+pub const HUD_ICONS: u16 = 0xea97;
+
+impl Flight {
+    /// `0x40e7a8`, the space fights' HUD, as GUI draws and rectangles: the middle's sprites 0x80 / 0x81 at (256, 200)
+    /// with the shield's 0x83 over them tinted from red to green by the shield left; the hull's bar (156..356 × 14..27,
+    /// red to green, blinking every 5 ticks under 30%); the boost's fuel bar (450 → 386 × 8..19); the weapon's icon
+    /// (21, 7) on its backings with its ammo `"%d/%d"` at (67, 5) and the boost's (462, 9); the counts; the radar's
+    /// frame (sprites 0xba..0xbc at (444, 344), ×0.8). Not ported: the upgraded shields' rings 0x84 / 0x85, the 16:9
+    /// shift, the weapon switch (`0x320310`: one weapon here).
+    pub fn hud_draws(&self, w: &MobyWorld, label: &dyn Fn(u32) -> String) -> (Vec<crate::hud::Draw>, Vec<crate::gui::Quad>) {
+        use crate::hud::{Align, Draw};
+        let mut d = Vec::new();
+        let mut q = Vec::new();
+        if matches!(self.mode, 3..=6) { return (d, q); }
+        let rgba = |c: u32| c.to_le_bytes();
+        let lerp = |t: f32| crate::hud::lerp_rgba(t.clamp(0.0, 1.0), 0x8000_00ff, 0x8000_ff00);
+        // The middle and the shield.
+        let mid = [256.0, 200.0];
+        d.push(Draw::Sprite { id: 0x80, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: 0x6044_2d00 });
+        d.push(Draw::Sprite { id: 0x81, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: 0x55f0_c070 });
+        let shield = self.shield as f32 / k::SHIELD as f32;
+        if std::env::var_os("RC_SHIP_TRACE").is_some() { println!("ship hud: shield {} hull {} fuel {} lerp {:#x}", self.shield, self.hull, self.fuel, lerp(shield)); }
+        if 0.0 < shield { d.push(Draw::Sprite { id: 0x83, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: lerp(shield) }); }
+        // The hull's bar.
+        let hull = self.hull as f32 * 0.01;
+        let blink_off = hull <= 0.3 && (self.frame / 5) % 2 == 1;
+        if !blink_off && 0.0 < hull {
+            crate::gui::rect(&mut q, 14, 27, 156, (hull * 200.0 + 156.0) as i32, rgba(lerp(hull)));
+        }
+        // The boost's bar.
+        let fuel = self.fuel as f32 / k::FUEL as f32;
+        if 0.0 < fuel {
+            crate::gui::rect(&mut q, 8, 19, (450.0 + (386.0 - 450.0) * fuel) as i32, 450, rgba(lerp(fuel)));
+        }
+        // The weapon's and the boost's icons, the ammo.
+        for (frame, pos, colour) in [(1, [21.0, 7.0], 0x6044_2d00), (0, [21.0, 7.0], 0x55f0_c070), (7, [21.0, 7.0], 0x8080_8080), (1, [462.0, 9.0], 0x6044_2d00), (15, [462.0, 9.0], 0x8080_8080)] {
+            d.push(Draw::Icon { id: HUD_ICONS, frame, pos, size: [30.0, 30.0], colour });
+        }
+        d.push(Draw::Text { text: format!("{}/{}", self.missiles, missile::AMMO), pos: [67.0, 5.0], scale: 1.0, colour: 0x8080_8080, align: Align::Left });
+        // The counts.
+        for (id, n, pos) in self.counts(w) {
+            d.push(Draw::Text { text: format!("{}: {n}", label(id)), pos, scale: 1.0, colour: 0x8080_8080, align: Align::Left });
+        }
+        // The radar's frame.
+        for (id, colour) in [(0xba, 0x6044_2d00), (0xbb, 0x6024_1700), (0xbc, 0x55f0_c070)] {
+            d.push(Draw::Sprite { id, pos: [444.0, 344.0], scale: [0.8, 0.8], frame: 0.0, colour });
+        }
+        (d, q)
     }
 }
