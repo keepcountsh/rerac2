@@ -351,6 +351,14 @@ impl Flight {
         self.mode = 6;
         self.fade = 0.0;
         self.dying = k::DEATH_TICKS;
+        // `0x3cbfe8(ship, 0, 1)`: the blast, by the mission object ([`update_mission`]).
+        if let (Some(s), Some(mid)) = (self.ship, w.mobys.iter().position(|m| m.o_class == MISSION_CLASS && m.state < 0x80)) {
+            let at = w.mobys[s].pos;
+            w.mobys[mid].set_pv_v(BOOM, at);
+            w.mobys[mid].set_pv_i(BOOM + 0xc, 1);
+            w.mobys[mid].mode &= !mode::NO_UPDATE;
+            w.mobys[mid].update_dist = 0xff;
+        }
         for id in self.ship.into_iter().chain(self.parts.iter().map(|p| p.0)) {
             let m = &mut w.mobys[id];
             m.draw_dist = 0;
@@ -644,9 +652,10 @@ pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if over || to.iter().any(|&c| !(2.0..=1021.0).contains(&c)) { return w.delete(id); }
     let r = w.mobys[id].pv_f(0x3c) + w.mobys[id].pv_f(0x40);
     w.mobys[id].set_pv_f(0x3c, r);
-    if ctx.coll.and_then(|c| crate::collision::coll_line_m(c, ctx.scene, from, to, crate::collision::QueryFlags(0), ctx.hero_moby)).is_some() {
-        // `0x36cc38(7, 0, laser, 0xfbf)`.
+    if let Some(h) = ctx.coll.and_then(|c| crate::collision::coll_line_m(c, ctx.scene, from, to, crate::collision::QueryFlags(0), ctx.hero_moby)) {
+        // `0x36cc38(7, 0, laser, 0xfbf)`; its end's burst.
         ctx.host.play_sound_of(&w.mobys[id], SHIP_CLASS, 7, 0);
+        laser_burst(ctx, h.point, w.mobys[id].pv_i(0x20) as u32);
         return w.delete(id);
     }
     let owner = w.mobys[id].pv_i(4) - 1;
@@ -667,6 +676,7 @@ pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let p = w.mobys[t].pos;
         w.deliver_hit(t, &tmpl, [p[0], p[1], p[2], 1.0]);
         ctx.host.play_sound_of(&w.mobys[id], SHIP_CLASS, 7, 0);
+        laser_burst(ctx, add(from, scale(seg, 0.5)), w.mobys[id].pv_i(0x20) as u32);
         return w.delete(id);
     }
     w.register_draw(id);
@@ -1368,5 +1378,34 @@ impl Flight {
             }
             w.mobys[s].set_pv_f(SHAKE, 0.0);
         }
+    }
+}
+
+/// The mission object's word the flight asks the ship's blast through (`0x434ad0` → `0x3cbfe8`, the place).
+pub const BOOM: usize = 0x110;
+
+/// The mission object 0x0eee's update here: what [`Flight::mission`] cannot do without the particles — the ship's
+/// blast at its death (`0x3cbfe8(ship, 0, 1)`: here the ground's blast, crate::moby::blast, at size 1).
+pub fn update_mission(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if w.mobys[id].pv_i(BOOM + 0xc) == 0 { return; }
+    let at = w.mobys[id].pv_v(BOOM);
+    w.mobys[id].set_pv_i(BOOM + 0xc, 0);
+    crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 1.0, bursts: [0x32, 0x1e, 0x1e], puffs: 0x1e, streaks: 0x28 });
+}
+
+/// `0x4134b0(at, 20, colour, laser)`: the laser's end — 20 sparks (crate::particles::spark standing in for `0x346ee8`)
+/// thrown toward the camera's side, 0.05..3 a second across and 1..5 up, a white and a coloured one each.
+fn laser_burst(ctx: &mut Ctx, at: V3, rgb: u32) {
+    let cam = ctx.host.camera_pos();
+    let Some(sys) = ctx.parts.as_deref_mut() else { return };
+    let toward = set_len(sub(cam, at), 0.5);
+    for _ in 0..20 {
+        let g = &mut ctx.game.rng;
+        let size = g.randf(0.25, 1.0);
+        let across = crate::moby::classes::shot::polar(g.randf(0.05, 3.0) / 60.0, g.rand_angle(), g.rand_angle());
+        let v = add(add(across, [0.0, 0.0, g.randf(1.0, 5.0) / 60.0]), scale(toward, 0.01));
+        let p = [at[0] + g.randf(-0.15, 0.15), at[1] + g.randf(-0.15, 0.15), at[2] + g.randf(-0.15, 0.15)];
+        crate::particles::spark(sys, g, size * 0.1 * 210_000.0, 0.0, 0.002, 0.0, 1.0, p, v, 60, 0x7f, rgb & 0xff_ffff, 0);
+        crate::particles::spark(sys, g, size * 0.07 * 210_000.0, 0.0, 0.002, 0.0, 1.0, p, v, 60, 0x7f, 0x7f_7f7f, 0);
     }
 }
