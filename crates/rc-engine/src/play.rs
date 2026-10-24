@@ -719,12 +719,13 @@ fn tick(
             let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, sound };
             let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
             f.tick(&p.pad, &mut mobys.world, &mut host, Some(coll), scene.as_ref());
+            let shaken = f.view_pos();
             // `0x307d80`: the mission's help texts.
             if let Some((text, slot)) = f.help.take() {
                 let shown = p.game.help(text, slot);
                 if text == 0xa16 && (shown || p.game.help_state != 0) { f.opening_shown = true; }
             }
-            cam.view = Some((f.pos, f.rows));
+            cam.view = Some((shaken, f.rows));
             // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it.
             if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }
             // `0x2c63f0`: the ship's death starts the fight again; `0x307bf0(2, 1)`: the fight won, Maktar Nebula.

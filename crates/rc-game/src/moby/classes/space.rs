@@ -488,7 +488,9 @@ pub fn update_fighter(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     // The engine's loop (`0x36cc38(3, 6, m, 0x957)` / `(1, 6, m, 0x97c)`, `+0x1bc` / `+0x2f0`).
     let h = w.mobys[id].pv_i(ENGINE) - 1;
-    if h < 0 || !ctx.host.sound_playing(h) {
+    // Asked only within hearing (64: the sound layer drops the farther ones anyway).
+    let near = dist(w.mobys[id].pos, ctx.host.camera_pos()) < 64.0;
+    if near && (h < 0 || !ctx.host.sound_playing(h)) {
         let (c, i) = if w.mobys[id].o_class == GUNSHIP { (GUNSHIP, 1) } else { (FIGHTER, 3) };
         let n = ctx.host.play_sound_of(&w.mobys[id], c, i, 4);
         w.mobys[id].set_pv_i(ENGINE, n + 1);
@@ -683,6 +685,20 @@ pub fn update_asteroid(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 spawn_asteroid(w, ctx, chip, at, add(along, v), 3);
             }
         }
+        // The dust (`0x342520`, crate::particles::puff): 50 grey puffs (the ram of a chip: 40, bigger, slower) round
+        // it, a twentieth of a unit a tick outward with its push, spinning ±3.
+        let (n, size, speed) = if ram && class == 0x0955 { (40, AST_SIZE[k] * 0.5 * 3.0, 0.033_333_335) } else { (50, AST_SIZE[k] * 0.5, 0.05) };
+        let near = dist(p, cam) < 128.0;
+        if let (true, Some(sys)) = (near, ctx.parts.as_deref_mut()) {
+            for _ in 0..n {
+                let g = &mut ctx.game.rng;
+                let at = [p[0] + g.randf(-half, half), p[1] + g.randf(-half, half), p[2] + g.randf(-half, half)];
+                let v = add(super::shot::polar(speed, g.rand_angle(), g.rand_angle()), scale(along, 0.5));
+                let spin = g.rand_range(-3, 3);
+                crate::particles::puff(sys, g, 0.0, 1.0, 1.0, size * 210_000.0, at, spin, v, 0x7fff_ffff, 0);
+            }
+        }
+        if ram { w.mobys.iter().position(|m| m.o_class == crate::ship::SHIP_CLASS && m.state < 0x80).map(|s| crate::ship::shake(w, s, if class == 0x0955 { 0.05 } else { 0.15 }, if class == 0x0955 { 30 } else { 60 })); }
         if 5.0 <= AST_SIZE[k] { drop(w, id, ctx); }
         return w.delete(id);
     }
