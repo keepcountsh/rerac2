@@ -319,14 +319,6 @@ fn tick(
         use rc_formats::disc::gameplay as g2;
         let pvars = g2::pvar_blocks(&lv.gameplay).unwrap_or_default();
         let records = g2::cameras(&lv.gameplay).map_err(|e| eprintln!("play: cameras: {e}")).unwrap_or_default();
-        // `RC_CAM_LIST=1`: the level's camera records (a dev trace).
-        if std::env::var_os("RC_CAM_LIST").is_some() {
-            for (i, r) in records.iter().enumerate() {
-                let rec = usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default();
-                let words: Vec<String> = rec.chunks(4).map(|c| format!("{:08x}", u32::from_le_bytes([c[0], c.get(1).copied().unwrap_or(0), c.get(2).copied().unwrap_or(0), c.get(3).copied().unwrap_or(0)]))).collect();
-                println!("camera {i}: class {:#x} pos ({:.1}, {:.1}, {:.1}) pvars {}", r.class, r.pos[0], r.pos[1], r.pos[2], words.join(" "));
-            }
-        }
         p.game.cameras = rc_game::cameras::Cameras::load(
             records.iter().map(|r| (r.class as i16, r.pos, r.rot, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
         );
@@ -474,31 +466,6 @@ fn tick(
         let view = Some(rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty));
         let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys), view };
         mobys.world.tick(p.camera.pos, &mut ctx);
-    }
-    // `RC_CUBOIDS=64,85`: those cuboids' centres and angles on the first tick (a dev trace, for placing Ratchet in one).
-    if p.ticks == 0 {
-        // `RC_EQUIP=24` (dev, hex): that item had and asked for in the hand (as the pause menu's pages ask).
-        if let Some(item) = std::env::var("RC_EQUIP").ok().and_then(|v| i32::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok()) {
-            p.game.get_item(item);
-            p.hero.items.request = item;
-        }
-        if let Ok(list) = std::env::var("RC_CUBOIDS") {
-            for i in list.split(',').filter_map(|x| x.trim().parse::<i32>().ok()) {
-                match mobys.level.cuboid_place(i) {
-                    Some((c, a)) => println!("cuboid {i}: centre ({:.2}, {:.2}, {:.2}) angles ({:.3}, {:.3}, {:.3})", c[0], c[1], c[2], a[0], a[1], a[2]),
-                    None => println!("cuboid {i}: none"),
-                }
-            }
-        }
-        // `RC_AREAS=3,6`: those trigger areas' bounding spheres and their volume lists (a dev trace).
-        if let Ok(list) = std::env::var("RC_AREAS") {
-            for i in list.split(',').filter_map(|x| x.trim().parse::<usize>().ok()) {
-                match mobys.level.areas.get(i) {
-                    Some(a) => println!("area {i}: sphere ({:.2}, {:.2}, {:.2}) r {:.2}, lists {:?}", a.sphere[0], a.sphere[1], a.sphere[2], a.sphere[3], a.lists),
-                    None => println!("area {i}: none"),
-                }
-            }
-        }
     }
     // The collision kernels read the mobys as they are: the hero's queries this tick see where the loop left them
     // (a lift's floor moved this tick), not where the last tick did.
@@ -704,14 +671,8 @@ fn tick(
                     let m = &v.matrix;
                     ([m[3][0], m[3][1], m[3][2]], (m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[0][2] * m[0][2]).sqrt())
                 });
-                // `RC_SHIP_HULL=n`: no shield and n of hull (a dev aid for the death).
-                if let Some(n) = std::env::var("RC_SHIP_HULL").ok().and_then(|v| v.trim().parse().ok()) { (f.shield, f.hull) = (0, n); }
                 p.ship = Some(f);
             }
-        }
-        // `RC_SPACE_CLEAR=t1,t2`: every fighter shot at those ticks (a dev aid for the waves).
-        if std::env::var("RC_SPACE_CLEAR").is_ok_and(|v| v.split(',').any(|t| t.trim().parse::<u64>() == Ok(p.ticks))) {
-            rc_game::moby::classes::space::clear_all(&mut mobys.world);
         }
         let heard = listener(&p.camera);
         if let Some(f) = p.ship.as_mut() {
@@ -1315,8 +1276,6 @@ fn draw_hud(
         let mut fx = std::collections::HashMap::new();
         for id in std::iter::once(0x26u16).chain(rc_game::ship::HUD_FX) {
             if let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(id as usize)).and_then(Option::as_ref) {
-                // `RC_DUMP_FX=dir`: these textures as raw RGBA (`fx_<id>_<w>x<h>.rgba`; a dev aid).
-                if let Ok(dir) = std::env::var("RC_DUMP_FX") { let _ = std::fs::write(format!("{dir}/fx_{id:x}_{}x{}.rgba", t.width, t.height), &t.rgba); }
                 fx.insert(id, (textures.len(), [t.width as f32, t.height as f32]));
                 // The HUD's atlas holds the GS's bytes (0x80 = 1.0); the FX textures' alpha is decoded to 0..0xff (their
                 // colours stay as the GS has them, up to 2.0).

@@ -374,7 +374,6 @@ impl Flight {
     /// `0x434ad0`: mode 6, the ship and its parts gone, 60 ticks.
     fn die(&mut self, w: &mut MobyWorld) {
         if self.mode == 6 { return; }
-        if std::env::var_os("RC_SHIP_TRACE").is_some() { println!("ship: death at {:?} mode {} hull {}", self.pos, self.mode, self.hull); }
         self.hull = self.hull.max(0);
         self.mode = 6;
         self.fade = 0.0;

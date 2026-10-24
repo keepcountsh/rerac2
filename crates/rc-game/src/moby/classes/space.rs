@@ -404,19 +404,6 @@ fn maybe_attack(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     set_ai_i(w, id, a::TIMER, t);
 }
 
-/// A dev aid (`RC_SPACE_CLEAR`): every active fighter put away as if shot.
-pub fn clear_all(w: &mut MobyWorld) {
-    let ids: Vec<usize> = (0..w.mobys.len()).filter(|&i| is_ai(w.mobys[i].o_class) && w.mobys[i].state < 0x80 && ai_i(w, i, a::ACTIVE) == 1).collect();
-    for id in ids {
-        set_ai_i(w, id, a::ACTIVE, 0);
-        set_ai_i(w, id, a::ATTACKING, 0);
-        let m = &mut w.mobys[id];
-        (m.has_collision, m.draw_dist, m.drawn) = (false, 0, 0);
-        m.mode |= 3;
-    }
-    w.changed = true;
-}
-
 /// The fighters active (`0x221810`).
 pub fn active_count(w: &MobyWorld) -> usize {
     w.mobys.iter().filter(|m| is_ai(m.o_class) && m.state < 0x80 && m.pv_i(STARTED) != 0 && m.pv_i(AI + a::ACTIVE) == 1).count()

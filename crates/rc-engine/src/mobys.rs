@@ -529,30 +529,10 @@ impl Mobys {
             tie_groups: g2::instance_groups(&lv.gameplay, "tie_groups").map_err(|e| eprintln!("mobys: tie groups: {e}")).unwrap_or_default(),
             shrub_groups: g2::instance_groups(&lv.gameplay, "shrub_groups").map_err(|e| eprintln!("mobys: shrub groups: {e}")).unwrap_or_default(),
         };
-        // `RC_DUMP_GAMEPLAY=<file>`: the level's gameplay file as loaded (a dev dump, for reading its sections).
-        if let Ok(path) = std::env::var("RC_DUMP_GAMEPLAY") {
-            if let Err(e) = std::fs::write(&path, &lv.gameplay) { eprintln!("RC_DUMP_GAMEPLAY: {e}"); }
-        }
-        // `RC_PVAR_FIXUPS=12,40`: those pvar blocks' pointer fixups and moby links (byte offsets; a dev trace).
-        if let Ok(list) = std::env::var("RC_PVAR_FIXUPS") {
-            for k in list.split(',').filter_map(|x| x.trim().parse::<usize>().ok()) {
-                let offs = |v: &[(usize, usize)]| v.iter().filter(|f| f.0 == k).map(|f| format!("{:#x}", f.1)).collect::<Vec<_>>().join(" ");
-                println!("pvars #{k}: {} bytes, pointer fixups [{}], moby links [{}]", data.pvars.get(k).map_or(0, |p| p.len()), offs(&data.fixups), offs(&data.links));
-            }
-        }
         let ground = |p: [f32; 3]| -> Option<f32> {
             let coll = lv.collision.as_ref()?;
             rc_game::collision::coll_line(coll, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.01], rc_game::collision::QueryFlags(2)).map(|o| o.point[2])
         };
-        // `RC_MISSIONS=12=bf,14=bf` (dev): this level's mission progress bytes (`0x19b2e8 + level·0x10`, and the
-        // level's copy the spawn rules read) before the spawn, to match a save's mission ranks (e.g. a 100% card).
-        if let Ok(list) = std::env::var("RC_MISSIONS") {
-            for (m, v) in list.split(',').filter_map(|kv| kv.split_once('=')).filter_map(|(m, v)| Some((m.trim().parse::<usize>().ok()?, u8::from_str_radix(v.trim(), 16).ok()?))) {
-                let i = game.level.max(0) as usize * 0x10 + (m & 0xf);
-                if let Some(b) = game.missions.get_mut(i) { *b = v; }
-                if let Some(b) = game.mission_table.get_mut(m) { *b = v; }
-            }
-        }
         let mut rules = rc_game::moby::SpawnRules { game, fresh, ground: &ground };
         world.spawn_static(&records, &data, host, &mut rules);
         let spawned: std::collections::HashSet<usize> = world.mobys.iter().filter_map(|m| m.instance).collect();
