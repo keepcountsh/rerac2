@@ -767,7 +767,8 @@ impl FollowCamera {
         let (la, lb) = (len(a), len(b));
         if la == 0.0 || lb == 0.0 { return; }
         let c = (dot(a, b) / (la * lb)).clamp(-1.0, 1.0);
-        let ang = c.acos();
+        // `0x2ef478` is asin (π/2 − √(1 − x)·P(x)).
+        let ang = c.asin();
         let side = if 0.0 <= dot(cross(a, up), b) { 1.0 } else { -1.0 };
         let f = std::f32::consts::FRAC_PI_2 - ang;
         let gap = crate::hero::physics::sub_rot(std::f32::consts::PI, f);

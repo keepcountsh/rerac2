@@ -921,46 +921,46 @@ pub fn update_0a7b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
 }
 
-/// `0x3cac30` (0x0a7b out, registered each tick): its belt of light, five layers of strips (FX 0x3f + `+0x78`, ALPHA
-/// 0x44) behind it along its first row, scrolling with `+0x74` (down `+0x68` / 120 a frame), each edge's alpha
-/// sin(πk) × the slide `+0x70` × 102.4 (the first 0). Its scale `s` against the class's: the start 10·s back with
-/// the direction `+0x7c` 1 (else at it), stepping 2 × `+0x7c` along the row, ±2·s across. Layer 0 green
-/// (0.25, 1, 0.5), 0.02 up; 1 blue (0.25, 0.5, 1), half a texture on; 2 red, 0.04 up, three times the scroll, 0.4·s
-/// as wide and a step 0.4 as long at 0.08 a step; 3 and 4 white at 3.5 times the scroll, as 2 but 1.6·s to each side.
-pub fn draw_0a7b(w: &mut MobyWorld, id: usize, out: &mut Vec<crate::fx::FxQuad>) {
-    let class_scale = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
-    let m = &mut w.mobys[id];
-    let s = if class_scale != 0.0 { m.scale / class_scale } else { 1.0 };
-    let phase = m.pv_f(0x74) - m.pv_f(0x68) * 0.016_666_668 / 2.0;
-    m.set_pv_f(0x74, phase);
-    let (dir, slide, fx) = (m.pv_i(0x7c), m.pv_f(0x70), 0x3f + m.pv_i(0x78) as usize);
-    let (row0, row1) = (m.rows[0], m.rows[1]);
-    let mut base = m.pos;
-    if dir == 1 { base = add(base, scale(row0, s * -10.0)); }
-    let mut step_len = 2.0;
-    let mut step = 0.2;
-    let mut along = scale(row0, step_len * dir as f32);
-    let mut half = scale(row1, s * -2.0);
-    let rail = scale(row1, 2.0 * s * 0.8);
-    let rgb = |r: f32, g: f32, b: f32| (r * 255.0) as u32 | ((g * 255.0) as u32) << 8 | ((b * 255.0) as u32) << 16;
+/// A belt of light (`0x3cac30` / `0x3d2ea8`): five layers of strips (ALPHA 0x44) from `base` stepping `along` (`step`
+/// of the way a quad), ±`half` across, scrolling with `phase`, each edge's alpha sin(πk) × `fade` × 102.4 (the first
+/// 0). Layer 0 green (0.25, 1, 0.5) `dz` up; 1 blue (0.25, 0.5, 1), half a texture on; 2 red, `dz` more, at
+/// `scroll[0]` times the scroll, ±`red_half` across, its steps `shrink` as long and as many more; 3 and 4 white at
+/// `scroll[1]` times the scroll, as 2 but `rail` to each side.
+struct Beam {
+    fx: usize,
+    base: V3,
+    along: V3,
+    step: f32,
+    half: V3,
+    rail: V3,
+    dz: f32,
+    red_half: f32,
+    shrink: f32,
+    scroll: [f32; 2],
+    phase: f32,
+    fade: f32,
+}
+
+fn draw_beam(b: &Beam, out: &mut Vec<crate::fx::FxQuad>) {
+    let rgb = |r: f32, g: f32, bl: f32| (r * 255.0) as u32 | ((g * 255.0) as u32) << 8 | ((bl * 255.0) as u32) << 16;
     let frac = |x: f32| x - x.trunc();
+    let (mut base, mut along, mut half, mut step) = (b.base, b.along, b.half, b.step);
     for layer in 0..5 {
         let (start, colour, v) = match layer {
             0 => {
-                base[2] += 0.02;
-                (base, rgb(0.25, 1.0, 0.5), frac(phase))
+                base[2] += b.dz;
+                (base, rgb(0.25, 1.0, 0.5), frac(b.phase))
             }
-            1 => (base, rgb(0.25, 0.5, 1.0), frac(phase + 0.5)),
+            1 => (base, rgb(0.25, 0.5, 1.0), frac(b.phase + 0.5)),
             2 => {
-                base[2] += 0.02;
-                half = scale(half, 2.0 * s * 0.2);
-                step_len *= 0.4;
-                step *= 0.4;
-                along = scale(row0, step_len * dir as f32);
-                (base, rgb(1.0, 0.0, 0.0), frac(phase * 3.0))
+                base[2] += b.dz;
+                half = set_len(half, b.red_half);
+                along = scale(along, b.shrink);
+                step *= b.shrink;
+                (base, rgb(1.0, 0.0, 0.0), frac(b.phase * b.scroll[0]))
             }
-            3 => (add(base, rail), rgb(1.0, 1.0, 1.0), frac(phase * 3.5)),
-            _ => (sub(base, rail), rgb(1.0, 1.0, 1.0), frac(phase * 3.5)),
+            3 => (add(base, b.rail), rgb(1.0, 1.0, 1.0), frac(b.phase * b.scroll[1])),
+            _ => (sub(base, b.rail), rgb(1.0, 1.0, 1.0), frac(b.phase * b.scroll[1])),
         };
         let st = [[0.0, v], [1.0, v], [0.0, v + 1.0], [1.0, v + 1.0]];
         let mut e = start;
@@ -968,13 +968,321 @@ pub fn draw_0a7b(w: &mut MobyWorld, id: usize, out: &mut Vec<crate::fx::FxQuad>)
         e = add(e, along);
         let mut k = step;
         while k < 1.0 {
-            let a = ((k * PI).sin() * slide * 102.4) as i32 as u32;
+            let a = ((k * PI).sin() * b.fade * 102.4) as i32 as u32;
             let c = (colour & 0xff_ffff) | a << 24;
             let (l, r) = (sub(e, half), add(e, half));
             e = add(e, along);
-            out.push(crate::fx::FxQuad { fx, additive: false, corners: [prev.0, prev.1, l, r], st, rgba: [prev.2, prev.2, c, c] });
+            out.push(crate::fx::FxQuad { fx: b.fx, additive: false, corners: [prev.0, prev.1, l, r], st, rgba: [prev.2, prev.2, c, c] });
             prev = (l, r, c);
             k += step;
         }
+    }
+}
+
+/// `0x3cac30` (0x0a7b out, registered each tick): its belt ([`draw_beam`], FX 0x3f + `+0x78`) behind it along its
+/// first row, scrolling with `+0x74` (down `+0x68` / 120 a frame), fading with the slide `+0x70`. Its scale `s`
+/// against the class's: the start 10·s back with the direction `+0x7c` 1 (else at it), stepping 2 × `+0x7c` at 0.2
+/// a step, ±2·s across, 0.02 up a layer; the red ±0.4·s with steps 0.4 as long, the scrolls 3 and 3.5, the rails 1.6·s.
+pub fn draw_0a7b(w: &mut MobyWorld, id: usize, out: &mut Vec<crate::fx::FxQuad>) {
+    let class_scale = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
+    let m = &mut w.mobys[id];
+    let s = if class_scale != 0.0 { m.scale / class_scale } else { 1.0 };
+    let phase = m.pv_f(0x74) - m.pv_f(0x68) * 0.016_666_668 / 2.0;
+    m.set_pv_f(0x74, phase);
+    let dir = m.pv_i(0x7c);
+    let (row0, row1) = (m.rows[0], m.rows[1]);
+    let base = if dir == 1 { add(m.pos, set_len(row0, s * -10.0)) } else { m.pos };
+    let beam = Beam {
+        fx: 0x3f + m.pv_i(0x78) as usize,
+        base,
+        along: set_len(row0, 2.0 * dir as f32),
+        step: 0.2,
+        half: set_len(row1, s * -2.0),
+        rail: set_len(row1, 2.0 * s * 0.8),
+        dz: 0.02,
+        red_half: 2.0 * s * 0.2,
+        shrink: 0.4,
+        scroll: [3.0, 3.5],
+        phase,
+        fade: m.pv_f(0x70),
+    };
+    draw_beam(&beam, out);
+}
+
+/// `0x3d2ea8` (0x0a9d open, registered each tick): its light ([`draw_beam`], FX 0x3f + `+0xb4`) at its home `+0x60`,
+/// from 1.05 back along its first row one step of 1.05 (half a step a quad), ±3.2 across, 0.02 down a layer,
+/// scrolling with `+0xb8` (down 2.5 / 60 / 1.05 a frame), fading with its opening `+0xac`; the red ±1.6 with half
+/// steps, the scrolls 3 and 4, the rails 1.6 (`$gp+0x1484..0x14ec`).
+pub fn draw_0a9d(w: &mut MobyWorld, id: usize, out: &mut Vec<crate::fx::FxQuad>) {
+    let m = &mut w.mobys[id];
+    let phase = m.pv_f(0xb8) - 2.5 * 0.016_666_668 / 1.05;
+    m.set_pv_f(0xb8, phase);
+    let (row0, row1) = (m.rows[0], m.rows[1]);
+    let beam = Beam {
+        fx: 0x3f + m.pv_i(0xb4) as usize,
+        base: add(m.pv_v(0x60), set_len(row0, -1.05)),
+        along: set_len(row0, 1.05),
+        step: 0.5,
+        half: set_len(row1, -3.2),
+        rail: set_len(row1, 1.6),
+        dz: -0.02,
+        red_half: 1.6,
+        shrink: 0.5,
+        scroll: [3.0, 4.0],
+        phase,
+        fade: m.pv_f(0xac),
+    };
+    draw_beam(&beam, out);
+}
+
+/// 0x0a9d / 0x0aa7 (`0x3d33a0`): a gate or hatch the launcher 0x0aae works, between its place (kept at `+0x60` /
+/// `+0x70`) and that place plus `+0x80` turned by its angles, its angles plus `+0x90`. Set up (0) it is open for
+/// good (2, `+0xa8`) when its mission is done or its uid counted, else shut (1). Poked (`+0xbc`) it opens over `+0xa4`
+/// ticks (2: `t` `+0xac`, eased `(1 − cos πt)/2`), holds `+0xaa` ticks (3: `+0xb0`; while poked, longer), closes (4;
+/// poked, it opens again). Ratchet in its cuboid `+0xa0` opens it for good and counts its uid. It carries Ratchet
+/// (`0x318560`, the block `+0x20`); a 0x0a9d open draws its light ([`draw_0a9d`]); with `+0xa9` its pokes last a
+/// tick.
+pub fn update_gate(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let (old, old_rot) = (w.mobys[id].pos, w.mobys[id].rot);
+    let inside = ctx.level.in_cuboid(w.mobys[id].pv_i(0xa0), ctx.hero.pos);
+    let m = &mut w.mobys[id];
+    let pose = |m: &mut crate::moby::Moby| {
+        let t = m.pv_f(0xac);
+        let f = (1.0 - (t * PI).cos()) * 0.5;
+        let r = rows_of(m.pv_v(0x70));
+        let o = scale(m.pv_v(0x80), f);
+        m.pos = add(m.pv_v(0x60), add(add(scale(r[0], o[0]), scale(r[1], o[1])), scale(r[2], o[2])));
+        for k in 0..3 {
+            let home = m.pv_f(0x70 + 4 * k);
+            m.rot[k] = lerp_rot(home, add_rot(home, m.pv_f(0x90 + 4 * k)), f);
+        }
+    };
+    let duration = m.pv_f(0xa4);
+    match m.state {
+        0 => {
+            let (pos, rot) = (m.pos, m.rot);
+            m.set_pv_v(0x60, pos);
+            m.set_pv_v(0x70, rot);
+            m.set_pv_f(0xac, 0.0);
+            m.set_pv_f(0xb8, 0.0);
+            let done = ctx.game.missions.get(ctx.game.level.max(0) as usize * 0x10 + m.mission as usize).is_some_and(|b| b & 0x80 != 0);
+            if !done && ctx.game.uid_count(m.uid) == 0 {
+                m.set_state(1, -1);
+            } else {
+                m.set_pv_b(0xa8, 1);
+                m.set_state(2, -1);
+            }
+        }
+        1 => {
+            if m.timer != 0 { m.set_state(2, -1); }
+            if inside {
+                ctx.game.count_uid(m.uid);
+                m.set_pv_b(0xa8, 1);
+                m.set_state(2, -1);
+            }
+        }
+        2 => {
+            let t = (m.pv_f(0xac) + 1.0 / duration).clamp(0.0, 1.0);
+            m.set_pv_f(0xac, t);
+            pose(m);
+            if 1.0 <= t {
+                m.set_pv_i(0xb0, m.pv_s(0xaa) as i32);
+                m.set_state(3, -1);
+            }
+        }
+        3 => {
+            if inside {
+                ctx.game.count_uid(m.uid);
+                m.set_pv_b(0xa8, 1);
+            }
+            if m.pv_b(0xa8) == 0 && m.timer == 0 {
+                let mut t = m.pv_i(0xb0);
+                if crate::moby::countdown(&mut t) { m.set_state(4, -1); }
+                m.set_pv_i(0xb0, t);
+            }
+        }
+        4 => {
+            let t = (m.pv_f(0xac) - 1.0 / duration).clamp(0.0, 1.0);
+            m.set_pv_f(0xac, t);
+            pose(m);
+            if t <= 0.0 { m.set_state(1, -1); }
+            if m.timer != 0 { m.set_state(2, -1); }
+            if inside {
+                m.set_pv_b(0xa8, 1);
+                m.set_state(2, -1);
+            }
+        }
+        _ => {}
+    }
+    let m = &mut w.mobys[id];
+    let state = m.state;
+    if m.o_class == 0x0a9d && (2..=4).contains(&state) { w.register_draw(id); }
+    if state < 5 {
+        let (pos, yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
+        carry_hero(ctx, id, old, old_rot[2], pos, yaw);
+    }
+    let m = &mut w.mobys[id];
+    if m.pv_b(0xa9) != 0 { m.timer = 0; }
+}
+
+/// `0x338b68(step, m, path, &pos, i, dir)`: along the path from its point `i` toward the next (`dir` 1: past the
+/// last the first; else back, before the first the last): `pos` put on that leg at its distance along it + `step`,
+/// on to the next leg past its end. Returns the point the leg starts at.
+fn path_step(points: &[[f32; 4]], step: f32, pos: &mut V3, i: usize, dir: i32) -> usize {
+    let n = points.len();
+    let next = |i: usize| -> usize {
+        if i == n - 1 { if 1 <= dir { 0 } else { n - 2 } } else if i == 0 { if 1 <= dir { 1 } else { n - 1 } } else { (i as i32 + dir) as usize }
+    };
+    let p = |k: usize| -> V3 { let q = points[k]; [q[0], q[1], q[2]] };
+    let mut i = i;
+    let j = next(i);
+    let leg = sub(p(j), p(i));
+    let l = crate::hero::physics::len(leg);
+    let mut d = set_len(leg, 1.0);
+    let mut t = crate::hero::physics::dot(sub(*pos, p(i)), d) + step;
+    if l < t {
+        d = set_len(sub(p(next(j)), p(j)), 1.0);
+        t -= l;
+        i = j;
+    }
+    *pos = add(p(i), set_len(d, t));
+    i
+}
+
+/// 0x0a9e / 0x0a9f (`0x3d3b20`, sent by 0x0aae): at 0.95 of its class's scale, along the path `+0x74` (from the
+/// point `+0x78`) at its launcher's `+0x20` a second; going down, its launcher's third moby (`+0x0c`) is poked (and
+/// the first time, a sound); at the path's last point that poke is cleared and it is gone. It carries Ratchet.
+///
+/// Not ported: its sounds (`0x356978`).
+pub fn update_sent(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let class_scale = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
+    let launcher = w.mobys[id].pv_i(0x70) as usize;
+    let Some(lm) = w.mobys.get(launcher) else { return };
+    let (speed, far) = (lm.pv_f(0x20), lm.pv_i(0xc));
+    let Some(points) = usize::try_from(w.mobys[id].pv_i(0x74)).ok().and_then(|p| ctx.level.paths.get(p)).cloned() else { return };
+    if points.len() < 2 { return; }
+    let m = &mut w.mobys[id];
+    m.scale = class_scale * 0.95;
+    let (old, yaw) = (m.pos, m.rot[2]);
+    m.set_pv_v(0x60, old);
+    let mut pos = m.pos;
+    let i = path_step(&points, speed * 0.016_666_668, &mut pos, m.pv_i(0x78).max(0) as usize, 1);
+    m.pos = pos;
+    m.set_pv_i(0x78, i as i32);
+    let poke = |w: &mut MobyWorld, v: u8| if let Some(f) = usize::try_from(far).ok().and_then(|f| w.mobys.get_mut(f)) { f.timer = v; };
+    if pos[2] < old[2] {
+        m.set_pv_s(0x7c, m.pv_s(0x7c) | 0x80);
+        poke(w, 1);
+    }
+    if i == points.len() - 1 {
+        poke(w, 0);
+        w.delete(id);
+        return;
+    }
+    w.rebuild(id, &*ctx.host);
+    carry_hero(ctx, id, old, yaw, pos, yaw);
+}
+
+/// 0x0aae (`0x3d3cf0`, 1 placed): the launcher. Poked (1) it pokes its first moby (`+0x04`, the gate) and for
+/// `+0x24` ticks (2) every `+0x00` ticks sends a 0x0a9e or 0x0a9f (`0x3d3a18`) from the cuboid `+0x18` or `+0x1c`
+/// (the pattern `0x297c70`: 0 the first of each, 1 the second of each, 2 the second class from the first cuboid) on
+/// the path `+0x10` + 4·cuboid, poking its second moby (`+0x08`, the hatch) for 40 ticks each time; then (3) the gate's
+/// poke and its group's cleared, waiting again (1). While it runs and Ratchet is in its cuboid `+0x38`, a camera
+/// tweak (priority 5, `0x2d7468`) holds: pivot 6, firm, the stick off, facing −x once.
+pub fn update_0aae(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    const PATTERN: [i32; 16] = [0, 1, 2, 0, 0, 1, 0, 2, 0, 0, 1, 2, 0, 0, 1, 0];
+    let poke = |w: &mut MobyWorld, at: i32, v: u8| if let Some(m) = usize::try_from(at).ok().and_then(|i| w.mobys.get_mut(i)) { m.timer = v; };
+    let m = &mut w.mobys[id];
+    match m.state {
+        0 => {
+            m.set_pv_i(0x34, 0);
+            m.set_state(if m.pv_i(0x10) == -1 || m.pv_i(0x14) == -1 { 4 } else { 1 }, -1);
+        }
+        1 => {
+            if m.timer != 0 {
+                let gate = m.pv_i(4);
+                m.set_pv_i(0x28, 0);
+                m.timer = 0;
+                m.set_pv_i(0x3c, 0);
+                m.set_pv_i(0x2c, m.pv_i(0x24));
+                m.set_state(2, -1);
+                poke(w, gate, 1);
+            }
+        }
+        2 => {
+            let mut t = m.pv_i(0x28);
+            let due = crate::moby::countdown(&mut t);
+            m.set_pv_i(0x28, t);
+            if due {
+                let k = m.pv_i(0x3c);
+                match PATTERN.get(k as usize).copied().unwrap_or(-1) {
+                    0 => { m.set_pv_s(0x30, 0); m.set_pv_s(0x32, 0); }
+                    1 => { m.set_pv_s(0x30, 1); m.set_pv_s(0x32, 1); }
+                    2 => { m.set_pv_s(0x30, 0); m.set_pv_s(0x32, 1); }
+                    _ => {}
+                }
+                m.set_pv_i(0x3c, k + 1);
+                let (sel, kind) = (m.pv_s(0x30).clamp(0, 1) as usize, m.pv_s(0x32));
+                let path = m.pv_i(0x10 + 4 * sel);
+                let place = ctx.level.cuboid_place(m.pv_i(0x18 + 4 * sel));
+                let (period, hatch) = (m.pv_i(0), m.pv_i(8));
+                m.set_pv_i(0x28, period);
+                if let Some((pos, rot)) = place {
+                    let o = 0x0a9e + kind;
+                    let scale = w.class(o).map_or(1.0, |c| c.scale) * 0.95;
+                    let s = w.create(o);
+                    let sm = &mut w.mobys[s];
+                    (sm.drawn, sm.update_dist, sm.draw_dist, sm.state, sm.timer) = (1, 0xff, 0xff, 0, 0);
+                    sm.scale = scale;
+                    sm.pos = pos;
+                    sm.rot = rot;
+                    sm.set_pv_v(0x60, pos);
+                    sm.set_pv_i(0x70, id as i32);
+                    sm.set_pv_s(0x7c, sel as i16);
+                    sm.set_pv_s(0x7e, -1);
+                    sm.set_pv_i(0x74, path);
+                    sm.set_pv_i(0x78, 0);
+                    w.rebuild(s, &*ctx.host);
+                }
+                poke(w, hatch, 1);
+            }
+            let m = &mut w.mobys[id];
+            if m.pv_i(0x28) < m.pv_i(0) - 0x28 {
+                let hatch = m.pv_i(8);
+                poke(w, hatch, 0);
+            }
+            let m = &mut w.mobys[id];
+            let mut t = m.pv_i(0x2c);
+            let over = crate::moby::countdown(&mut t);
+            m.set_pv_i(0x2c, t);
+            if over { m.set_state(3, -1); }
+        }
+        3 => {
+            let (gate, g) = (m.pv_i(4), m.group);
+            m.set_state(1, -1);
+            poke(w, gate, 0);
+            if g != -1 {
+                for i in usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default() { w.mobys[i].timer = 0; }
+            }
+        }
+        _ => {}
+    }
+    // The camera: `+0x34` the request + 1 (0 none).
+    let m = &w.mobys[id];
+    let held = m.pv_i(0x34) - 1;
+    let want = m.state == 2 && ctx.level.in_cuboid(m.pv_i(0x38), ctx.hero.pos);
+    if want && held < 0 {
+        if let Some(slot) = ctx.game.cam_tweaks.request(5) {
+            let t = &mut ctx.game.cam_tweaks.slots[slot];
+            t.dir = [-1.0, 0.0, 0.0];
+            t.firm = true;
+            t.pivot_h = 6.0;
+            t.no_stick = true;
+            t.face_once = true;
+            w.mobys[id].set_pv_i(0x34, slot as i32 + 1);
+        }
+    } else if !want && 0 <= held {
+        ctx.game.cam_tweaks.release(held as usize);
+        w.mobys[id].set_pv_i(0x34, 0);
     }
 }
