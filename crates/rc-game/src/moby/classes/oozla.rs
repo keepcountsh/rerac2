@@ -1389,3 +1389,21 @@ pub fn update_0a1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     m.scale = class_scale;
     m.set_pv_f(0x74, frame);
 }
+/// 0x02e1 (`0x395620`): the scripted-camera talk (Ratchet held in 0x6f at a cuboid, the script camera `0x42bd08`; not
+/// ported: the script camera is not). **Stand-in** for Oozla's Tractor Beam sale (uid 104, the end of the tube: the
+/// shopkeeper's scene offers it for 1000 bolts; the scene is not ported): Ratchet within 5 of it gets the Tractor Beam
+/// (crate::hero::items::TRACTOR) once, its uid counted as the game does when a talk is over. Remove when the scene and
+/// the sale are ported.
+pub fn update_02e1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::items::TRACTOR;
+    let m = &w.mobys[id];
+    if ctx.game.level != 1 || m.uid != 104 || ctx.game.uid_count(m.uid) != 0 { return; }
+    if dist2(m.pos, ctx.hero.pos) < 5.0 {
+        let uid = m.uid;
+        if ctx.game.items.get(TRACTOR as usize).copied().unwrap_or(0) == 0 {
+            ctx.game.get_item(TRACTOR);
+            ctx.game.give_item(TRACTOR);
+        }
+        ctx.game.count_uid(uid);
+    }
+}

@@ -101,6 +101,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0936 | 0x08fa | 0x0a00 => Some(oozla::update_dynamo_platform),
         0x0aae => Some(oozla::update_0aae),
         0x0a1e => Some(oozla::update_0a1e),
+        0x02e1 => Some(oozla::update_02e1),
         0x0a9d | 0x0aa7 => Some(oozla::update_gate),
         0x0a9e | 0x0a9f => Some(oozla::update_sent),
         0x0a95 => Some(oozla::update_0a95),
