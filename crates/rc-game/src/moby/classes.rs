@@ -23,6 +23,7 @@ pub mod spitter;
 pub mod shot;
 pub mod spawn_point;
 pub mod tie_lights;
+pub mod tractor;
 pub mod wrench;
 
 use super::UpdateFn;
@@ -105,6 +106,8 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a95 => Some(oozla::update_0a95),
         0x0a7b => Some(oozla::update_0a7b),
         0x0825 => Some(dynamo::update),
+        0x00bc => Some(tractor::update),
+        0x0acb | 0x0acc => Some(tractor::update_box),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),
         _ => None,

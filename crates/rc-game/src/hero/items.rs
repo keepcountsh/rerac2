@@ -30,6 +30,9 @@ pub const DYNAMO_CLASS: i16 = 0x825;
 /// The Gravity Bomb (item 0x2a) and its hand moby's class (crate::moby::classes::gravity_bomb).
 pub const GRAVITY_BOMB: i32 = 0x2a;
 pub const GRAVITY_BOMB_CLASS: i16 = 0xce3;
+/// The Tractor Beam: item 0x2e, class 0xbc (L01 item table; sold on Oozla, crate::moby::classes::tractor).
+pub const TRACTOR: i32 = 0x2e;
+pub const TRACTOR_CLASS: i16 = 0xbc;
 
 /// An item record (`0x262500 + 0xe0·row`, row `0x139568[item]` = the item): the fields the port reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,11 +59,12 @@ pub struct ItemRow {
 }
 
 /// The rows the port has (L00 `0x262dc0`, `0x263f40`, `0x2649c0`; the Dynamo's from Oozla's live table).
-pub const ROWS: [ItemRow; 4] = [
+pub const ROWS: [ItemRow; 5] = [
     ItemRow { item: WRENCH, attach: 0, class: WRENCH_CLASS, stance: 0, icon: 0, use_seq: 0, keep: false, speed: 0.0, rate: 0.0, damage: 1.0, ammo: false, max_ammo: 0, start_ammo: 0 },
     ItemRow { item: LANCER, attach: 0, class: LANCER_CLASS, stance: 1, icon: 0xea64, use_seq: 0x38, keep: true, speed: 60.0, rate: 7.0, damage: 0.5, ammo: true, max_ammo: 200, start_ammo: 200 },
     ItemRow { item: DYNAMO, attach: 1, class: DYNAMO_CLASS, stance: 1, icon: 0xea7f, use_seq: 0x8d, keep: false, speed: 0.0, rate: 0.0, damage: 0.0, ammo: false, max_ammo: 0, start_ammo: 0 },
     ItemRow { item: GRAVITY_BOMB, attach: 0, class: GRAVITY_BOMB_CLASS, stance: 2, icon: 0xea65, use_seq: 0x36, keep: false, speed: 0.0, rate: 0.5, damage: 0.0, ammo: true, max_ammo: 8, start_ammo: 8 },
+    ItemRow { item: TRACTOR, attach: 0, class: TRACTOR_CLASS, stance: 1, icon: 0xea80, use_seq: 0, keep: true, speed: 0.0, rate: 0.0, damage: 0.0, ammo: false, max_ammo: 0, start_ammo: 0 },
 ];
 
 /// Item `item`'s row.

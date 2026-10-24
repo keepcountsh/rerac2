@@ -45,7 +45,7 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
 
 /// The hand gadgets the port loads with every level (`G/GADGET.WAD`, rc_formats::disc::gadget): the game streams the
 /// one in Ratchet's hand (`0x306018`) when he takes it; the port has them from the start.
-pub const GADGETS: [i32; 3] = [rc_game::hero::items::LANCER_CLASS as i32, rc_game::hero::items::GRAVITY_BOMB_CLASS as i32, rc_game::hero::items::DYNAMO_CLASS as i32];
+pub const GADGETS: [i32; 4] = [rc_game::hero::items::LANCER_CLASS as i32, rc_game::hero::items::GRAVITY_BOMB_CLASS as i32, rc_game::hero::items::DYNAMO_CLASS as i32, rc_game::hero::items::TRACTOR_CLASS as i32];
 
 /// Gadget `o_class` (part A of its `GADGET.WAD` entry): its class and sequences added to the level's moby classes, its
 /// textures appended to the moby texture table (slot `k` = entry `moby_textures.len() + k`, as the armour's).
