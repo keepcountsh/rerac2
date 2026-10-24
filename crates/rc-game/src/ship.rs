@@ -54,6 +54,8 @@ pub const CLASS: i16 = 0x19;
 pub const SHIP_CLASS: i16 = 0x0fbf;
 
 const DEG: f32 = 0.017_453_294;
+/// The view's half-angle tangent (`0x1bd2f0` in play) for the screen tests.
+const TAN: f32 = 0.62;
 
 /// `0x2eafb8(x, t, k, d, max, &v)`: `v += k·(t − x) − d·v`, clamped to ±max (max ≠ 0) and to ±|t − x|; x + v.
 fn spring(x: f32, t: f32, k: f32, d: f32, max: f32, v: &mut f32) -> f32 {
@@ -92,6 +94,13 @@ pub struct Flight {
     parts: Vec<(usize, bool)>,
     /// The ship's `+8`: the lasers' wait; the aim point (`+0x20`); the frames flown (`0x1b1b48`'s parity).
     gun_wait: i16,
+    /// The missiles: `+10` their wait, the weapon slot 1's ammo, the lock's candidate (`+0x14`), its ticks (`+0x1c`)
+    /// and the lock (`+0x18`).
+    missile_wait: i16,
+    pub missiles: i32,
+    candidate: Option<usize>,
+    lock_ticks: i32,
+    locked: Option<usize>,
     aim: V3,
     frame: u32,
     /// The ship's `+0x34` (the boost's ramp, 0..8) and the boost's fuel (slot 7's `+0x14`).
@@ -200,6 +209,11 @@ impl Flight {
             ship,
             parts: Vec::new(),
             gun_wait: 0,
+            missile_wait: 0,
+            missiles: missile::AMMO,
+            candidate: None,
+            lock_ticks: 0,
+            locked: None,
             aim: pos,
             frame: 0,
             boost: 0,
@@ -250,6 +264,8 @@ impl Flight {
         self.place_ship(w);
         self.follow(w, host);
         self.fire(pad, w, host);
+        self.lock(w, TAN);
+        self.fire_missile(pad, w, host);
         // The boost's ramp in the ship's `+0x34` (its flame's, [`draw_flame`]).
         if let Some(ship) = self.ship { w.mobys[ship].set_pv_i(0x34, self.boost); }
         self.cut_after();
@@ -720,6 +736,8 @@ mod hud {
     pub const CROSS_FX: u16 = 0x3f;
     pub const CROSS: f32 = 0.2;
     pub const CROSS_RGBA: u32 = 0x8020_8020;
+    /// The lock's corners' half size, pixels.
+    pub const LOCK: f32 = 12.0;
     /// `0x2b32e0`: the corners (across, up); `0x2b3370`: the texels; `$gp+0x2750`: each strip's (corner, texel).
     pub const CROSS_CORNERS: [[f32; 2]; 9] = [[-0.5, 0.5], [-0.5, 0.0], [0.0, 0.0], [0.0, 0.5], [-0.5, -0.5], [0.0, -0.5], [0.5, 0.0], [0.5, 0.5], [0.5, -0.5]];
     pub const CROSS_TEXELS: [[f32; 2]; 16] = [
@@ -765,6 +783,26 @@ impl Flight {
                 let pos = strip.map(|(c, _)| { let [a, u] = hud::CROSS_CORNERS[c]; [x - a * hud::CROSS * sx, y - u * hud::CROSS * sy] });
                 let uv = strip.map(|(_, k)| { let [u, v] = hud::CROSS_TEXELS[k]; [u * tw, v * th] });
                 out.push(Quad { pos, uv, tex: t, rgba: hud::CROSS_RGBA.to_le_bytes() });
+            }
+        }
+        // The lock (`0x437258` → `0x437530`: the candidate's four turning corners closing in as the lock builds, red
+        // once locked; drawn here with the crosshair's texture).
+        if let Some(t) = self.locked.or(self.candidate).filter(|&t| w.mobys.get(t).is_some()) {
+            let d = sub(w.mobys[t].pos, self.pos);
+            let z = dot(r[0], d);
+            if let (true, Some((tx, [tw, th]))) = (0.0 < z, tex(hud::CROSS_FX)) {
+                let x = cx - dot(r[1], d) / z * (cx / tan);
+                let y = cy - dot(r[2], d) / z * (cy / (tan * 0.775));
+                let share = self.lock_ticks as f32 / missile::LOCK_TICKS as f32;
+                let h = hud::LOCK * (1.0 + 4.0 * (1.0 - share));
+                let rgba: u32 = if self.locked.is_some() { 0x8020_20ff } else { 0x6020_8080 };
+                let spin = self.frame as f32 * 0.05;
+                for k in 0..4 {
+                    let a = spin + k as f32 * std::f32::consts::FRAC_PI_2;
+                    let (s, c) = a.sin_cos();
+                    let corner = |u: f32, v: f32| [x + (u * c - v * s) * h, y + (u * s + v * c) * h];
+                    out.push(Quad { pos: [corner(0.2, 1.0), corner(1.0, 1.0), corner(0.2, 0.2), corner(1.0, 0.2)], uv: [[0.1 * tw, 0.1 * th], [0.99 * tw, 0.1 * th], [0.1 * tw, 0.99 * th], [0.99 * tw, 0.99 * th]], tex: tx, rgba: rgba.to_le_bytes() });
+                }
             }
         }
         // The radar.
@@ -909,4 +947,156 @@ impl Flight {
     pub fn counts(&self, w: &MobyWorld) -> [(u32, i32, [f32; 2]); 2] {
         [(0x3067, crate::moby::classes::space::active_count(w) as i32, [24.0, 357.0]), (0x3068, self.waves + 1, [24.0, 384.0])]
     }
+
+    /// The ship's state for the HUD (`0x40e7a8` draws the shield and the hull as bars from the level's GUI sprites and
+    /// the weapon's ammo as `"%d/%d"` at (0x43, 5); the bars' sprites are not loaded, so all three are text here).
+    pub fn status(&self) -> [(String, [f32; 2]); 2] {
+        [
+            (format!("{}/{}", self.missiles, missile::AMMO), [0x43 as f32, 5.0]),
+            (format!("Shield {}  Hull {}", self.shield, self.hull), [24.0, 330.0]),
+        ]
+    }
+}
+
+/// The missile's class (`0x3caae8`: 0x974; 0x1161 with the upgrade, not kept).
+pub const MISSILE_CLASS: i16 = 0x0974;
+
+/// The missiles' tuning (`$gp+0xbe4` 90 a second, `+0xbec` 500 far, `+0xbf4` its scale 0.3, `+0xc04` the damage 5,
+/// `+0x25b4` 90 ticks between, the weapon slot 1's 10; the lock `+0x2618` 75 ticks, `+0x2624` 25°, `+0x2628` 60 far,
+/// `+0x262c` the pixels round the crosshair (40 for the classes without an entry)).
+mod missile {
+    pub const SPEED: f32 = 90.0;
+    pub const RANGE: f32 = 500.0;
+    pub const SCALE: f32 = 0.3;
+    pub const DAMAGE: f32 = 5.0;
+    pub const WAIT: i16 = 90;
+    pub const AMMO: i32 = 10;
+    pub const LOCK_TICKS: i32 = 75;
+    pub const LOCK_CONE: f32 = 25.0;
+    pub const LOCK_RANGE: f32 = 60.0;
+    pub const LOCK_PIXELS: f32 = 40.0;
+}
+
+impl Flight {
+    /// `0x436d20`: the missiles' lock (the ship's `+0x14` the candidate, `+0x1c` its ticks, `+0x18` the lock). With
+    /// missiles, the candidate (`0x436f78`: a target-listed fighter on screen within 40 pixels of the crosshair,
+    /// within 60, the line clear) held for 75 ticks becomes the lock; the lock holds while it lives within 25° of the
+    /// ship's facing (the line clear, tested every fifth tick).
+    fn lock(&mut self, w: &MobyWorld, tan: f32) {
+        if self.missiles < 1 {
+            (self.candidate, self.lock_ticks, self.locked) = (None, 0, None);
+            return;
+        }
+        let Some(ship) = self.ship else { return };
+        let alive = |t: usize| w.mobys.get(t).is_some_and(|m| m.state < 0x80 && m.draw_dist != 0 && m.mode & 1 == 0);
+        if let Some(t) = self.locked {
+            let d = sub(w.mobys[t].pos, w.mobys[ship].pos);
+            let off = crate::hero::physics::len(d);
+            let angle = if off == 0.0 { std::f32::consts::PI } else { (dot(w.mobys[ship].rows[0], d) / off).clamp(-1.0, 1.0).acos() };
+            if !alive(t) || missile::LOCK_CONE * DEG < angle {
+                (self.locked, self.candidate, self.lock_ticks) = (None, None, 0);
+            } else {
+                self.lock_ticks = (self.lock_ticks + 1).min(missile::LOCK_TICKS);
+            }
+            return;
+        }
+        let r = self.rows;
+        let (cx, cy) = (crate::gui::SCREEN_W * 0.5, crate::gui::SCREEN_H * 0.5);
+        let screen = |p: V3| {
+            let d = sub(p, self.pos);
+            let z = dot(r[0], d);
+            (0.0 < z).then(|| [cx - dot(r[1], d) / z * (cx / tan), cy - dot(r[2], d) / z * (cy / (tan * 0.775))])
+        };
+        let Some(aim) = screen(self.aim) else { return };
+        let found = (0..w.mobys.len()).find(|&i| {
+            let m = &w.mobys[i];
+            if m.o_class != crate::moby::classes::space::FIGHTER || !alive(i) || m.mode & mode::TARGET == 0 { return false; }
+            if missile::LOCK_RANGE < crate::hero::physics::dist(self.pos, m.pos) { return false; }
+            screen(m.pos).is_some_and(|p| (p[0] - aim[0]).abs() < missile::LOCK_PIXELS && (p[1] - aim[1]).abs() < missile::LOCK_PIXELS)
+        });
+        if found == self.candidate && found.is_some() {
+            self.lock_ticks += 1;
+            if missile::LOCK_TICKS < self.lock_ticks {
+                self.lock_ticks = missile::LOCK_TICKS;
+                self.locked = found;
+            }
+        } else {
+            self.candidate = found;
+            self.lock_ticks = 0;
+        }
+    }
+
+    /// `0x436440`'s missiles (○, slot 1): with ammo every 90 ticks one from just under the ship (0, 0, −0.1 in its
+    /// frame) along its facing, at the lock (`0x3caae8`).
+    fn fire_missile(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
+        let fired = dec_timer(&mut self.missile_wait) != 0 && pad.held & button::CIRCLE != 0 && 0 < self.missiles;
+        if !fired { return; }
+        let Some(ship) = self.ship else { return };
+        if w.class(MISSILE_CLASS).is_none() { return; }
+        self.missiles -= 1;
+        self.missile_wait = missile::WAIT;
+        let (pos, rows) = (w.mobys[ship].pos, w.mobys[ship].rows);
+        let at = add(pos, through(&rows, [0.0, 0.0, -0.1]));
+        let speed = missile::SPEED / 60.0;
+        let ticks = (missile::RANGE / speed) as i32;
+        let base = w.class(MISSILE_CLASS).map_or(1.0, |c| c.scale);
+        let id = w.create(MISSILE_CLASS);
+        let m = &mut w.mobys[id];
+        m.state = 1;
+        m.update_dist = 0xff;
+        m.draw_dist = 0x1ff;
+        m.drawn = 1;
+        m.mode |= mode::KEEP_ROWS;
+        m.rows = rows;
+        m.pos = at;
+        m.scale = base * missile::SCALE;
+        m.set_pv_v(0, set_len(rows[0], speed));
+        m.set_pv_i(0x10, self.locked.map_or(0, |t| t as i32 + 1));
+        m.set_pv_i(0x18, ticks);
+        m.set_pv_f(0x1c, 1.0 / ticks as f32);
+        m.set_pv_i(0x20, ship as i32 + 1);
+        m.set_pv_f(0x30, base);
+        w.rebuild(id, host);
+    }
+}
+
+/// `0x3caca8`: the missile. While its target lives, after its first 4 ticks it flies at it (before, it turns to it,
+/// `0x3cb1e0`: here at once too); it grows to its scale (0.05 a tick); its time, the 2..1021 box, the world's line
+/// (`0x2f1998`) and the mobys' (`0x2f29f8`, 0.2) end it — a moby hit takes 5 (flags 0x810000, `0x3cb4f0`), and it
+/// bursts (`0x3cbfe8`, here the blast at 0.3). Not ported: its trail (`0x3420e8`), the 0x956's sparks.
+pub fn update_missile(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let from = w.mobys[id].pos;
+    let mut v = w.mobys[id].pv_v(0);
+    let speed = crate::hero::physics::len(v);
+    if let Some(t) = usize::try_from(w.mobys[id].pv_i(0x10) - 1).ok().filter(|&t| w.mobys.get(t).is_some_and(|m| m.state < 0x80 && m.draw_dist != 0)) {
+        v = set_len(sub(w.mobys[t].pos, from), speed);
+        w.mobys[id].set_pv_v(0, v);
+        let f = unit(v);
+        let l = unit(cross([0.0, 0.0, 1.0], f));
+        w.mobys[id].rows = [f, l, cross(f, l)];
+    }
+    let to = add(from, v);
+    let base = w.mobys[id].pv_f(0x30);
+    {
+        let m = &mut w.mobys[id];
+        m.pos = to;
+        m.scale = (m.scale + 0.05).min(base * missile::SCALE.max(1.0));
+    }
+    let mut left = w.mobys[id].pv_i(0x18);
+    let over = countdown(&mut left);
+    w.mobys[id].set_pv_i(0x18, left);
+    if over || to.iter().any(|&c| !(2.0..=1021.0).contains(&c)) { return w.delete(id); }
+    let owner = w.mobys[id].pv_i(0x20) - 1;
+    let hit = ctx.coll.and_then(|c| crate::collision::coll_line_m(c, ctx.scene, from, to, crate::collision::QueryFlags(0), usize::try_from(owner).ok()));
+    if let Some(h) = hit {
+        if let Some(t) = h.moby.filter(|&t| t != id) {
+            let d = unit(v);
+            let tmpl = HitTemplate::new(missile::DAMAGE, Some(id), 0x0081_0000, [d[0], d[1], d[2], 0.0]);
+            let p = w.mobys[t].pos;
+            w.deliver_hit_any(t, &tmpl, [p[0], p[1], p[2], 1.0]);
+        }
+        crate::moby::blast::burst(ctx, h.point, &crate::moby::blast::Blast { size: 0.3, bursts: [0x14, 0x0a, 0x0a], puffs: 0x0a, streaks: 0x10 });
+        return w.delete(id);
+    }
+    w.rebuild(id, &*ctx.host);
 }

@@ -1334,10 +1334,14 @@ fn draw_hud(
                 let label = String::from_utf8_lossy(strings.get(id)).trim_end_matches('\0').to_string();
                 draws.push(rc_game::hud::Draw::Text { text: format!("{label}: {n}"), pos, scale: 1.0, colour: 0x8080_8080, align: rc_game::hud::Align::Left });
             }
+            for (text, pos) in f.status() {
+                draws.push(rc_game::hud::Draw::Text { text, pos, scale: 1.0, colour: 0x8080_8080, align: rc_game::hud::Align::Left });
+            }
             let icon = |id: u16, fr: u16| hud.icons.get(&(id, fr)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
             quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
         }
-        let mut draws = p.hud.draw(p.game.bolts);
+        // In the space fights the ship's HUD stands for Ratchet's (rc_game::ship::Flight::status).
+        let mut draws = if p.ship.is_some() { Vec::new() } else { p.hud.draw(p.game.bolts) };
         // The quick select's ring and texts (rc_game::quick_select).
         if let Some(m) = p.mobys.as_ref() {
             let slots = rc_game::quick_select::slots(&p.game, &m.level.items);
