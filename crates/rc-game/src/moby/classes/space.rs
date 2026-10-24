@@ -246,7 +246,9 @@ fn think(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let side = if sub_rot(yaw, old_yaw) < 0.0 { -1.0 } else { 1.0 };
     let turned = rot_dist(old_yaw, yaw);
     let roll = (ai_f(w, id, a::ROLL) * 0.98 + turned * -side * kd * 1.413_716_7 * 8.0).clamp(-1.413_716_7, 1.413_716_7);
-    (set_ai_f(w, id, a::ROLL, roll), set_ai_f(w, id, a::PITCH, pitch), set_ai_f(w, id, a::YAW, yaw));
+    set_ai_f(w, id, a::ROLL, roll);
+    set_ai_f(w, id, a::PITCH, pitch);
+    set_ai_f(w, id, a::YAW, yaw);
     w.mobys[id].rows = crate::moby::attach::rows_of([roll, pitch, yaw]);
     // The state.
     match state {
@@ -425,7 +427,7 @@ pub fn active_count(w: &MobyWorld) -> usize {
 pub fn leader(w: &MobyWorld, frame: u32) -> i32 {
     let has = |c: i16| w.mobys.iter().any(|m| m.o_class == c && m.state < 0x80 && m.pv_i(AI + a::ACTIVE) == 1);
     match (has(FIGHTER), has(GUNSHIP)) {
-        (true, true) => if frame % 2 == 0 { FIGHTER as i32 } else { GUNSHIP as i32 },
+        (true, true) => if frame.is_multiple_of(2) { FIGHTER as i32 } else { GUNSHIP as i32 },
         (true, false) => FIGHTER as i32,
         (false, true) => GUNSHIP as i32,
         _ => 0,
@@ -703,7 +705,9 @@ pub fn update_asteroid(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 crate::particles::puff(sys, g, 0.0, 1.0, 1.0, size * 210_000.0, at, spin, v, 0x7fff_ffff, 0);
             }
         }
-        if ram { w.mobys.iter().position(|m| m.o_class == crate::ship::SHIP_CLASS && m.state < 0x80).map(|s| crate::ship::shake(w, s, if class == 0x0955 { 0.05 } else { 0.15 }, if class == 0x0955 { 30 } else { 60 })); }
+        if let (true, Some(s)) = (ram, w.mobys.iter().position(|m| m.o_class == crate::ship::SHIP_CLASS && m.state < 0x80)) {
+            crate::ship::shake(w, s, if class == 0x0955 { 0.05 } else { 0.15 }, if class == 0x0955 { 30 } else { 60 });
+        }
         if 5.0 <= AST_SIZE[k] { drop(w, id, ctx); }
         return w.delete(id);
     }

@@ -408,7 +408,7 @@ impl Flight {
         let square = pad.held & button::SQUARE != 0;
         if self.fuel == 0 || !square {
             countdown(&mut self.boost);
-            if self.boost == 0 && self.frame % 3 == 0 && !square { self.fuel = (self.fuel + 1).min(k::FUEL); }
+            if self.boost == 0 && self.frame.is_multiple_of(3) && !square { self.fuel = (self.fuel + 1).min(k::FUEL); }
             // `0x36c890`: the boost's loop stops.
             if 0 <= self.boost_sound {
                 host.stop_sound(self.boost_sound);
@@ -794,8 +794,8 @@ mod bolt {
     pub const RAY_A: u32 = 0x1000_0000;
 }
 
-/// A strip of points in the frame (rows, origin) as its quads.
-fn push_strip(out: &mut Vec<crate::fx::FxQuad>, fx: usize, additive: bool, rows: [V3; 3], at: V3, pts: &[[f32; 3]], st: &[[f32; 2]], rgba: u32) {
+/// A strip of points in the frame (its rows, its origin) as its quads.
+fn push_strip(out: &mut Vec<crate::fx::FxQuad>, fx: usize, additive: bool, (rows, at): ([V3; 3], V3), pts: &[[f32; 3]], st: &[[f32; 2]], rgba: u32) {
     let world: Vec<V3> = pts.iter().map(|&p| add(at, through(&rows, p))).collect();
     for k in (0..world.len().saturating_sub(2)).step_by(2) {
         out.push(crate::fx::FxQuad { fx, additive, corners: [world[k], world[k + 1], world[k + 2], world[k + 3]], st: [st[k], st[k + 1], st[k + 2], st[k + 3]], rgba: [rgba; 4] });
@@ -828,16 +828,16 @@ pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::Fx
     let r = m.rows;
     let tail = sub(m.pos, r[0]);
     let stretch = |pts: &[[f32; 3]], x: f32, y: f32| -> Vec<[f32; 3]> { pts.iter().map(|p| [p[0] * x, p[1] * y, p[2] * y]).collect() };
-    push_strip(out, 0x16, true, r, tail, &stretch(&bolt::CORE, long, 1.0), &bolt::CORE_ST, bolt::CORE_RGBA);
+    push_strip(out, 0x16, true, (r, tail), &stretch(&bolt::CORE, long, 1.0), &bolt::CORE_ST, bolt::CORE_RGBA);
     let across = unit(cross(r[0], sub(cam, tail)));
     let facing = [r[0], across, cross(across, r[0])];
     let flat = |pts: &[[f32; 3]], x: f32, y: f32| -> Vec<[f32; 3]> { pts.iter().map(|p| [p[0] * x, p[1] * y, p[2]]).collect() };
-    push_strip(out, 0xb, false, facing, tail, &flat(&bolt::SHEATH, long, 1.0), &bolt::SHEATH_ST, bolt::SHEATH_A | rgb);
-    push_strip(out, 0xb, true, facing, tail, &flat(&bolt::SHEATH, long * 1.1, 3.0), &bolt::SHEATH_ST, bolt::GLOW_A | rgb);
+    push_strip(out, 0xb, false, (facing, tail), &flat(&bolt::SHEATH, long, 1.0), &bolt::SHEATH_ST, bolt::SHEATH_A | rgb);
+    push_strip(out, 0xb, true, (facing, tail), &flat(&bolt::SHEATH, long * 1.1, 3.0), &bolt::SHEATH_ST, bolt::GLOW_A | rgb);
     let head = add(tail, scale(r[0], ahead));
     let sized = |l: f32| -> Vec<[f32; 3]> { bolt::HEAD.iter().map(|&p| set_len(p, l)).collect() };
-    push_strip(out, 0xb, false, facing, head, &sized(0.4), &bolt::QUAD_ST, bolt::HEAD_A | rgb);
-    push_strip(out, 0xb, true, facing, head, &sized(0.04), &bolt::QUAD_ST, bolt::DOT_RGBA);
+    push_strip(out, 0xb, false, (facing, head), &sized(0.4), &bolt::QUAD_ST, bolt::HEAD_A | rgb);
+    push_strip(out, 0xb, true, (facing, head), &sized(0.04), &bolt::QUAD_ST, bolt::DOT_RGBA);
     // The flare: its rows toward the camera, across (against world up) and up, turned about the first.
     let to_cam = unit(sub(cam, head));
     let a0 = unit(cross(to_cam, [0.0, 0.0, 1.0]));
@@ -848,7 +848,7 @@ pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::Fx
     for k in 0..4 {
         let (s, c) = (turn + k as f32 * std::f32::consts::FRAC_PI_2).sin_cos();
         let (a, b) = (add(scale(a0, c), scale(b0, s)), sub(scale(b0, c), scale(a0, s)));
-        push_strip(out, 0x40, true, [to_cam, a, b], head, &ray, &bolt::QUAD_ST, bolt::RAY_A | rgb);
+        push_strip(out, 0x40, true, ([to_cam, a, b], head), &ray, &bolt::QUAD_ST, bolt::RAY_A | rgb);
     }
 }
 
@@ -915,7 +915,8 @@ fn update_enemy_shot(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 
 /// The flame's layers (`$gp+0x1d88..+0x1dec`): (colour, first size, last size, jitter, step back, sprites), cruising and
 /// boosting.
-const FLAME: [[(u32, f32, f32, f32, f32, i32); 2]; 2] = [
+type FlameLayer = (u32, f32, f32, f32, f32, i32);
+const FLAME: [[FlameLayer; 2]; 2] = [
     [(0x4020_4080, 0.075, 0.02, 0.015, 0.0075, 25), (0xffff_ffff, 0.035, 0.005, 0.015, 0.005, 15)],
     [(0x4020_5080, 0.15, 0.04, 0.03, 0.015, 30), (0xffff_ffff, 0.04, 0.01, 0.015, 0.01, 20)],
 ];
@@ -940,9 +941,7 @@ pub fn draw_flame(w: &MobyWorld, id: usize, cam: V3, rng: &mut crate::rng::Rng, 
     let r = m.rows;
     let nozzle = add(m.pos, through(&r, [-0.135, 0.0, 0.07]));
     let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
-    for layer in 0..2 {
-        let (c0, a0, b0, j0, s0, n0) = FLAME[0][layer];
-        let (c1, a1, b1, j1, s1, n1) = FLAME[1][layer];
+    for (&(c0, a0, b0, j0, s0, n0), &(c1, a1, b1, j1, s1, n1)) in FLAME[0].iter().zip(&FLAME[1]) {
         let mix = |x: f32, y: f32| x + (y - x) * t;
         let (first, last, jitter, step) = (mix(a0, a1), mix(b0, b1), mix(j0, j1), mix(s0, s1));
         let n = (n0 as f32 + (n1 - n0) as f32 * t) as i32;
@@ -1459,7 +1458,7 @@ impl Flight {
                         self.pos = add(self.pos, out);
                         w.mobys[ship].pos = add(w.mobys[ship].pos, out);
                     }
-                    if self.frame % 4 == 0 { self.damage(w, 1); }
+                    if self.frame.is_multiple_of(4) { self.damage(w, 1); }
                     // `+0x90`: the contact, out along the face by 0.8 of the sphere (`$gp+0x272c` 0.25).
                     self.scrape = Some(add(h.point, scale(nrm, 0.25 * 0.8)));
                 }
@@ -1574,6 +1573,7 @@ impl Flight {
     /// * the weapon's icon (0xea97: frames 1 and 0 behind it, 7 the missiles, at (21, 7) 30 square) and the boost's
     ///   (frame 15 at (462, 9)), the ammo `"%d/%d"` at (67, 5);
     /// * the radar's frame (0xba..0xbc at (444, 344), ×0.8).
+    ///
     /// Not ported: the upgraded shields' rings 0x84 / 0x85, the 16:9 shift, the weapon switch (one weapon here).
     pub fn hud_items(&self, w: &MobyWorld, bolts: (i32, i32), label: &dyn Fn(u32) -> String) -> Vec<HudItem> {
         use crate::hud::{Align, Draw};
@@ -1609,7 +1609,7 @@ impl Flight {
         if 0.0 < shield { out.push(d(Draw::Sprite { id: 0x83, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: lerp(shield) })); }
         // The hull's and the boost's bars.
         let hull = self.hull as f32 * 0.01;
-        let shown = if hull <= 0.3 { (self.frame / 5) % 2 == 0 } else { true };
+        let shown = if hull <= 0.3 { (self.frame / 5).is_multiple_of(2) } else { true };
         if shown && 0.0 < hull { bar(&mut out, 14, 27, 156.0, hull * 200.0 + 156.0, 0x8000_00ff, lerp(hull)); }
         let fuel = self.fuel as f32 / k::FUEL as f32;
         if 0.0 < fuel { bar(&mut out, 8, 19, 450.0, 450.0 + (386.0 - 450.0) * fuel, 0x8000_00ff, lerp(fuel)); }

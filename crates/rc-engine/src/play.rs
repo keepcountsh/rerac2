@@ -1321,7 +1321,7 @@ fn draw_hud(
                 // The HUD's atlas holds the GS's bytes (0x80 = 1.0); the FX textures' alpha is decoded to 0..0xff (their
                 // colours stay as the GS has them, up to 2.0).
                 let mut t = t.clone();
-                for px in t.rgba.chunks_exact_mut(4) { px[3] = ((px[3] as u16 + 1) >> 1) as u8; }
+                for px in t.rgba.as_chunks_mut::<4>().0 { px[3] = ((px[3] as u16 + 1) >> 1) as u8; }
                 textures.push(t);
             }
         }
