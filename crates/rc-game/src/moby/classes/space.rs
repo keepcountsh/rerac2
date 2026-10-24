@@ -554,7 +554,12 @@ pub fn update_pickup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         if d < 0.5 {
             // `0x36cc38(0xc, 0, m, 0xfbf)`; the bolts' first one's help (`0x307d80(0xa3b, 0x92)`).
             ctx.host.play_sound_of(&w.mobys[id], crate::ship::SHIP_CLASS, 0xc, 0);
-            if class == BOLT_PICKUP && !ctx.game.bolt_help_done { ctx.game.bolt_help_done = ctx.game.help(0xa3b, 0x92); }
+            if class == BOLT_PICKUP {
+                if !ctx.game.bolt_help_done { ctx.game.bolt_help_done = ctx.game.help(0xa3b, 0x92); }
+                // `0x1a7a04`: the bolts taken (the HUD's panel shows it for 300 ticks, `0x40f3e0`).
+                ctx.game.space_bolts += 1;
+                ctx.game.space_bolts_shown = 300;
+            }
             if class == SHIELD_PICKUP {
                 let add = if ctx.game.rng.randi(4) != 0 { 0x21 } else { crate::ship::SHIELD_MAX };
                 let n = w.mobys[s].pv_i(crate::ship::SHIELD_ADD) + add;

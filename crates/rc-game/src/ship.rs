@@ -123,6 +123,12 @@ pub struct Flight {
     lock_heard: bool,
     hits_heard: u32,
     hit_sound: bool,
+    /// The shield bubble's texels' turns, its hit flash's ticks (a hit this tick); the dust's specks and their runs.
+    shell_spin: [f32; 3],
+    hit_flash: i32,
+    hit_flash_new: bool,
+    dust: [V3; 16],
+    dust_left: [f32; 16],
     /// The camera's shake: its size, ticks left and length.
     shake: f32,
     shake_ticks: i32,
@@ -250,6 +256,11 @@ impl Flight {
             lock_heard: false,
             hits_heard: 0,
             hit_sound: false,
+            shell_spin: [0.0; 3],
+            hit_flash: 0,
+            hit_flash_new: false,
+            dust: [[0.0; 3]; 16],
+            dust_left: [0.0; 16],
             shake: 0.0,
             shake_ticks: 0,
             shake_len: 0,
@@ -317,6 +328,7 @@ impl Flight {
     /// the ship gone, 60 ticks).
     fn take_hits(&mut self, w: &mut MobyWorld) {
         self.hit_sound = false;
+        self.hit_flash_new = false;
         let Some(ship) = self.ship else { return };
         let add = w.mobys[ship].pv_i(SHIELD_ADD);
         if add != 0 {
@@ -327,6 +339,7 @@ impl Flight {
         let n = w.mobys[ship].pv_i(HITS);
         if n == 0 { return; }
         w.mobys[ship].set_pv_i(HITS, 0);
+        self.hit_flash_new = true;
         // `0x375410`: one hit in six is heard (`0x36cc38(0xe, 0, ship, 0xfbf)`).
         self.hits_heard = self.hits_heard.wrapping_add(1);
         if self.hits_heard % 6 == 1 { self.hit_sound = true; }
@@ -828,6 +841,8 @@ mod hud {
     pub const CROSS_FX: u16 = 0x3f;
     pub const CROSS: f32 = 0.2;
     pub const CROSS_RGBA: u32 = 0x8020_8020;
+    /// The PS2's crosshair against the template's square (its 3D draw's scale on screen).
+    pub const CROSS_FIT: [f32; 2] = [1.11, 1.41];
     /// The lock's corners' half size, pixels.
     pub const LOCK: f32 = 12.0;
     /// `0x2b32e0`: the corners (across, up); `0x2b3370`: the texels; `$gp+0x2750`: each strip's (corner, texel).
@@ -871,8 +886,10 @@ impl Flight {
             let (sx, sy) = (cx / tan / z, cy / (tan * 0.775) / z);
             let x = cx - dot(r[1], d) * sx;
             let y = cy - dot(r[2], d) * sy;
+            // Sized as the PS2's 3D draw shows it (measured against a capture: ×1.11 across, ×1.41 up).
+            let (sx, sy) = (sx * hud::CROSS_FIT[0], sy * hud::CROSS_FIT[1]);
             for strip in hud::CROSS_STRIPS {
-                let pos = strip.map(|(c, _)| { let [a, u] = hud::CROSS_CORNERS[c]; [x - a * hud::CROSS * sx, y - u * hud::CROSS * sy] });
+                let pos = strip.map(|(c, _)| { let [u, a] = hud::CROSS_CORNERS[c]; [x - a * hud::CROSS * sx, y - u * hud::CROSS * sy] });
                 let uv = strip.map(|(_, k)| { let [u, v] = hud::CROSS_TEXELS[k]; [u * tw, v * th] });
                 out.push(Quad { pos, uv, tex: t, rgba: hud::CROSS_RGBA.to_le_bytes() });
             }
@@ -1294,52 +1311,6 @@ impl Flight {
 pub const HUD_ICONS: u16 = 0xea97;
 
 impl Flight {
-    /// `0x40e7a8`, the space fights' HUD, as GUI draws and rectangles: the middle's sprites 0x80 / 0x81 at (256, 200)
-    /// with the shield's 0x83 over them tinted from red to green by the shield left; the hull's bar (156..356 × 14..27,
-    /// red to green, blinking every 5 ticks under 30%); the boost's fuel bar (450 → 386 × 8..19); the weapon's icon
-    /// (21, 7) on its backings with its ammo `"%d/%d"` at (67, 5) and the boost's (462, 9); the counts; the radar's
-    /// frame (sprites 0xba..0xbc at (444, 344), ×0.8). Not ported: the upgraded shields' rings 0x84 / 0x85, the 16:9
-    /// shift, the weapon switch (`0x320310`: one weapon here).
-    pub fn hud_draws(&self, w: &MobyWorld, label: &dyn Fn(u32) -> String) -> (Vec<crate::hud::Draw>, Vec<crate::gui::Quad>) {
-        use crate::hud::{Align, Draw};
-        let mut d = Vec::new();
-        let mut q = Vec::new();
-        if matches!(self.mode, 3..=6) { return (d, q); }
-        let rgba = |c: u32| c.to_le_bytes();
-        let lerp = |t: f32| crate::hud::lerp_rgba(t.clamp(0.0, 1.0), 0x8000_00ff, 0x8000_ff00);
-        // The middle and the shield.
-        let mid = [256.0, 200.0];
-        d.push(Draw::Sprite { id: 0x80, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: 0x6044_2d00 });
-        d.push(Draw::Sprite { id: 0x81, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: 0x55f0_c070 });
-        let shield = self.shield as f32 / k::SHIELD as f32;
-        if std::env::var_os("RC_SHIP_TRACE").is_some() { println!("ship hud: shield {} hull {} fuel {} lerp {:#x}", self.shield, self.hull, self.fuel, lerp(shield)); }
-        if 0.0 < shield { d.push(Draw::Sprite { id: 0x83, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: lerp(shield) }); }
-        // The hull's bar.
-        let hull = self.hull as f32 * 0.01;
-        let blink_off = hull <= 0.3 && (self.frame / 5) % 2 == 1;
-        if !blink_off && 0.0 < hull {
-            crate::gui::rect(&mut q, 14, 27, 156, (hull * 200.0 + 156.0) as i32, rgba(lerp(hull)));
-        }
-        // The boost's bar.
-        let fuel = self.fuel as f32 / k::FUEL as f32;
-        if 0.0 < fuel {
-            crate::gui::rect(&mut q, 8, 19, (450.0 + (386.0 - 450.0) * fuel) as i32, 450, rgba(lerp(fuel)));
-        }
-        // The weapon's and the boost's icons, the ammo.
-        for (frame, pos, colour) in [(1, [21.0, 7.0], 0x6044_2d00), (0, [21.0, 7.0], 0x55f0_c070), (7, [21.0, 7.0], 0x8080_8080), (1, [462.0, 9.0], 0x6044_2d00), (15, [462.0, 9.0], 0x8080_8080)] {
-            d.push(Draw::Icon { id: HUD_ICONS, frame, pos, size: [30.0, 30.0], colour });
-        }
-        d.push(Draw::Text { text: format!("{}/{}", self.missiles, missile::AMMO), pos: [67.0, 5.0], scale: 1.0, colour: 0x8080_8080, align: Align::Left });
-        // The counts.
-        for (id, n, pos) in self.counts(w) {
-            d.push(Draw::Text { text: format!("{}: {n}", label(id)), pos, scale: 1.0, colour: 0x8080_8080, align: Align::Left });
-        }
-        // The radar's frame.
-        for (id, colour) in [(0xba, 0x6044_2d00), (0xbb, 0x6024_1700), (0xbc, 0x55f0_c070)] {
-            d.push(Draw::Sprite { id, pos: [444.0, 344.0], scale: [0.8, 0.8], frame: 0.0, colour });
-        }
-        (d, q)
-    }
 }
 
 /// The ship moby's words the camera's shake is asked through (`0x1b91a0` its size, `0x1b91a8` its ticks).
@@ -1407,5 +1378,151 @@ fn laser_burst(ctx: &mut Ctx, at: V3, rgb: u32) {
         let p = [at[0] + g.randf(-0.15, 0.15), at[1] + g.randf(-0.15, 0.15), at[2] + g.randf(-0.15, 0.15)];
         crate::particles::spark(sys, g, size * 0.1 * 210_000.0, 0.0, 0.002, 0.0, 1.0, p, v, 60, 0x7f, rgb & 0xff_ffff, 0);
         crate::particles::spark(sys, g, size * 0.07 * 210_000.0, 0.0, 0.002, 0.0, 1.0, p, v, 60, 0x7f, 0x7f_7f7f, 0);
+    }
+}
+
+/// A HUD piece in the order `0x40e7a8` draws it: a GUI draw or a plain quad (the bars).
+pub enum HudItem {
+    Draw(crate::hud::Draw),
+    Quad(crate::gui::Quad),
+}
+
+/// `0x2fc7f8(x0, y0, x1, y1, 1, colours)`: a bar from `left`'s colour to `right`'s (here in 32 slices).
+fn bar(out: &mut Vec<HudItem>, top: i32, bottom: i32, x0: f32, x1: f32, left: u32, right: u32) {
+    const N: usize = 32;
+    for k in 0..N {
+        let (a, b) = (k as f32 / N as f32, (k + 1) as f32 / N as f32);
+        let c = crate::hud::lerp_rgba((a + b) * 0.5, left, right);
+        let (l, r) = (x0 + (x1 - x0) * a, x0 + (x1 - x0) * b);
+        let (l, r) = if l <= r { (l, r) } else { (r, l) };
+        out.push(HudItem::Quad(crate::gui::Quad { pos: [[l, top as f32], [r, top as f32], [l, bottom as f32], [r, bottom as f32]], uv: [[0.0; 2]; 4], tex: crate::gui::Tex::None, rgba: c.to_le_bytes() }));
+    }
+}
+
+impl Flight {
+    /// `0x40e7a8` (with `0x40f3e0(0, 1, 1, 1)` first) in its order:
+    /// * the panels: the bolts' (sprites 0xbf / 0xc0 at (84, 0x1b0cbc), growing in and out over its 300 ticks after a
+    ///   bolt is taken, its icon 0xeaa2 frame 3 and its count) and the counts' (0xc1 / 0xc2, ×1.1 across, at (84, 365)
+    ///   and (84, 392));
+    /// * the counts `"%s: %d"` (the strings 0x3067 / 0x3068 at (24, 357) / (24, 384));
+    /// * the frame (sprites 0x80 / 0x81) and the shield's gauge (0x83, red to green by the shield left);
+    /// * the hull's bar (156 → 156 + 200 · hull, 14..27, from red to its colour, blinking every 5 ticks under 30%) and
+    ///   the boost's (450 → 386 by the fuel, 8..19);
+    /// * the weapon's icon (0xea97: frames 1 and 0 behind it, 7 the missiles, at (21, 7) 30 square) and the boost's
+    ///   (frame 15 at (462, 9)), the ammo `"%d/%d"` at (67, 5);
+    /// * the radar's frame (0xba..0xbc at (444, 344), ×0.8).
+    /// Not ported: the upgraded shields' rings 0x84 / 0x85, the 16:9 shift, the weapon switch (one weapon here).
+    pub fn hud_items(&self, w: &MobyWorld, bolts: (i32, i32), label: &dyn Fn(u32) -> String) -> Vec<HudItem> {
+        use crate::hud::{Align, Draw};
+        let mut out = Vec::new();
+        if matches!(self.mode, 3..=6) { return out; }
+        let d = |x: Draw| HudItem::Draw(x);
+        let lerp = |t: f32| crate::hud::lerp_rgba(t.clamp(0.0, 1.0), 0x8000_00ff, 0x8000_ff00);
+        // The bolts' panel (`0x40f3e0`'s second part): `bolts` = (the count, the ticks of its showing left).
+        let (count, left) = bolts;
+        if 0 < left {
+            let s = if left < 0x123 && 9 < left { 1.0 } else if 0x123 <= left { ((300 - left) as f32 * 0.1).clamp(0.0, 1.0) } else { (left as f32 * 0.1).clamp(0.0, 1.0) };
+            let at = [84.0, 0x16d as f32 - 54.0];
+            out.push(d(Draw::Sprite { id: 0xbf, pos: at, scale: [s, s], frame: 0.0, colour: 0x6044_2d00 }));
+            out.push(d(Draw::Sprite { id: 0xc0, pos: at, scale: [s, s], frame: 0.0, colour: 0x55f0_c070 }));
+            if (10..0x123).contains(&left) {
+                out.push(d(Draw::Icon { id: 0xeaa2, frame: 3, pos: [84.0 - 51.0, at[1] - 13.0], size: [28.0, 28.0], colour: 0x8080_8080 }));
+                out.push(d(Draw::Text { text: format!("{count}"), pos: [89.0, at[1] + 2.0], scale: 1.0, colour: 0x8080_8080, align: Align::Left }));
+            }
+        }
+        // The counts' panels and the counts.
+        for y in [365.0, 392.0] {
+            out.push(d(Draw::Sprite { id: 0xc1, pos: [84.0, y], scale: [1.1, 1.0], frame: 0.0, colour: 0x6044_2d00 }));
+            out.push(d(Draw::Sprite { id: 0xc2, pos: [84.0, y], scale: [1.1, 1.0], frame: 0.0, colour: 0x55f0_c070 }));
+        }
+        for (id, n, pos) in self.counts(w) {
+            out.push(d(Draw::Text { text: format!("{}: {n}", label(id)), pos, scale: 1.0, colour: 0x8080_8080, align: Align::Left }));
+        }
+        // The frame and the shield's gauge.
+        let mid = [256.0, 200.0];
+        out.push(d(Draw::Sprite { id: 0x80, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: 0x6044_2d00 }));
+        out.push(d(Draw::Sprite { id: 0x81, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: 0x55f0_c070 }));
+        let shield = self.shield as f32 / k::SHIELD as f32;
+        if 0.0 < shield { out.push(d(Draw::Sprite { id: 0x83, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: lerp(shield) })); }
+        // The hull's and the boost's bars.
+        let hull = self.hull as f32 * 0.01;
+        let shown = if hull <= 0.3 { (self.frame / 5) % 2 == 0 } else { true };
+        if shown && 0.0 < hull { bar(&mut out, 14, 27, 156.0, hull * 200.0 + 156.0, 0x8000_00ff, lerp(hull)); }
+        let fuel = self.fuel as f32 / k::FUEL as f32;
+        if 0.0 < fuel { bar(&mut out, 8, 19, 450.0, 450.0 + (386.0 - 450.0) * fuel, 0x8000_00ff, lerp(fuel)); }
+        // The icons and the ammo.
+        for (frame, pos, colour) in [(1, [21.0, 7.0], 0x6044_2d00), (0, [21.0, 7.0], 0x55f0_c070), (7, [21.0, 7.0], 0x8080_8080), (1, [462.0, 9.0], 0x6044_2d00), (15, [462.0, 9.0], 0x8080_8080)] {
+            out.push(d(Draw::Icon { id: HUD_ICONS, frame, pos, size: [30.0, 30.0], colour }));
+        }
+        out.push(d(Draw::Text { text: format!("{}/{}", self.missiles, missile::AMMO), pos: [67.0, 5.0], scale: 1.0, colour: 0x8080_8080, align: Align::Left }));
+        // The radar's frame.
+        for (id, colour) in [(0xba, 0x6044_2d00), (0xbb, 0x6024_1700), (0xbc, 0x55f0_c070)] {
+            out.push(d(Draw::Sprite { id, pos: [444.0, 344.0], scale: [0.8, 0.8], frame: 0.0, colour }));
+        }
+        out
+    }
+
+    /// `0x412430` (from the flame's callback while the shield holds, `0x375df8`): the bubble — three quads facing the
+    /// camera (`0x412628`: ±0.27, ±0.27, ±0.22, 0.35 toward it from just above the ship), their texels turning (0.01,
+    /// −0.007, 0.007 a tick), FX 0x46 (the ship's `+0x58`) in 0x0fc85a5a twice and FX 0x36 in 0x28ff3232; hit this
+    /// tick (`0x221840`), 7 ticks of a brighter flash.
+    pub fn draw_shield(&mut self, w: &MobyWorld, cam: V3, out: &mut Vec<crate::fx::FxQuad>) {
+        let Some(s) = self.ship else { return };
+        if self.shield <= 0 || self.mode == 6 { return; }
+        let m = &w.mobys[s];
+        self.shell_spin = [crate::hero::physics::add_rot(self.shell_spin[0], 0.01), crate::hero::physics::add_rot(self.shell_spin[1], -0.007), crate::hero::physics::add_rot(self.shell_spin[2], 0.007)];
+        if self.hit_flash_new { self.hit_flash = 7; }
+        let (c0, c1) = if 0 < self.hit_flash {
+            self.hit_flash -= 1;
+            let t = self.hit_flash as u32 * 5;
+            let low = (0x6e - t) | 0x1e00_0000;
+            ((0x6e + t) << 16 | low, (0x96 + t) << 16 | low)
+        } else {
+            (0x0fc8_5a5a, 0x28ff_3232)
+        };
+        let centre = add(m.pos, scale(m.rows[2], 0.05));
+        let f = unit(sub(cam, centre));
+        let up0 = if f[2].abs() < 0.99 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+        let r = unit(cross(f, up0));
+        let u = cross(r, f);
+        let at = add(centre, scale(f, 0.35));
+        for (k, (size, fx, rgba)) in [(0.27, 0x46, c0), (0.27, 0x46, c0), (0.22, 0x36, c1)].into_iter().enumerate() {
+            // The texels' turn as the quad's own (the FX draw repeats its textures; turned texels would show its tiles).
+            let (sn, cs) = (-self.shell_spin[k]).sin_cos();
+            let (rr, uu) = (add(scale(r, cs), scale(u, sn)), sub(scale(u, cs), scale(r, sn)));
+            let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+            let corner = |x: f32, y: f32| add(at, add(scale(rr, x * size), scale(uu, y * size)));
+            out.push(crate::fx::FxQuad { fx, additive: true, corners: [corner(-1.0, 1.0), corner(1.0, 1.0), corner(-1.0, -1.0), corner(1.0, -1.0)], st, rgba: [rgba; 4] });
+        }
+    }
+
+    /// `0x412910` on Wupash: 16 specks of dust streaming past — each set 24..30 ahead (its facing ±0.2) with 11..14 to
+    /// run, stepping back 0.15..0.25 a tick (the ship's facing), drawn (`0x300aa0`) 0.07..0.12 across, FX 0x47,
+    /// 0x7f7f6464.
+    pub fn draw_dust(&mut self, w: &MobyWorld, cam: V3, rng: &mut crate::rng::Rng, out: &mut Vec<crate::fx::FxQuad>) {
+        let Some(s) = self.ship else { return };
+        if self.mode != 0 && self.mode != 1 && self.mode != 2 { return; }
+        let (pos, fwd) = (w.mobys[s].pos, w.mobys[s].rows[0]);
+        let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+        for k in 0..16 {
+            if self.dust_left[k] <= 0.0 {
+                let j = [fwd[0] + rng.randf(-0.2, 0.2), fwd[1] + rng.randf(-0.2, 0.2), fwd[2] + rng.randf(-0.2, 0.2)];
+                self.dust[k] = add(pos, set_len(j, rng.randf(24.0, 30.0)));
+                self.dust_left[k] = rng.randf(11.0, 14.0);
+            }
+            let step = rng.randf(0.15, 0.25);
+            self.dust[k] = add(self.dust[k], scale(fwd, -step));
+            self.dust_left[k] -= step;
+            let size = rng.randf(0.07, 0.12) * 0.5;
+            let roll = rng.rand_angle();
+            let p = self.dust[k];
+            let f = unit(sub(cam, p));
+            let up0 = if f[2].abs() < 0.99 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+            let (a0, b0) = (unit(cross(up0, f)), cross(f, unit(cross(up0, f))));
+            let (sn, cs) = roll.sin_cos();
+            let (a, b) = (add(scale(a0, cs), scale(b0, sn)), sub(scale(b0, cs), scale(a0, sn)));
+            let corner = |x: f32, y: f32| add(p, add(scale(a, x * size), scale(b, y * size)));
+            out.push(crate::fx::FxQuad { fx: 0x47, additive: true, corners: [corner(-1.0, -1.0), corner(1.0, -1.0), corner(-1.0, 1.0), corner(1.0, 1.0)], st, rgba: [0x7f7f_6464; 4] });
+        }
     }
 }

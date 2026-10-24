@@ -726,8 +726,12 @@ fn tick(
                 if text == 0xa16 && (shown || p.game.help_state != 0) { f.opening_shown = true; }
             }
             cam.view = Some((shaken, f.rows));
-            // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it.
+            // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it, its shield's bubble and the
+            // dust streaming past; the bolts' panel's ticks.
             if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }
+            f.draw_shield(&mobys.world, f.pos, &mut p.fx_quads);
+            f.draw_dust(&mobys.world, f.pos, &mut p.game.rng, &mut p.fx_quads);
+            if 0 < p.game.space_bolts_shown { p.game.space_bolts_shown -= 1; }
             // `0x2c63f0`: the ship's death starts the fight again; `0x307bf0(2, 1)`: the fight won, Maktar Nebula.
             if f.restart && p.game.next_level.is_none() { p.game.go_to_level(p.game.level, false); }
             if f.done && p.game.next_level.is_none() {
@@ -1310,8 +1314,14 @@ fn draw_hud(
         let mut fx = std::collections::HashMap::new();
         for id in std::iter::once(0x26u16).chain(rc_game::ship::HUD_FX) {
             if let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(id as usize)).and_then(Option::as_ref) {
+                // `RC_DUMP_FX=dir`: these textures as raw RGBA (`fx_<id>_<w>x<h>.rgba`; a dev aid).
+                if let Ok(dir) = std::env::var("RC_DUMP_FX") { let _ = std::fs::write(format!("{dir}/fx_{id:x}_{}x{}.rgba", t.width, t.height), &t.rgba); }
                 fx.insert(id, (textures.len(), [t.width as f32, t.height as f32]));
-                textures.push(t.clone());
+                // The HUD's atlas holds the GS's bytes (0x80 = 1.0); the FX textures' alpha is decoded to 0..0xff (their
+                // colours stay as the GS has them, up to 2.0).
+                let mut t = t.clone();
+                for px in t.rgba.chunks_exact_mut(4) { px[3] = ((px[3] as u16 + 1) >> 1) as u8; }
+                textures.push(t);
             }
         }
         // The pause pages' item pictures.
@@ -1352,13 +1362,16 @@ fn draw_hud(
         if let (Some(f), Some(m)) = (p.ship.as_ref(), p.mobys.as_ref()) {
             let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
             quads.extend(f.hud_quads(&m.world, crate::play_camera::GAME_TAN_HALF_FOV, &tex));
-            // `0x40e7a8`: the ship's HUD.
+            // `0x40e7a8`: the ship's HUD, in its order.
             let strings = &hud.data.assets().strings;
             let label = |id: u32| String::from_utf8_lossy(strings.get(id)).trim_end_matches('\0').to_string();
-            let (draws, rects) = f.hud_draws(&m.world, &label);
-            quads.extend(rects);
             let icon = |id: u16, fr: u16| hud.icons.get(&(id, fr)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
-            quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
+            for item in f.hud_items(&m.world, (p.game.space_bolts, p.game.space_bolts_shown), &label) {
+                match item {
+                    rc_game::ship::HudItem::Quad(q) => quads.push(q),
+                    rc_game::ship::HudItem::Draw(d) => quads.extend(rc_game::hud::quads(std::slice::from_ref(&d), &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon)),
+                }
+            }
         }
         // In the space fights the ship's HUD stands for Ratchet's (rc_game::ship::Flight::status).
         let mut draws = if p.ship.is_some() { Vec::new() } else { p.hud.draw(p.game.bolts) };
