@@ -994,7 +994,7 @@ pub const MISSILE_CLASS: i16 = 0x0974;
 
 /// The missiles' tuning (`$gp+0xbe4` 90 a second, `+0xbec` 500 far, `+0xbf4` its scale 0.3, `+0xc04` the damage 5,
 /// `+0x25b4` 90 ticks between, the weapon slot 1's 10; the lock `+0x2618` 75 ticks, `+0x2624` 25°, `+0x2628` 60 far,
-/// `+0x262c` the pixels round the crosshair (40 for the classes without an entry)).
+/// `+0x262c` 20 pixels round the crosshair plus the class's own from `0x2b3280`).
 mod missile {
     pub const SPEED: f32 = 90.0;
     pub const RANGE: f32 = 500.0;
@@ -1004,8 +1004,9 @@ mod missile {
     pub const AMMO: i32 = 10;
     pub const LOCK_TICKS: i32 = 75;
     pub const LOCK_CONE: f32 = 25.0;
-    pub const LOCK_RANGE: f32 = 60.0;
-    pub const LOCK_PIXELS: f32 = 40.0;
+    pub const LOCK_PIXELS: f32 = 20.0;
+    /// `0x2b3280`: the classes locked on, their pixels added to `+0x262c`'s and their range (others: 40, 60).
+    pub const LOCK_CLASSES: [(i16, f32, f32); 2] = [(0x0957, 40.0, 60.0), (0x097c, 60.0, 60.0)];
 }
 
 impl Flight {
@@ -1041,9 +1042,11 @@ impl Flight {
         let Some(aim) = screen(self.aim) else { return };
         let found = (0..w.mobys.len()).find(|&i| {
             let m = &w.mobys[i];
-            if m.o_class != crate::moby::classes::space::FIGHTER || !alive(i) || m.mode & mode::TARGET == 0 { return false; }
-            if missile::LOCK_RANGE < crate::hero::physics::dist(self.pos, m.pos) { return false; }
-            screen(m.pos).is_some_and(|p| (p[0] - aim[0]).abs() < missile::LOCK_PIXELS && (p[1] - aim[1]).abs() < missile::LOCK_PIXELS)
+            let Some(&(_, px, range)) = missile::LOCK_CLASSES.iter().find(|c| c.0 == m.o_class) else { return false };
+            if !alive(i) || m.mode & mode::TARGET == 0 { return false; }
+            if range < crate::hero::physics::dist(self.pos, m.pos) { return false; }
+            let win = missile::LOCK_PIXELS + px;
+            screen(m.pos).is_some_and(|p| (p[0] - aim[0]).abs() < win && (p[1] - aim[1]).abs() < win)
         });
         if found == self.candidate && found.is_some() {
             self.lock_ticks += 1;
