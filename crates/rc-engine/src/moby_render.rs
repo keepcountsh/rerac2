@@ -105,8 +105,6 @@ const GREY: usize = usize::MAX;
 /// Metal packet textures (TEX0 data_lo): the level's chrome and glass maps.
 const TEX_CHROME: i32 = -2;
 const TEX_GLASS: i32 = -3;
-/// The port's key for the level's gold map (0x182c70): not a packet value.
-const TEX_GOLD: i32 = -4;
 
 /// Level mobys after load: classes, animation data, instances and their light blocks.
 pub struct LevelMobys {
@@ -121,10 +119,8 @@ pub struct LevelMobys {
     /// (class, per packet per vertex RGBA); `Placed::colors` indexes it.
     pub colors: Vec<(usize, Vec<Vec<[u8; 4]>>)>,
     pub cpu_light: bool,
-    /// The metal pass's environment maps: chrome (128×128), glass (64×64) and gold (128×128) PSMT8 from gs_ram at
-    /// the core header's `chrome_map_*` / `glass_map_*` byte offsets and `LevelCore::gold_map` (the TEX0 words
-    /// 0x19e6c0 / 0x19e6d8 / 0x182c70 the level loader builds, L01 0x258128).
-    pub env_maps: [Option<Texture>; 3],
+    /// The metal pass's environment maps: chrome (128×128) and glass (64×64) from gs_ram ([`decode_env_maps`]).
+    pub env_maps: [Option<Texture>; 2],
     pub parse_time: Duration,
     pub light_time: Duration,
 }
@@ -144,22 +140,23 @@ pub struct Placed {
 
 fn env_on(name: &str) -> bool { std::env::var(name).is_ok_and(|v| v.trim() == "1") }
 
-/// Chrome (128×128), glass (64×64) and gold (128×128) maps: TEX0 TBP0 = (gs base + `*_texture`) >> 8, CBP = (gs
-/// base + `*_palette`) >> 8, both byte offsets into the gs_ram lump (0x1d308000 / 0x19304000 give the sizes; the
-/// gold word is built like the chrome one).
-fn decode_env_maps(core: &LevelCore, gs_ram: &[u8]) -> [Option<Texture>; 3] {
+/// The chrome (128×128) and glass (64×64) maps, as the level core loader (L00 `0x304660`) builds their TEX0 words
+/// (`0x1b1c70` / `0x1b1c88`, which the class load `0x2ff500` puts in the metal packets' ad-gifs for −2 / −3):
+/// TBP0 = (`0x1a7304` + core `[0x90]` / `[0x98]` · 4) >> 8 and CBP = (`0x1a72f4` + core `[0x94]` / `[0x9c]`) >> 8,
+/// PSMT8H 128×128 / 64×64 (`0x1db08000` / `0x19b04000`), CT32 CLUT, TCC 1, MODULATE. `0x2ff978` uploads the gs_ram
+/// table to `0x1a72f4` as the lump lays it out, then the GS stash (the table's word-0x84 more entries) from
+/// `0x1a7304` at 4 bytes a texel: the texture word is a texel offset into the stash's images, which sit 1 byte a texel
+/// from the stash address in the lump; the CLUT word a byte offset into the lump.
+fn decode_env_maps(core: &LevelCore, gs_ram: &[u8]) -> [Option<Texture>; 2] {
     let h = &core.header;
+    let stash = core.moby_stash_addr;
     let one = |tex: i32, pal: i32, side: u32| -> Option<Texture> {
-        let (t, p) = (usize::try_from(tex).ok()?, usize::try_from(pal).ok()?);
+        let (t, p) = (stash? + usize::try_from(tex).ok()?, usize::try_from(pal).ok()?);
         let px = gs_ram.get(t..t + (side * side) as usize)?;
         let clut = gs_ram.get(p..p + 1024)?;
         rc_formats::texture::decode_indexed8(px, side, side, clut).ok()
     };
-    [
-        one(h.chrome_map_texture, h.chrome_map_palette, 128),
-        one(h.glass_map_texture, h.glass_map_palette, 64),
-        one(core.gold_map[0], core.gold_map[1], 128),
-    ]
+    [one(h.chrome_map_texture, h.chrome_map_palette, 128), one(h.glass_map_texture, h.glass_map_palette, 64)]
 }
 
 /// Parses the classes, their sequences and the instances, and builds every instance's light block, with the level's
@@ -933,10 +930,10 @@ fn gs_image(w: u32, h: u32, rgba: &mut [u8], mode: ImageAddressMode) -> Image {
     img
 }
 
-/// The chrome (−2), glass (−3) or gold ([`TEX_GOLD`]) map: TEX1 MXL 0 / MMAG linear, CLAMP_1 = 5 (`fun_00202d78`). A
-/// level whose map does not decode gets a magenta 1×1.
+/// The chrome (−2) or glass (−3) map: TEX1 MXL 0 / MMAG linear, CLAMP_1 = 5 (`0x2ff500`). A level whose map does not
+/// decode gets a magenta 1×1.
 fn metal_image(level: &LoadedLevel, kind: i32, images: &mut Assets<Image>) -> (Handle<Image>, AlphaRange) {
-    let map = match kind { TEX_CHROME => 0, TEX_GOLD => 2, _ => 1 };
+    let map = if kind == TEX_CHROME { 0 } else { 1 };
     let (w, h, mut rgba) = match &level.mobys.env_maps[map] {
         Some(t) => (t.width, t.height, t.rgba.clone()),
         None => {
@@ -1079,7 +1076,7 @@ fn spawn_mobys(
                 scale: p.scale,
                 draw_distance: inst.draw_distance as i16 as i32,
                 lod_trans: class.class.header.lod_trans,
-                shine_distance: if class.class.header.metal_count > 0 { moby_lod::SHINE_DISTANCE } else { 0 },
+                shine_distance: if class.class.header.metal_count > 0 { moby_lod::SHINE_PLACED } else { 0 },
                 alpha: 0x80,
             }),
             class: p.class,
@@ -1233,9 +1230,9 @@ pub struct MobyLook {
 }
 
 impl MobyLook {
-    /// A fresh moby of `class` as `InitMobyInstance` (level01 0x263488) leaves it: alpha 0x80; mode 0x10 and +0x90 =
-    /// class +0x40 when that is non-zero; +0x73 = 0x18 when the class has metal packets. The other mode bits are not
-    /// taken (the undriven statics keep the blend they had).
+    /// A placed moby of `class` as `InitMobyInstance` and the static spawn leave it: alpha 0x80; mode 0x10 and +0x90 =
+    /// class +0x40 when that is non-zero; the shine distance `+0x63` 8 when the class has metal packets
+    /// ([`moby_lod::SHINE_PLACED`]). The other mode bits are not taken (the undriven statics keep the blend they had).
     pub fn of_class(class: &LevelMobyClass) -> Self {
         let h = &class.class.header;
         let glow = h.glow_rgba != 0;
@@ -1243,7 +1240,7 @@ impl MobyLook {
             alpha: 0x80,
             mode: if glow { 0x10 } else { 0 },
             glow: h.glow_rgba as u32,
-            shine_distance: if h.metal_count > 0 { moby_lod::SHINE_DISTANCE } else { 0 },
+            shine_distance: if h.metal_count > 0 { moby_lod::SHINE_PLACED } else { 0 },
             draw_dist: None,
             late: None,
         }
@@ -1619,10 +1616,14 @@ pub struct SlotLook {
     /// Going Commando's piece mask (`+0x7c` = 0x8000 | 1 << k, L00 `0x318fd0`): only break piece k's packets
     /// (`MobyClass::pieces`), no metal. None: the whole moby (R&C1 always).
     pub piece: Option<u8>,
+    /// `+0x7c` without 0x8000 (L00 `0x319cb8` → `0x31a000`): the whole moby plus the pieces whose bits are set.
+    pub bangles: u16,
 }
 
-/// The part-cache key of a class drawn whole (its o_class) or as one break piece.
-fn piece_key(o_class: i32, piece: Option<u8>) -> i32 { piece.map_or(o_class, |k| o_class | (k as i32 + 1) << 16) }
+/// The part-cache key of a class drawn whole (its o_class), as one break piece, or whole with pieces on top.
+fn piece_key(o_class: i32, piece: Option<u8>, bangles: u16) -> i32 {
+    piece.map_or(o_class | (bangles as i32 & 0x3ff) << 21, |k| o_class | (k as i32 + 1) << 16)
+}
 
 /// A metal entity of an extra instance: where update_extra_metal reads its placement and writes its shine.
 #[derive(Component, Clone)]
@@ -1748,7 +1749,7 @@ impl ExtraMobys {
         materials: &mut Assets<MobyMaterial>,
         buffers: &mut Assets<ShaderBuffer>,
     ) {
-        let want = view.map(|(c, l)| ((piece_key(c.o_class, l.piece), MobyBlend::pick(l.mode, l.fading, l.alpha)), l.model.w_axis.truncate()));
+        let want = view.map(|(c, l)| ((piece_key(c.o_class, l.piece, l.bangles), MobyBlend::pick(l.mode, l.fading, l.alpha)), l.model.w_axis.truncate()));
         let was = self.slot_shown.get(&slot).copied();
         let (want_key, was_key) = (want.map(|w| w.0), was.map(|w| w.0));
         if want_key != was_key {
@@ -1783,7 +1784,13 @@ impl ExtraMobys {
                 .entry(oc)
                 .or_insert_with(|| match look.piece {
                     Some(k) => build_parts(class, class.class.pieces.get(k as usize).and_then(Option::as_ref).map_or(&[][..], |p| &p.packets[..]), false, usize::MAX, meshes).0,
-                    None => build_parts(class, &class.class.high_lod, false, glow_from(class, false), meshes).0,
+                    None if look.bangles == 0 => build_parts(class, &class.class.high_lod, false, glow_from(class, false), meshes).0,
+                    // MobyProc 0x31a000: each set bit's piece k after the packets (its high-LOD range).
+                    None => {
+                        let extra = (0..16).filter(|k| look.bangles & 1 << k != 0).filter_map(|k| class.class.pieces.get(k).and_then(Option::as_ref));
+                        let lod: Vec<_> = class.class.high_lod.iter().cloned().chain(extra.flat_map(|p| p.packets.iter().cloned())).collect();
+                        build_parts(class, &lod, false, glow_from(class, false), meshes).0
+                    }
                 })
                 .clone();
             let name = format!("dynamic moby slot {slot} class {oc} {blend:?}");
@@ -1879,11 +1886,12 @@ fn update_extra_metal(
 impl MobyOcclusion {
 
     /// Going Commando's moby fields MobyProc reads of static instance `ii` this tick: its alpha (`+0x23`), the glow list
-    /// (mode bit 0x10 and the word `+0x78`) and its draw distance (`+0x32`). Its other mode bits do not mean R&C1's
-    /// blends, so the instance keeps its own; the shine distance stays its class's.
-    pub fn game_look(&mut self, ii: usize, alpha: u8, mode: u16, glow: u32, draw_dist: i16) {
+    /// (mode bit 0x10 and the word `+0x78`), its draw distance (`+0x32`) and its shine distance (`+0x63`). Its other
+    /// mode bits do not mean R&C1's blends, so the instance keeps its own.
+    pub fn game_look(&mut self, ii: usize, alpha: u8, mode: u16, glow: u32, draw_dist: i16, shine: u8) {
         if let Some(l) = self.look.get_mut(ii) {
             l.alpha = alpha;
+            l.shine_distance = shine;
             l.mode = l.mode & !0x10 | mode & 0x10;
             l.glow = glow;
             l.draw_dist = Some(draw_dist);
@@ -1905,9 +1913,15 @@ impl MobyOcclusion {
     /// (crate::moby_spawn) are the caller's to exclude.
     pub fn drawn(&self, ii: usize) -> bool { self.shown.get(ii).is_some_and(|s| s.is_some()) }
 
-    /// Static instance `ii` hidden with no placement (a record that never spawned a moby).
-    pub fn hide(&mut self, ii: usize) {
-        if let Some(h) = self.driven_hidden.get_mut(ii) { *h = true; }
+    /// Static instance `ii` hidden or shown by its moby (deleted or mode & 1) when nothing drives it: a placed moby
+    /// without an update still goes when a class deletes or hides it (a scene's props).
+    pub fn set_hidden(&mut self, ii: usize, hidden: bool) {
+        if let Some(h) = self.driven_hidden.get_mut(ii) { *h = hidden; }
+    }
+
+    /// The shine distance (`+0x63`) of undriven static instance `ii`.
+    pub fn set_shine(&mut self, ii: usize, shine: u8) {
+        if let Some(l) = self.look.get_mut(ii) { l.shine_distance = shine; }
     }
 
     /// The placement the moby loop gave static instance `ii` this tick: position (+0x10), rotation rows

@@ -31,19 +31,19 @@ use crate::hero::physics::{add, dot, len, scale, set_len, sub, V3};
 
 fn cross(a: V3, b: V3) -> V3 { [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]] }
 
-const VEL: usize = 0x00;
-const SPIN: usize = 0x10;
+pub(crate) const VEL: usize = 0x00;
+pub(crate) const SPIN: usize = 0x10;
 const PIVOT: usize = 0x20;
 const LIFE: usize = 0x34;
 const PIECE: usize = 0x36;
 const LOSS: usize = 0x38;
 const LEAST: usize = 0x3c;
-const GRAVITY: usize = 0x48;
+pub(crate) const GRAVITY: usize = 0x48;
 const WEIGHT: usize = 0x4c;
 const SOURCE: usize = 0x54;
 const POINTS: usize = 0x58;
 const CONTACTS: usize = 0x59;
-const COUNT: usize = 0x5c;
+pub(crate) const COUNT: usize = 0x5c;
 const MODE: usize = 0x5d;
 const SOUND: usize = 0x5e;
 const BLOCK: usize = 0x80;
@@ -54,7 +54,7 @@ fn quat(m: &super::Moby, o: usize) -> Q { [m.pv_f(o), m.pv_f(o + 4), m.pv_f(o + 
 fn set_quat(m: &mut super::Moby, o: usize, q: Q) { for (k, v) in q.iter().enumerate() { m.set_pv_f(o + 4 * k, *v); } }
 
 /// `0x321bb8(s, v)`: the quaternion of axis `v` with sin(half angle) `s`.
-fn axis_quat(s: f32, v: V3) -> Q {
+pub(crate) fn axis_quat(s: f32, v: V3) -> Q {
     let a = set_len(v, s);
     [a[0], a[1], a[2], (1.0 - s * s).max(0.0).sqrt()]
 }
@@ -67,9 +67,10 @@ fn qmul(a: Q, b: Q) -> Q {
     [v[0], v[1], v[2], a[3] * b[3] - dot(av, bv)]
 }
 
-/// The rotation of quaternion `q` on `v` (the rows through `0x2efc20` / `0x2efa00`).
-fn rotate(q: Q, v: V3) -> V3 {
-    let u = [q[0], q[1], q[2]];
+/// A row turned by quaternion `q` as `0x2efc20` / `0x2efa00` turn the rows: `0x2efc20` builds the rotation matrix
+/// R(q), and `0x2efa00` multiplies each row on the left (`row · R`), which is Rᵀ — the rotation by `q`'s conjugate.
+pub(crate) fn rotate(q: Q, v: V3) -> V3 {
+    let u = [-q[0], -q[1], -q[2]];
     let t = scale(cross(u, v), 2.0);
     add(add(v, scale(t, q[3])), cross(u, t))
 }
@@ -96,21 +97,37 @@ pub fn break_into(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, h: (f32, f32), v:
 /// The mask's bits.
 const MAX_PIECE: usize = 15;
 
-/// `0x2dbdb0(spin, gravity, moby, 2, class, piece, place, angles, velocity, sound)` and `0x2dbff8` mode 2.
+/// A piece of the source moby `src`, at its place and angles ([`spawn_shard`]).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_piece(w: &mut MobyWorld, src: usize, ctx: &mut Ctx, spin: f32, gravity: f32, piece: u8, vel: V3, sound: u8) -> Option<usize> {
     let s = &w.mobys[src];
-    let (o_class, pos, rot, rows, sc, src_mode, light, ambient) = (s.o_class, s.pos, s.rot, s.rows, s.scale, s.mode, s.light, s.ambient);
+    let (o_class, pos, rot, rows) = (s.o_class, s.pos, s.rot, s.rows);
+    spawn_shard(w, ctx, o_class, Some(src), pos, rot, Some(rows), spin, gravity, piece, vel, sound)
+}
+
+/// `0x2dbdb0(spin, gravity, src, 2, class, piece, place, angles, velocity, sound)` and `0x2dbff8` mode 2: a moby of
+/// `o_class` drawn as its piece `piece`, at `pos` with the angles `rot` (or the source's rows); from the source its
+/// light and ambient, its scale ratio (its scale over its class's) and its mode 0x800.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_shard(w: &mut MobyWorld, ctx: &mut Ctx, o_class: i16, src: Option<usize>, pos: V3, rot: V3, rows: Option<[V3; 3]>, spin: f32, gravity: f32, piece: u8, vel: V3, sound: u8) -> Option<usize> {
     let info = w.class(o_class)?;
+    let class_scale = info.scale;
     let (centre, n) = match info.pieces.get(piece as usize) { Some(Some((c, p))) => (*c, p.len()), _ => return None };
-    // Its spin: sin(spin / 2 a tick) about a random axis (`0x31bbc0`).
+    let (ratio, src_mode, light, ambient) = match src.and_then(|s| w.mobys.get(s)) {
+        Some(s) => (w.class(s.o_class).map_or(1.0, |c| if c.scale != 0.0 { s.scale / c.scale } else { 1.0 }), s.mode, s.light, s.ambient),
+        None => (1.0, 0, 0, [0x40; 3]),
+    };
+    let sc = class_scale * ratio;
+    // Its spin: sin(spin / 2 a tick) about a random axis (`0x31bbc0`: its length drawn too, from sin..sin).
     let half = (spin * 0.000_145_444_12).sin();
     let rng = &mut ctx.game.rng;
+    rng.randf(half, half);
     let (az, el) = (rng.rand_angle(), rng.rand_angle());
     let axis = [az.cos() * el.sin() * half, az.sin() * el.sin() * half, el.cos() * half];
     let id = w.create(o_class);
     let m = &mut w.mobys[id];
-    (m.pos, m.rot, m.rows, m.scale) = (pos, rot, rows, sc);
+    (m.pos, m.rot, m.scale) = (pos, rot, sc);
+    m.rows = rows.unwrap_or_else(|| crate::hero::physics::euler_rows(rot));
     (m.light, m.ambient) = (light, ambient);
     m.mode = (m.mode & !0x20) | mode::KEEP_ROWS | (src_mode & 0x800) | mode::NO_MATRIX;
     m.has_collision = false;
@@ -126,7 +143,7 @@ pub fn spawn_piece(w: &mut MobyWorld, src: usize, ctx: &mut Ctx, spin: f32, grav
     m.set_pv_f(WEIGHT, 0.001_745_329_3);
     m.set_pv_s(LIFE, 0xb4);
     m.set_pv_s(PIECE, piece as i16);
-    m.set_pv_i(SOURCE, src as i32);
+    m.set_pv_i(SOURCE, src.map_or(-1, |s| s as i32));
     m.pvars[POINTS] = n as u8;
     m.pvars[COUNT] = 0;
     m.pvars[MODE] = 2;
@@ -165,7 +182,7 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 
 /// `0x2dc1f0` mode 2: true when its life is over (or it left the world).
-fn step(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
+pub(crate) fn step(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
     let pts = points(w, id);
     let mut done = body(w, id, ctx, &pts);
     let m = &mut w.mobys[id];
@@ -197,7 +214,7 @@ fn body(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, pts: &[V3]) -> bool {
     let free = m.pvars[COUNT] == 0;
     if !moving {
         if sound != 0xff && free { ctx.host.play_sound(&w.mobys[id], sound as i32, 0); }
-        add_contact(w, id, k, n, pts);
+        add_contact(w, id, k, pts);
     } else if sound != 0xff {
         ctx.host.play_sound(&w.mobys[id], sound as i32, 0);
     }
@@ -293,37 +310,59 @@ fn contact(w: &mut MobyWorld, id: usize, ctx: &Ctx, pts: &[V3]) -> Option<(u8, V
     None
 }
 
-/// `0x2dcde8(moby, point)` with `0x2dce90`: the point a contact; the others that would lift off the face go; two make
-/// a hinge.
-fn add_contact(w: &mut MobyWorld, id: usize, k: u8, n: V3, pts: &[V3]) {
+/// `0x2dcde8(moby, point, up)`: the point a contact ([`settle`]); two or three make a hinge of the first two.
+fn add_contact(w: &mut MobyWorld, id: usize, k: u8, pts: &[V3]) {
     let m = &mut w.mobys[id];
-    let c = m.pvars[COUNT].min(2) as usize;
-    m.pvars[CONTACTS + c] = k;
-    m.pvars[COUNT] = c as u8 + 1;
-    // `0x2dce90`: in the face's plane, a contact on the far side of the new one from it goes.
-    let flat = |v: V3| sub(v, scale(n, dot(v, n)));
-    let Some(&pk) = pts.get(k as usize) else { return };
-    let base = flat(through(&m.rows, pk));
-    let mut j = 0;
-    while j < m.pvars[COUNT] as usize {
-        let cj = m.pvars[CONTACTS + j];
-        if cj != k {
-            let q = pts.get(cj as usize).map_or([0.0; 3], |&p| flat(through(&m.rows, sub(p, pk))));
-            if 0.0 < dot(q, base) {
-                let last = m.pvars[COUNT] as usize - 1;
-                m.pvars[CONTACTS + j] = m.pvars[CONTACTS + last];
-                m.pvars[COUNT] -= 1;
-                continue;
-            }
-        }
-        j += 1;
-    }
-    if 1 < m.pvars[COUNT] {
+    let slot = m.pvars[COUNT].min(2) as usize;
+    m.pvars[CONTACTS + slot] = k;
+    m.pvars[COUNT] = slot as u8 + 1;
+    settle(m, slot, [0.0, 0.0, 1.0], pts);
+    if m.pvars[COUNT] != 1 {
         let (a, b) = (m.pvars[CONTACTS] as usize, m.pvars[CONTACTS + 1] as usize);
         if let (Some(&pa), Some(&pb)) = (pts.get(a), pts.get(b)) {
             let d = through(&m.rows, sub(pa, pb));
             let s = hinge_spin(quat(m, SPIN), d);
             set_quat(m, SPIN, s);
+        }
+    }
+}
+
+/// `0x2dce90(moby, slot, up)`: flat in the plane across `up`, the contacts that lie beyond the new one (slot `slot`)
+/// from it go (each tested once: the one moved into a freed place is not); of three, one goes unless they hold the
+/// piece up — the first two's lines from the third must lie on either side. As the original, a contact is the new
+/// one when its point's number equals the slot's.
+fn settle(m: &mut super::Moby, slot: usize, up: V3, pts: &[V3]) {
+    let flat = |v: V3| sub(v, scale(up, dot(up, v)));
+    let pt = |m: &super::Moby, c: usize| pts.get(m.pvars[CONTACTS + c] as usize).copied().unwrap_or([0.0; 3]);
+    let base = flat(through(&m.rows, pt(m, slot)));
+    let mut e = [[0.0f32; 3]; 3];
+    let mut j = 0;
+    while j < m.pvars[COUNT] as usize {
+        let cj = m.pvars[CONTACTS + j] as usize;
+        if cj == slot {
+            e[j] = base;
+        } else {
+            let p = pts.get(cj).copied().unwrap_or([0.0; 3]);
+            let q = flat(through(&m.rows, sub(p, pt(m, slot))));
+            e[j] = q;
+            if 0.0 < dot(q, base) {
+                let last = m.pvars[COUNT] as usize - 1;
+                m.pvars[CONTACTS + j] = m.pvars[CONTACTS + last];
+                m.pvars[COUNT] -= 1;
+            }
+        }
+        j += 1;
+    }
+    if m.pvars[COUNT] == 3 {
+        // `0x2eef88(out, a, b)` is `b × a`.
+        let (a, b) = (cross(e[2], e[0]), cross(e[2], e[1]));
+        let (c, d) = (cross(e[1], e[0]), cross(e[0], e[1]));
+        if dot(a, c) < 0.0 {
+            m.pvars[COUNT] -= 1;
+            m.pvars[CONTACTS + 1] = m.pvars[CONTACTS + 2];
+        } else if dot(b, d) < 0.0 {
+            m.pvars[COUNT] -= 1;
+            m.pvars[CONTACTS] = m.pvars[CONTACTS + 2];
         }
     }
 }

@@ -13,6 +13,9 @@
 //! | 0x59 | [`glow`] `0x33f550` | `0x33f6e8` ([`update_glow`]) | a glow riding a moby (the hand item's), pulled toward the camera |
 //! | 0x5a | [`streak`] `0x33f940` | `0x33fa58` ([`update_streak`]) | streaks: a ribbon from the point back along its last move |
 //! | 0x61 | [`burst`] `0x340830` | `0x3409a8` ([`update_burst`]) | the blasts' sprites: size and alpha stepped over the life |
+//! | 0x3b | [`sparkle`] `0x33b468` | `0x33b588` ([`update_sparkle`]) | the nanotech healing ring's sparkles, riding Ratchet |
+//! | 0x3c | [`glint`] `0x33b5e0` | `0x33b710` ([`update_glint`]) | the nanotech heal's glints: drifting, fading out |
+//! | 0x3e | [`orb`] `0x33bb60` | `0x33bc70` ([`update_orb`]) | the nanotech orbs (kind 1, moved by their cluster) and their trail puffs (kinds 0, 2) |
 //!
 //! Any other type kills itself on its first update. The gravity direction (`0x18a0e0`) is (0, 0, −1): normal gravity.
 //! Not ported: the gravity-boots bend of the positions (`0x380e08`, `+0x1c` = 2).
@@ -200,8 +203,8 @@ pub fn puff(sys: &mut Particles, rng: &mut Rng, jitter: f32, grow_lo: f32, grow_
 }
 
 /// `0x33f550(size, pull, offset, moby, rgba, joint −1, def 1, life, facing, far)`: a glow (type 0x59) on moby `moby`
-/// at `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` of the way toward
-/// the camera, for `life` ticks (−1: while the moby lives); `facing`: faded unless it faces the camera
+/// at `offset` in its rows, of `size` and colour `rgba`, its frame `def[0x59][1]`, pulled `pull` units toward the
+/// camera, for `life` ticks (−1: while the moby lives); `facing`: faded unless it faces the camera
 /// ([`update_glow`]); additive, near 1 / far `far` (the caller's, else the moby's draw distance `+0x32`) >> 5, ×32. Starts at the moby's position plus the offset (unturned): its
 /// update places it the same tick.
 #[allow(clippy::too_many_arguments)]
@@ -323,7 +326,7 @@ pub fn update_burst(sys: &mut Particles, i: usize) {
 }
 
 /// `0x33f6e8`: the life down (out, or its moby gone: killed); at its moby's position plus its rows × the offset, then
-/// pulled toward the camera at `cam` by its pull.
+/// pulled its pull (in units) toward the camera at `cam`.
 pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld, cam: [f32; 3]) {
     let r = &mut sys.pool.recs[i];
     let alive = rec::i16(r, 0xa) < 0 || !dec_life(r);
@@ -345,13 +348,153 @@ pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld
         let c = if -d < 0.0 { c & 0x05ff_ffff } else { c & 0xff_ffff | ((r[7] as f32 * -d) as i32 as u32) << 24 };
         rec::set_u32(r, 4, c);
     }
+    // `0x2ef138(pull, d, d)` on `d` = camera − it: `pull` units toward the camera (a distance, not a share of the way).
     let pull = rec::ff(r, 0x28);
-    rec::set_v3(r, 0x10, std::array::from_fn(|k| p[k] + (cam[k] - p[k]) * pull));
+    let d: [f32; 3] = std::array::from_fn(|k| cam[k] - p[k]);
+    let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let k = if 0.0 < l { pull / l } else { 0.0 };
+    rec::set_v3(r, 0x10, std::array::from_fn(|i| p[i] + d[i] * k));
+}
+
+/// Type 0x3e, the nanotech orb and its trail puffs (crate::moby::classes::nanotech).
+pub const ORB: u8 = 0x3e;
+
+/// `0x33bb60(pos, life, kind, fall)`: a nanotech orb record (type 0x3e) at `pos`: colour 0x7f7f4040, size 30000,
+/// additive, near 4 / far 64, a random rotation, its frame `def[0x3e][kind]` (`kind` > 1: the first), its alpha falling
+/// `trunc(127 / life)` a tick (kind 1, the orb itself, never fades); `fall` (`+0x23`): the gravity boots' bend (always 0
+/// here). The caller sets the colour and size it wants.
+pub fn orb(sys: &mut Particles, rng: &mut Rng, pos: [f32; 3], life: i16, kind: u8) -> Option<usize> {
+    let i = sys.create_part(ORB)?;
+    let rot = rng.randi(0xff) as u8;
+    let def = sys.def_frame(ORB, if kind > 1 { 0 } else { kind as usize });
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, pos);
+    rec::set_u32(r, 4, 0x7f7f_4040);
+    r[1] = 0;
+    r[3] = 0x48;
+    rec::set_ff(r, 0xc, 30000.0);
+    r[9] = 4 + 0x40;
+    r[8] = rot;
+    r[0x22] = kind;
+    r[0x23] = 0;
+    r[2] = def;
+    // `trunc(127 / life)` (a life of 0, the orbs': the step is never used).
+    rec::set_i16(r, 0x20, if life != 0 { (127.0 / life as f32) as i32 as i16 } else { 0 });
+    rec::set_i16(r, 0xa, life);
+    Some(i)
+}
+
+/// Rides moby `moby` (kind 2): `+0x24` the moby, `+0x30` the record's place from `at`, the moby's position.
+pub fn orb_attach(sys: &mut Particles, i: usize, moby: usize, at: [f32; 3]) {
+    let r = &mut sys.pool.recs[i];
+    let p = rec::pos(r);
+    rec::set_u32(r, 0x24, moby as u32 + 1);
+    rec::set_v3(r, 0x30, [p[0] - at[0], p[1] - at[1], p[2] - at[2]]);
+}
+
+/// `0x33bc70`: kind 1 does nothing (its cluster moves and kills it); kind 2 follows its moby at the kept offset; kinds
+/// 0 and 2 lose their alpha step a tick and die with no alpha left.
+pub fn update_orb(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld) {
+    let r = &mut sys.pool.recs[i];
+    if r[0x22] == 1 { return; }
+    if r[0x22] == 2 {
+        if let Some(m) = rec::u32(r, 0x24).checked_sub(1).and_then(|k| mobys.mobys.get(k as usize)) {
+            let o = rec::v3(r, 0x30);
+            rec::set_v3(r, 0x10, [m.pos[0] + o[0], m.pos[1] + o[1], m.pos[2] + o[2]]);
+        }
+    }
+    let c = rec::u32(r, 4);
+    let a = (c as i32 >> 24) - rec::i16(r, 0x20) as i32;
+    if a < 1 {
+        sys.kill_part(i);
+    } else {
+        rec::set_u32(r, 4, c & 0xff_ffff | (a as u32) << 24);
+    }
+}
+
+/// `0x33b468(size, pos, rgba, rot, def, soft, life, attach)`: a sparkle (type 0x3b) at `pos`, size `size`·210000, its
+/// frame `*def[def]`, additive (0x44 with `soft`), near 1 / far 32, for `life` ticks; `attach`: it keeps its place
+/// from Ratchet (`hero`, `0x189ea0`) and rides him.
+#[allow(clippy::too_many_arguments)]
+pub fn sparkle(sys: &mut Particles, size: f32, pos: [f32; 3], rgba: u32, rot: u8, def: u8, soft: bool, life: i16, attach: bool, hero: [f32; 3]) -> Option<usize> {
+    let i = sys.create_part(0x3b)?;
+    let frame = sys.def_first(def);
+    let r = &mut sys.pool.recs[i];
+    rec::set_u32(r, 0x30, attach as u32);
+    if attach { rec::set_v3(r, 0x20, [pos[0] - hero[0], pos[1] - hero[1], pos[2] - hero[2]]); }
+    rec::set_v3(r, 0x10, pos);
+    rec::set_u32(r, 4, rgba);
+    r[9] = 1 + 0x20;
+    r[3] = if soft { 0x44 } else { 0x48 };
+    r[8] = rot;
+    r[1] = 0;
+    rec::set_ff(r, 0xc, size * 210000.0);
+    rec::set_i16(r, 0xa, life);
+    r[2] = frame;
+    Some(i)
+}
+
+/// `0x33b588`: riding Ratchet, at him plus the kept place; the life down (out: killed).
+pub fn update_sparkle(sys: &mut Particles, i: usize, hero: [f32; 3]) {
+    let r = &mut sys.pool.recs[i];
+    if rec::u32(r, 0x30) == 1 {
+        let o = rec::v3(r, 0x20);
+        rec::set_v3(r, 0x10, [hero[0] + o[0], hero[1] + o[1], hero[2] + o[2]]);
+    }
+    if dec_life(r) { sys.kill_part(i); }
+}
+
+/// `0x33b5e0(size, pos, vel, rgba, life, rot, attach)`: a glint (type 0x3c) at `pos` moving `vel` a tick, size
+/// `size`·210000, its frame `*def[0x35]`, additive, near 1 / far 32, for `life & 0xff` ticks; `attach`: it moves from
+/// Ratchet's place (`hero`) as he moves.
+#[allow(clippy::too_many_arguments)]
+pub fn glint(sys: &mut Particles, size: f32, pos: [f32; 3], vel: [f32; 3], rgba: u32, life: u16, rot: u8, attach: bool, hero: [f32; 3]) -> Option<usize> {
+    let i = sys.create_part(0x3c)?;
+    let frame = sys.def_first(0x35);
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, pos);
+    rec::set_v3(r, 0x20, vel);
+    rec::set_u32(r, 0x3c, attach as u32);
+    if attach { rec::set_v3(r, 0x30, [pos[0] - hero[0], pos[1] - hero[1], pos[2] - hero[2]]); }
+    rec::set_u32(r, 4, rgba);
+    r[9] = 1 + 0x20;
+    r[3] = 0x48;
+    r[8] = rot;
+    r[1] = 0;
+    rec::set_ff(r, 0xc, size * 210000.0);
+    rec::set_i16(r, 0xa, (life & 0xff) as i16);
+    r[2] = frame;
+    Some(i)
+}
+
+/// `0x33b710`: it moves (riding Ratchet: from his place); killed outside [2, 1021]³ or when its life is out; else
+/// its colour `0x2f0000((life − 1) / life, rgb, rgba)`: the alpha fades out over the life.
+pub fn update_glint(sys: &mut Particles, i: usize, hero: [f32; 3]) {
+    let r = &mut sys.pool.recs[i];
+    let v = rec::v3(r, 0x20);
+    let p = if rec::u32(r, 0x3c) == 1 {
+        let o = rec::v3(r, 0x30);
+        let p: [f32; 3] = std::array::from_fn(|k| hero[k] + o[k] + v[k]);
+        rec::set_v3(r, 0x30, std::array::from_fn(|k| p[k] - hero[k]));
+        p
+    } else {
+        let p = rec::pos(r);
+        std::array::from_fn(|k| p[k] + v[k])
+    };
+    rec::set_v3(r, 0x10, p);
+    if p.iter().any(|&x| !(2.0..=1021.0).contains(&x)) || dec_life(r) {
+        sys.kill_part(i);
+        return;
+    }
+    let life = rec::i16(r, 0xa) as f32;
+    let c = rec::u32(r, 4);
+    rec::set_u32(r, 4, tween_color(((life - 1.0) / life).to_bits(), c & 0xff_ffff, c));
 }
 
 /// `UpdateParts` `0x331150`: every live record up to the high water mark at entry, in pool order (the mobys and the
-/// camera for the glows that ride a moby; the game's random stream).
-pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f32; 3], rng: &mut Rng) {
+/// camera for the glows that ride a moby, Ratchet's position `0x189ea0` for the records riding him; the game's random
+/// stream).
+pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f32; 3], hero: [f32; 3], rng: &mut Rng) {
     let end = (sys.pool.hw + 1).max(0) as usize;
     for i in 0..end {
         let r = &sys.pool.recs[i];
@@ -364,6 +507,9 @@ pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f
             0x59 => update_glow(sys, i, mobys, cam),
             0x5a => update_streak(sys, i, rng),
             0x61 => update_burst(sys, i),
+            0x3b => update_sparkle(sys, i, hero),
+            0x3c => update_glint(sys, i, hero),
+            ORB => update_orb(sys, i, mobys),
             _ => sys.kill_part(i),
         }
     }

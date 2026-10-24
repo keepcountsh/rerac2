@@ -33,6 +33,28 @@
 use super::{Ctx, Moby, MobyWorld};
 use crate::hero::physics::*;
 
+/// `RC_DEATH_LOG=1` (dev): the enemies' deaths on stdout — each hit that leaves one without health ([`take_damage`]),
+/// each tick of a dying flight ([`flight`]), and one dump of any enemy still about 300 ticks after its health ran
+/// out ([`MobyWorld::death_watch`]): a death that never ends.
+pub fn death_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RC_DEATH_LOG").is_ok_and(|v| v != "0"))
+}
+
+/// The death log's view of a moby: its states, place, collision, reaction block and animation.
+pub fn death_line(w: &MobyWorld, id: usize, ctx: &Ctx) -> String {
+    let m = &w.mobys[id];
+    let r = react(m);
+    let hp = if m.mode & AI != 0 { m.pv_f(health(m)) } else { f32::NAN };
+    let a = ctx.host.anim(m).map_or("no anim".to_string(), |a| format!("seq {}/{} frame {}/{} t {:.2} speed {:.2} flags {:#x}", a.seq_a, a.seq_b, a.frame_a, a.frame_b, a.t, a.speed, a.flags));
+    format!(
+        "#{id} class {:#06x} state {} sub {} ticks {} pos ({:.2}, {:.2}, {:.2}) hp {hp:.2} mode {:#x} coll {} upd {} | react: hurt state {} sub {} opts {:#x} phase {} vel ({:.3}, {:.3}, {:.3}) land seq {} keys {} / {} g {:.4} / {:.4} | {a}",
+        m.o_class, m.state, m.sub_state, m.state_ticks, m.pos[0], m.pos[1], m.pos[2], m.mode, m.has_collision, m.update.is_some(),
+        m.pv_b(r + 0x10), m.pv_i(r + 0x48), m.pv_s(r + 0x38), m.pv_b(r + 0x1a), m.pv_f(r + 0x80), m.pv_f(r + 0x84), m.pv_f(r + 0x88),
+        m.pv_b(r + 0x15), m.pv_f(r + 0x54), m.pv_f(r + 0x60), m.pv_f(r + 0x4c), m.pv_f(r + 0x50),
+    )
+}
+
 /// The mode bit of the mobys the framework works on.
 pub const AI: u16 = 0x20;
 
@@ -283,9 +305,9 @@ fn move_body(w: &mut MobyWorld, id: usize, ctx: &Ctx, from: V3) {
     } else {
         let mut v = sub(m.pos, from);
         let l = len2(v);
+        // `0x2ef188`: the move across held to the speed it had, the fall kept.
         if m.pv_f(o + 0xb0) < l {
-            let k = m.pv_f(o + 0xb0) / l;
-            v = scale(v, k);
+            v = set_len2(v, m.pv_f(o + 0xb0));
         } else {
             m.set_pv_f(o + 0xb0, l);
         }
@@ -431,6 +453,16 @@ pub fn move_toward(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, offset: f32, goa
         }
     }
     move_step(w, id, ctx, yaw, goal)
+}
+
+/// The enemies' scene rule (`0x1a8f00` = 2, after their checks): no collision, hidden and not a target
+/// (`+0x98` = 0, mode `& 0xefff | 0x41`), and nothing more this tick. Outside a scene their update shows them again.
+/// Returns whether a scene plays.
+pub fn scene_hide(m: &mut super::Moby, ctx: &Ctx) -> bool {
+    if ctx.game.scenes.mode != crate::scene::SCENE { return false; }
+    m.has_collision = false;
+    m.mode = (m.mode & 0xefff) | 0x41;
+    true
 }
 
 /// `0x32ce98(m)`: the frame's move in place, facing as it is (it slows to a stop).
@@ -707,6 +739,30 @@ pub fn flash_start(m: &mut Moby, b: usize) {
     }
 }
 
+/// `0x328c28(range, cone, _, m, out, dir)`: the knock aimed at what it may fly into — the crates and the targets the
+/// aims prefer (class type 0x16) about the point `range` ahead along `dir` across (the first 16 the sphere of `range`
+/// there touches, `0x2e14b0`), those within `cone` of its heading: across it turns to their median heading, its
+/// length kept. None: `dir` as it is. (Its third argument, 4, is not read.)
+fn knock_aim(w: &MobyWorld, id: usize, ctx: &Ctx, range: f32, cone: f32, dir: V3) -> V3 {
+    let Some(sc) = ctx.scene else { return dir };
+    let m = &w.mobys[id];
+    let ahead = set_len([dir[0], dir[1], 0.0], range);
+    let heading = atan2(ahead[0], ahead[1]);
+    let near = crate::collision::coll_sphere_mobys(sc, add(m.pos, ahead), range, crate::collision::QueryFlags(0), Some(id));
+    let mut hs: Vec<f32> = near
+        .into_iter()
+        .take(16)
+        .filter(|&o| super::aim::is_crate(w, o) || w.mobys.get(o).and_then(|x| w.class(x.o_class)).is_some_and(|c| c.kind == 0x16))
+        .map(|o| { let p = w.mobys[o].pos; atan2(p[0] - m.pos[0], p[1] - m.pos[1]) })
+        .filter(|&h| rot_dist(heading, h) < cone)
+        .collect();
+    if hs.is_empty() { return dir; }
+    hs.sort_by(f32::total_cmp);
+    let h = hs[hs.len() >> 1];
+    let l = len2(dir);
+    [h.cos() * l, h.sin() * l, dir[2]]
+}
+
 /// `0x3282b0(m, react, dir, kind)`: the reaction's start — its sequence (a class reaction of the kind, else the
 /// block's fallback with the speeds scaled), dying (kind 4) or spinning (5) without collision and out of the target
 /// list; the knock along `dir` (at least 1 across and 1 up) at the reaction's speeds, facing the hit; the flight's
@@ -772,13 +828,11 @@ fn react_start(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, dir: [f32; 4], kind:
     // The block's flash (its colour: red, `+7`).
     flash_start(&mut w.mobys[id], r);
     if kind == 1 || !ok { return false; }
-    let m = &mut w.mobys[id];
-    let mut d = [dir[0], dir[1], dir[2]];
-    if len2(d) < 1.0 {
-        let l = len2(d);
-        d = if l == 0.0 { [0.0; 3] } else { scale(d, 1.0 / l) };
-    }
+    // Aimed at what it may fly into (`0x328c28`), at least 1 across (`0x2ef188`: the fall kept) and 1 up.
+    let mut d = knock_aim(w, id, ctx, 5.0, 0.785_398_2, [dir[0], dir[1], dir[2]]);
+    if len2(d) < 1.0 { d = set_len2(d, 1.0); }
     if d[2] < 1.0 { d[2] = 1.0; }
+    let m = &mut w.mobys[id];
     m.set_pv_v(r + 0x80, [d[0] * x.across, d[1] * x.across, d[2] * x.up]);
     m.set_pv_f(r + 0x64, add_rot(atan2(d[0], d[1]), PI));
     if m.pv_b(r + 0x76) == 0 || 3 < kind {
@@ -803,6 +857,20 @@ fn react_start(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, dir: [f32; 4], kind:
 /// hurting with `+0x75` / mid-flight), the reaction starts (the hit's direction, else straight back) and the moby
 /// goes into its hurt state. Returns the kind.
 pub fn take_damage(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, flag: bool) -> i32 {
+    if !death_log() { return damage_tick(w, id, ctx, flag); }
+    let hp = |w: &MobyWorld| if w.mobys[id].mode & AI != 0 { w.mobys[id].pv_f(health(&w.mobys[id])) } else { 1.0 };
+    let before = hp(w);
+    let kind = damage_tick(w, id, ctx, flag);
+    let after = hp(w);
+    if after <= 0.0 && after != before {
+        println!("death hit tick {}: kind {kind} (hp {before:.2} → {after:.2}) {}", ctx.game.frame, death_line(w, id, ctx));
+        let serial = w.mobys[id].serial;
+        w.death_watch.entry(id).or_insert((serial, 0));
+    }
+    kind
+}
+
+fn damage_tick(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, flag: bool) -> i32 {
     let m = &w.mobys[id];
     if m.mode & AI == 0 { return 0; }
     let (h, r) = (health(m), react(m));
@@ -908,6 +976,7 @@ pub fn flight(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> u32 {
     let r = react(&w.mobys[id]);
     let res = if w.mobys[id].pv_b(r + 0x1a) < 3 { fly(w, id, ctx) } else { 0 };
     if res & 2 != 0 { w.mobys[id].set_pv_b(r + 0x18, 0); }
+    if death_log() && w.mobys[id].pv_s(r + 0x38) & 1 != 0 { println!("dying flight tick {}: res {res:#x} {}", ctx.game.frame, death_line(w, id, ctx)); }
     res
 }
 
@@ -921,8 +990,8 @@ fn fly(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> u32 {
     v[2] -= g;
     let mut s = len2(v);
     approach(if 1 < phase { 0.0 } else { 0.016_666_668 }, m.pv_f(r + 0x2c), &mut s);
-    let l = len2(v);
-    if l != 0.0 { v = scale(v, s / l); } else { v = [0.0; 3]; }
+    // `0x2ef188(s, v, v)`: the speed across set, the fall kept.
+    v = set_len2(v, s);
     m.set_pv_v(r + 0x80, v);
     let up = scale(m.rows[2], m.pv_f(r + 0x34));
     let centre = add(m.pos, up);

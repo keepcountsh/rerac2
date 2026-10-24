@@ -53,7 +53,7 @@ fn checks_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
         // The reaction block (`+0x60`).
         m.set_pv_b(0x70, 0xb);
         m.set_pv_f(0x7c, 0.1);
-        m.set_pv_f(0x88, 0.016_666_668);
+        m.set_pv_f(0x88, 0.008_333_334);
         m.set_pv_f(0x8c, 0.004_166_667);
         m.set_pv_f(0x9c, 0.4);
         m.set_pv_f(0x80, 0.066_666_67);
@@ -548,6 +548,10 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         w.delete(id);
         return;
     }
+    if ai::scene_hide(&mut w.mobys[id], ctx) {
+        w.changed = true;
+        return;
+    }
     let coll = w.class(0x0b0a).is_some_and(|c| c.has_collision);
     let m = &mut w.mobys[id];
     m.mode = (m.mode & 0xffbe) | crate::moby::mode::TARGET;
@@ -829,6 +833,8 @@ pub fn update_0b0a(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     }
     if m.state_ticks != -1 { m.state_ticks = m.state_ticks.wrapping_add(1); }
     w.changed = true;
+    // `0x2e7920(0x3d8340)`: its glows and wire (crate::fx).
+    w.register_draw(id);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1090,6 +1096,15 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         return;
     }
     if w.mobys[id].state != 0xc && w.mobys[id].sub_state != 2 { ai::hold(w, id, ctx); }
+    if ai::scene_hide(&mut w.mobys[id], ctx) {
+        // Its parts with it, while it has both.
+        let ps = parts(w, id, 0x2a0);
+        if ps.iter().all(|p| p.is_some()) {
+            for p in ps.into_iter().flatten() { ai::scene_hide(&mut w.mobys[p], ctx); }
+        }
+        w.changed = true;
+        return;
+    }
     let coll = w.class(0x0b0b).is_some_and(|c| c.has_collision);
     let m = &mut w.mobys[id];
     m.mode = (m.mode & 0xffbe) | crate::moby::mode::TARGET;
@@ -1477,6 +1492,8 @@ pub fn update_0b0b(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         m.set_pv_f(0x2ac, angle);
     }
     spin_parts(w, id, id, 0x2a0, ctx, angle);
+    // `0x3dc100` → `0x2e7920(0x3dc220)`: its glows (crate::fx).
+    w.register_draw(id);
     let m = &mut w.mobys[id];
     ai::flash(m, 0x50);
     for o in [0x270, 0x272, 0x26] {

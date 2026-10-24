@@ -1,7 +1,7 @@
 //! The spawn points (class 0x325, L00 `0x39fbd8`): the checkpoints. Ratchet inside its cuboid (`+0x68`[0]) — or its
 //! uid already counted in the save — makes it the checkpoint (`0x359b20`): its position (on the ground below, within
 //! 2) and angles, what happened since the last one made permanent; its mission's flag set (`0x3132a8`), a message
-//! (`0x327448(0x2dcc, 90)`, the "checkpoint" text, with `[9]`, once per spawn point in a row: not shown yet), and 900
+//! (`0x327448(0x2dcc, 90)`, the "checkpoint" text, with `[9]`, once per spawn point in a row, crate::msgbox), and 900
 //! ticks before it can take over again.
 //!
 //! **pvars:** `[0]` the cuboid, `[2]` the flags (8 off; 2 Clank only; 4 Ratchet only; 0x10 standing, walking or a
@@ -64,7 +64,8 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         if let Some(d) = ctx.game.uid_dead.get_mut(u) { *d = 0; }
         ctx.game.clear_uid(uid);
         if m.pv_i(0x24) != 0 && ctx.game.last_checkpoint != Some(id) {
-            ctx.game.checkpoint_message = Some(0x5a);
+            // `0x327448(0x2dcc, 90)`: the "checkpoint" text.
+            ctx.game.messages.push(crate::msgbox::Request::Text { text: 0x2dcc, ticks: Some(0x5a) });
             ctx.game.last_checkpoint = Some(id);
         }
         w.mobys[id].set_pv_i(0x20, 900);

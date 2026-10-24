@@ -45,7 +45,7 @@ pub struct Mobys {
     pub snap: Option<(Snapshot, Arc<MobyGrid>)>,
     /// Created mobys by moby index.
     pub created: HashMap<usize, Created>,
-    /// Created mobys posed from another's joints (Ratchet's head item: [`Mobys::skin_head`]): their palettes.
+    /// Created mobys posed from another's joints (Ratchet's worn items: [`Mobys::skin_worn`]): their palettes.
     pub skinned: HashMap<usize, Vec<moby_anim::Rows>>,
     /// The ship's canopy (`rc_game::canopy`, from the level overlay) and this tick's for the draw.
     pub canopy: Option<rc_game::canopy::Canopy>,
@@ -70,9 +70,8 @@ pub struct Mobys {
     /// The level defs' footstep base (`$gp − 0x60e4`, `0x3012a0`): the level settings' word after their variant
     /// blocks (`[0x17 + 8·n]`, n = `[0x1a]`; `[0x1f]` without blocks).
     pub footstep_base: usize,
-    /// The placed records the spawn rules left out (`0x3012a0`: a mission rank above the save's, dead, the flags):
-    /// no moby, so their static instances stay hidden (else they stand at their places, idling, untouchable).
-    pub unspawned: Vec<usize>,
+    /// The placed instances whose record the spawn rules left out (`0x3012a0`: no moby, so nothing draws them).
+    pub left_out: Vec<usize>,
 }
 
 /// Joint lists per class: each list the root-to-joint chain whose last joint the query returns.
@@ -339,6 +338,15 @@ impl MobyHost for Host<'_> {
         k
     }
 
+    fn play_sound_of(&mut self, m: &Moby, class: i16, index: i32, mode: i32) -> i32 {
+        let Some(s) = self.sound.as_mut() else { return -1 };
+        let ev = rc_game::audio::SoundEvent { index, flags: mode as u32, moby: m.index, o_class: m.o_class, sound_class: class, pos: m.pos, tick: s.tick };
+        let mut rng = s.system.rng;
+        let k = s.system.play_class_sound(&ev, None, &s.listener, &mut rng);
+        s.system.rng = rng;
+        k
+    }
+
     /// `0x3602f0(handle)`: the slot released.
     fn stop_sound(&mut self, handle: i32) {
         if let Some(s) = self.sound.as_mut() { if 0 <= handle { s.system.slots.release(handle); } }
@@ -394,47 +402,59 @@ impl Mobys {
         v.into_iter().map(|x| x.1).collect()
     }
 
-    /// `0x2aa278` for the head item (`rc_game::hero::items::head_pass`): a keyframe of its own built from Ratchet's
-    /// current pose (`0x3181c0`: his blended key as a frame, [`moby_anim::snapshot`]) — joint 0 at rest, joints 1 and
-    /// 2 his [`rc_game::hero::items::HEAD_JOINTS`]' quaternions, their scale where it is not 1 (inherited; with his
-    /// joint modifiers' scale, not their rotations: the head look is not carried yet) and their
-    /// translation where it differs from the head item's rest — evaluated with the head item's class as key A. It is
-    /// drawn in his frame, so it follows his head.
-    pub fn skin_head(&mut self, lv: &crate::level_load::LoadedLevel, head: Option<usize>, pose: Option<&HeroPose>) {
+    /// `0x2aa278` for the worn items — the head item (`rc_game::hero::items::head_pass`) and the feet
+    /// (`feet_pass`): for each a keyframe of its own built from Ratchet's current pose (`0x3181c0`: his blended key
+    /// as a frame, [`moby_anim::snapshot`]) — joint 0 at rest, joints 1.. his `joints`' rotations (with his pose layers
+    /// and his joint modifiers' rotations: the feet's tilt reaches the boots), their scale where it is not 1
+    /// (inherited; with his joint modifiers' scale unless `own_scale`: `0x2b09e0` puts his feet records' 0.01 back to
+    /// 1 while it poses the feet) and their translation where it differs from the item's rest — evaluated with the
+    /// item's class as key A. It is drawn in his frame, so it follows him.
+    pub fn skin_worn(&mut self, lv: &crate::level_load::LoadedLevel, worn: &[(Option<usize>, &[u8], bool)], pose: Option<&HeroPose>) {
         self.skinned.clear();
-        let (Some(id), Some(h)) = (head, pose) else { return };
-        let Some(m) = self.world.mobys.get(id) else { return };
-        let (Some(ac), Some(hc)) = (lv.mobys.anim.get(h.class), lv.mobys.classes.iter().position(|c| c.o_class == m.o_class as i32).and_then(|ci| lv.mobys.anim.get(ci))) else { return };
+        let Some(h) = pose else { return };
+        let Some(ac) = lv.mobys.anim.get(h.class) else { return };
         let Some(f) = moby_anim::snapshot(ac, h.state, h.snapshot) else { return };
-        let joints = rc_game::hero::items::HEAD_JOINTS;
-        let mut quats = vec![[0, 0, 0, 0x7fff]];
-        let (mut scales, mut trans) = (Vec::new(), Vec::new());
-        for (k, &j) in joints.iter().enumerate() {
-            let (j, i) = (j as usize, k + 1);
-            // His local rotation as his drawn pose has it: the key's, then his pose layers (the face layer covers
-            // his head's joints 8..51).
-            let pl: Vec<moby_anim::PoseLayer> = h.layers.iter().map(crate::moby_anim::InstanceLayer::pose).collect();
-            quats.push(moby_anim::layered_quat(ac, &pl, j, f.quat_at(j)));
-            // The scale his joint has as the draw poses it: its key's, times his joint modifiers' (his head's 0.875,
-            // which shrinks his head into the helmet, reaches the helmet too: the game's joint data carries it).
-            let key = f.scales.iter().find(|r| r.joint as usize == j).map_or([1.0; 3], |r| r.value());
-            let s: [f32; 3] = h.mods.iter().filter(|m| m.joint as usize == j).fold(key, |a, m| std::array::from_fn(|c| a[c] * m.scale[c]));
-            let s = s.map(|c| (c * 4096.0).round().clamp(0.0, 65535.0) as u16);
-            if s != [0x1000; 3] { scales.push(moby_anim::ScaleRec { scale: s, joint: i as u8, flags: 0x80 }); }
-            let t = f.trans.iter().find(|r| r.joint as usize == j).map(|r| r.trans).or_else(|| ac.rest.get(j).map(|v| v.map(|c| c as i16)));
-            let rest = hc.rest.get(i).map(|v| v.map(|c| c as i16));
-            if let Some(t) = t.filter(|&t| Some(t) != rest) { trans.push(moby_anim::TransRec { trans: t, joint: i as u8, pad: 0 }); }
+        let pl: Vec<moby_anim::PoseLayer> = h.layers.iter().map(crate::moby_anim::InstanceLayer::pose).collect();
+        for &(item, joints, own_scale) in worn {
+            let Some(id) = item else { continue };
+            let Some(m) = self.world.mobys.get(id) else { continue };
+            let Some(hc) = lv.mobys.classes.iter().position(|c| c.o_class == m.o_class as i32).and_then(|ci| lv.mobys.anim.get(ci)) else { continue };
+            let mut quats = vec![[0, 0, 0, 0x7fff]];
+            let (mut scales, mut trans) = (Vec::new(), Vec::new());
+            for (k, &j) in joints.iter().enumerate() {
+                let (j, i) = (j as usize, k + 1);
+                // His local rotation as his drawn pose has it: the key's, his pose layers (the face layer covers his
+                // head's joints 8..51), then his joint modifiers.
+                let q = moby_anim::layered_quat(ac, &pl, j, f.quat_at(j)).map(|c| c as f32 / 32768.0);
+                let q = moby_anim::modified_quat(h.mods, j as u8, q);
+                quats.push(q.map(|c| (c * 32768.0).round().clamp(-32768.0, 32767.0) as i16));
+                // The scale his joint has as the draw poses it: its key's, times his joint modifiers' (his head's 0.875,
+                // which shrinks his head into the helmet, reaches the helmet too: the game's joint data carries it).
+                let key = f.scales.iter().find(|r| r.joint as usize == j).map_or([1.0; 3], |r| r.value());
+                let s: [f32; 3] = if own_scale { key } else { h.mods.iter().filter(|m| m.joint as usize == j).fold(key, |a, m| std::array::from_fn(|c| a[c] * m.scale[c])) };
+                let s = s.map(|c| (c * 4096.0).round().clamp(0.0, 65535.0) as u16);
+                if s != [0x1000; 3] { scales.push(moby_anim::ScaleRec { scale: s, joint: i as u8, flags: 0x80 }); }
+                let t = f.trans.iter().find(|r| r.joint as usize == j).map(|r| r.trans).or_else(|| ac.rest.get(j).map(|v| v.map(|c| c as i16)));
+                let rest = hc.rest.get(i).map(|v| v.map(|c| c as i16));
+                if let Some(t) = t.filter(|&t| Some(t) != rest) { trans.push(moby_anim::TransRec { trans: t, joint: i as u8, pad: 0 }); }
+            }
+            let quat_bytes = 8 * quats.len();
+            let trans_offset = quat_bytes + 8 * scales.len();
+            let mut payload: Vec<u8> = quats.iter().flatten().flat_map(|c| c.to_le_bytes()).collect();
+            payload.extend(scales.iter().flat_map(|r| r.scale.iter().flat_map(|c| c.to_le_bytes()).chain([r.joint, r.flags])));
+            payload.extend(trans.iter().flat_map(|r| r.trans.iter().flat_map(|c| c.to_le_bytes()).chain([r.joint, r.pad])));
+            payload.resize(payload.len().next_multiple_of(16), 0);
+            let header = moby_anim::MobyFrameHeader { rate: 0.0, time: 0, qwc: (payload.len() / 16) as u16, quat_bytes: quat_bytes as u16, scale_count: scales.len() as u16, trans_offset: trans_offset as u16, trans_count: trans.len() as u16 };
+            let frame = moby_anim::MobyFrame { header, quats, scales, trans, payload };
+            let state = AnimState { seq_a: moby_anim::SNAPSHOT_SEQ, frame_a: 0, seq_b: moby_anim::SNAPSHOT_SEQ, frame_b: 0, t: 0.0, speed: 0.0, rate: 0.0, flags: 0, trigger_count: 0, skip_advance: true };
+            self.skinned.insert(id, moby_anim::evaluate_with_snapshot(hc, &state, Some(&frame)));
         }
-        let quat_bytes = 8 * quats.len();
-        let trans_offset = quat_bytes + 8 * scales.len();
-        let mut payload: Vec<u8> = quats.iter().flatten().flat_map(|c| c.to_le_bytes()).collect();
-        payload.extend(scales.iter().flat_map(|r| r.scale.iter().flat_map(|c| c.to_le_bytes()).chain([r.joint, r.flags])));
-        payload.extend(trans.iter().flat_map(|r| r.trans.iter().flat_map(|c| c.to_le_bytes()).chain([r.joint, r.pad])));
-        payload.resize(payload.len().next_multiple_of(16), 0);
-        let header = moby_anim::MobyFrameHeader { rate: 0.0, time: 0, qwc: (payload.len() / 16) as u16, quat_bytes: quat_bytes as u16, scale_count: scales.len() as u16, trans_offset: trans_offset as u16, trans_count: trans.len() as u16 };
-        let frame = moby_anim::MobyFrame { header, quats, scales, trans, payload };
-        let state = AnimState { seq_a: moby_anim::SNAPSHOT_SEQ, frame_a: 0, seq_b: moby_anim::SNAPSHOT_SEQ, frame_b: 0, t: 0.0, speed: 0.0, rate: 0.0, flags: 0, trigger_count: 0, skip_advance: true };
-        self.skinned.insert(id, moby_anim::evaluate_with_snapshot(hc, &state, Some(&frame)));
+    }
+
+    /// Ratchet's worn items for [`Mobys::skin_worn`]: the head item, then the feet.
+    pub fn worn(items: &rc_game::hero::items::ItemBlock) -> [(Option<usize>, &'static [u8], bool); 3] {
+        use rc_game::hero::items::{FEET_JOINTS, HEAD_JOINTS};
+        [(items.head, &HEAD_JOINTS, false), (items.feet[0], &FEET_JOINTS[0], true), (items.feet[1], &FEET_JOINTS[1], true)]
     }
 
     /// The class table (core order) and the static spawn of the level's moby instances.
@@ -450,6 +470,7 @@ impl Mobys {
                 update: rc_game::moby::classes::update_for(c.o_class as i16),
                 scale: c.class.header.scale,
                 has_collision: c.class.header.collision != 0,
+                metal: c.class.header.metal_count != 0,
                 mode: c.class.header.mode_bits as u16,
                 glow: c.class.header.glow_rgba as u32,
                 animated: m.anim.get(ci).and_then(|a| a.sequences.first()).and_then(Option::as_ref).is_some_and(|q| q.header.frame_count >= 2),
@@ -529,9 +550,9 @@ impl Mobys {
         }
         let mut rules = rc_game::moby::SpawnRules { game, fresh, ground: &ground };
         world.spawn_static(&records, &data, host, &mut rules);
-        let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
         let spawned: std::collections::HashSet<usize> = world.mobys.iter().filter_map(|m| m.instance).collect();
-        let unspawned = (0..records.len()).filter(|i| !spawned.contains(i)).collect();
+        let left_out = (0..records.len()).filter(|i| !spawned.contains(i)).collect();
+        let hero_moby = world.mobys.iter().position(|m| m.o_class == 0);
         let lists: Vec<(Vec<u8>, Vec<u8>)> = m
             .classes
             .iter()
@@ -563,7 +584,11 @@ impl Mobys {
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("mobys: grind paths: {e}")).unwrap_or_default();
-        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: rc_game::level::LevelData::load(&lv.gameplay), footstep_base: footstep_base(&lv.gameplay), unspawned }
+        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: {
+            let mut l = rc_game::level::LevelData::load(&lv.gameplay);
+            l.items = crate::play::menu_tables(&crate::level_load::extracted_root(), crate::level_load::level_index()).items;
+            l
+        }, footstep_base: footstep_base(&lv.gameplay), left_out }
     }
 
 }
@@ -695,11 +720,11 @@ impl CreatedDraw {
                 }
             };
             let model = moby_render::extra_model(m.rows, m.scale, m.pos);
-            // MobyProc's shine gate (crate::moby_lod: `+0x73` is 0x18 for a class with metal packets): the metal pass
-            // (chrome, glass: the ship's canopy) within its distance, with its sphere-map basis.
+            // MobyProc's shine gate (crate::moby_lod, the moby's `+0x63`): the metal pass (chrome, glass: the ship's
+            // canopy) within its distance, with its sphere-map basis.
             let (shine, e) = view.map_or((0, [[0.0; 3]; 3]), |(eye, cam, tans)| {
                 let h = &class.class.header;
-                let shine_distance = if h.metal_count > 0 { crate::moby_lod::SHINE_DISTANCE } else { 0 };
+                let shine_distance = m.shine;
                 let inp = crate::moby_lod::ProcInput { position: m.pos, rows: m.rows, scale: m.scale, draw_distance: i32::MAX, lod_trans: h.lod_trans, shine_distance, alpha: 0x80 };
                 let Some(ac) = lv.anim.get(c.class) else { return (0, [[0.0; 3]; 3]) };
                 let sphere = crate::moby_lod::world_sphere(&inp, crate::moby_lod::seq_sphere(ac, &c.state, h.bsphere));
@@ -709,7 +734,7 @@ impl CreatedDraw {
                     _ => (0, [[0.0; 3]; 3]),
                 }
             });
-            let look = moby_render::SlotLook { model, alpha: m.alpha, fading: false, mode: m.mode, glow: m.glow, shine, e, late: false, piece: m.piece };
+            let look = moby_render::SlotLook { model, alpha: m.alpha, fading: false, mode: m.mode, glow: m.glow, shine, e, late: false, piece: m.piece, bangles: m.bangles };
             self.extra.show_slot(commands, level, slot, Some((class, look)), meshes, images, materials, buffers);
             shown.push(slot);
             if let Some(f) = mobys.skinned.get(&id).cloned().or_else(|| lv.anim.get(c.class).map(|ac| moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref()))) {

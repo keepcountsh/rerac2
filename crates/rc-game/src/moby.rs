@@ -95,6 +95,8 @@ pub struct Ctx<'a> {
     pub level: &'a crate::level::LevelData,
     /// The particle pool the effects spawn into (crate::particles), when the engine has one.
     pub parts: Option<&'a mut crate::particles::Particles>,
+    /// The view the updates' sphere tests (`0x2f0080`) read (the last frame's camera); `None`: everything in view.
+    pub view: Option<crate::particles::BSphereView>,
 }
 
 /// What the level's class table gives a moby at init.
@@ -116,6 +118,8 @@ pub struct ClassInfo {
     pub glow: u32,
     /// Class header +0x46: the class's type (0x16: a target the aims prefer, 0x14 / 0x12: the wrench's exceptions).
     pub kind: i16,
+    /// Class header byte 6 ≠ 0: metal (shine) packets.
+    pub metal: bool,
     /// Per sequence, its reaction record (sequence `+0x14`, [`ai::Reaction`]).
     pub reactions: Vec<Option<ai::Reaction>>,
     /// The break pieces' centre and points (1/1024 of the moby's scale; `rc_formats::moby::MobyPiece`), by piece.
@@ -182,9 +186,18 @@ pub struct Moby {
     pub glow: u32,
     /// `+0x7c` as a piece mask (0x8000 | 1 << k): drawn as break piece k only (crate::moby::shards).
     pub piece: Option<u8>,
+    /// `+0x7c` without 0x8000: the pieces whose bits are set drawn on top of the whole moby (MobyProc `0x319cb8` →
+    /// `0x31a000`, after its packets): the helmet's visor (crate::hero::items::head_pass).
+    pub bangles: u16,
+    /// `+0x63`: the shine distance MobyProc's metal gate reads (0: no metal pass): `0x311418` gives a class with metal
+    /// packets 0x18 (created mobys, the scene actors `0x305428`), the static spawn 8 (`0x3035c8`), Ratchet's items 0x10
+    /// (`0x2afc68`) and Ratchet 0x10 every tick (`0x2a94d8`).
+    pub shine: u8,
     /// The port's: which creation this slot holds (MobyWorld's count at `CreateMoby`; 0 for the placed ones), so the
     /// engine's state of a deleted moby is not carried over to the next one created in its slot.
     pub serial: u32,
+    /// `+0xa0`: the frame from which a deleted created moby's slot may be taken again (two after the delete).
+    pub freed_at: i32,
 }
 
 /// The spawn rules of the static spawn (`0x3012a0`), over the save's uid bits and the missions.
@@ -198,7 +211,8 @@ pub struct SpawnRules<'a> {
 
 impl SpawnRules<'_> {
     /// Whether the record stays out, and whether it takes the alternative bolts / XP (words 6 / 8). The rank test
-    /// (word 9 against the mission's rank `0x2e4450`) leaves the challenge mobys out, banking their rewards for the
+    /// (word 9 against the sub-mission's progress bits, else the mission's rank `0x2e4450`,
+    /// crate::game::GameState::mission_rank) leaves the higher ranks' mobys out, banking their rewards for the
     /// mission (`0x1c5400` / `0x1c54c0`); the flags (word 3): 0 always; dead since the checkpoint (`0x21e1c4`):
     /// never; bits 0 / 1 by the mission's table `0x1b1c60` (bit 1: the uid's bit 3 set, its count cleared, the
     /// alternative rewards); bit 2 (with 3 clear) once — not while the uid's count is set; bit 3 the count cleared on
@@ -208,8 +222,9 @@ impl SpawnRules<'_> {
         let g = &mut *self.game;
         let (mission, sub, flags, uid, rank) = (b.unknown_4, b.spawn_flags, b.spawn_id, r.extra[0] as i16, b.unknown_14);
         if 0 <= mission && 0 < rank {
+            // The sub-mission's progress bits, else (none yet) the mission's rank.
             let mut have = g.mission(mission as u8, sub as u8) as i32;
-            if have == 0 { have = 1; }
+            if have == 0 { have = g.mission_rank(mission as u8) as i32; }
             if b.o_class == 0x1f5 || b.o_class == 0x200 {
                 if rank < have { return (true, false); }
             } else if have < rank {
@@ -288,9 +303,9 @@ impl Moby {
             index, bsphere: [0.0; 4], pos: [0.0; 3], state: 0, group: -1, slot: 0, alpha: 0x80, scale: 0.0, update_dist: 0,
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0,
+            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0, freed_at: 0,
             // `0x311418`: `+0x38` = 0x40404000000000.
-            light: 0, ambient: [0x40; 3], glow: 0, piece: None,
+            light: 0, ambient: [0x40; 3], glow: 0, piece: None, bangles: 0, shine: 0,
         };
         match class {
             Some(c) => {
@@ -305,6 +320,7 @@ impl Moby {
                     m.mode |= mode::GLOW;
                     m.glow = c.glow;
                 }
+                if c.metal { m.shine = 0x18; }
             }
             None => m.mode |= mode::NO_UPDATE | 5,
         }
@@ -387,6 +403,8 @@ pub trait MobyHost {
     /// `0x3605f0(index, mode, moby)`: play the moby's class sound `index` (mode 0 once, 4 looped); returns its
     /// handle (−1: none).
     fn play_sound(&mut self, _m: &Moby, _index: i32, _mode: i32) -> i32 { -1 }
+    /// `0x360698(index, mode, moby, class)`: the same with sound `index` of another class's table.
+    fn play_sound_of(&mut self, _m: &Moby, _class: i16, _index: i32, _mode: i32) -> i32 { -1 }
     /// `0x3602f0(handle)`: stop a sound; `0x3602a8(moby, handle)`: it still plays.
     fn stop_sound(&mut self, _handle: i32) {}
     fn sound_playing(&self, _handle: i32) -> bool { false }
@@ -407,6 +425,16 @@ pub struct MobyWorld {
     pub created: u32,
     /// The hit log (`0x1c3400`).
     pub hits: hits::HitLog,
+    /// `0x2e7920`'s list: the mobys whose update registered their class's draw callback this tick, in that order
+    /// (crate::fx runs them after the tick). A moby drawn as another's piece runs the piece's update and has none.
+    pub draws: Vec<usize>,
+    /// `0x1b1e20`: the first created moby's slot. The placed mobys come before it, and a placed moby's slot is never
+    /// taken again: deleted, it stays there (state 0xfd) with its pvars, as the group lists and links name it.
+    pub first_created: usize,
+    /// `0x1b1948` as the last moby loop saw it (deletes stamp their slot with it).
+    pub frame: i32,
+    /// `RC_DEATH_LOG` (crate::moby::ai::death_log): the ticks since each enemy's death hit, by moby and its serial.
+    pub death_watch: std::collections::HashMap<usize, (u32, u32)>,
     /// The moby groups (`0x1fa8a0`): runtime moby indices per group.
     pub groups: Vec<Vec<usize>>,
     /// The ties' and shrubs' world matrices (`0x1b249c` / `0x1b2380`, 0x40 each: rows, position) and their groups
@@ -432,6 +460,10 @@ pub struct MobyWorld {
     /// The mobys' shared words (gameplay section 21, live after the pvar data): the pvar words listed in its pairs
     /// hold an offset here ([`MobyWorld::shared_i`]).
     pub shared: Vec<u8>,
+    /// The nanotech clusters' globals (classes::nanotech).
+    pub nanotech: classes::nanotech::Globals,
+    /// The Gravity Bomb's blast effect (classes::gravity_bomb).
+    pub gravity_bomb: classes::gravity_bomb::Effect,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).
@@ -487,6 +519,8 @@ impl MobyWorld {
             let b = &r.base;
             let class = self.class(b.o_class as i16).cloned();
             let mut m = Moby::init(self.mobys.len(), b.o_class as i16, class.as_ref());
+            // `0x3035c8`: a placed moby's shine distance 8.
+            if m.shine != 0 { m.shine = 8; }
             m.uid = r.extra[0] as i16;
             (m.bolts, m.xp) = if alt[i] { (r.extra[2] as i16, b.unknown_10 as i16) } else { (r.extra[1] as i16, r.extra[3] as i16) };
             m.mission = b.unknown_4 as u8;
@@ -528,6 +562,7 @@ impl MobyWorld {
             let id = self.mobys.len() - 1;
             if class.is_some() { self.rebuild(id, host); }
         }
+        self.first_created = self.mobys.len();
         self.groups = data.groups.iter().map(|g| g.iter().filter_map(|&r| map.get(r as usize).and_then(|&x| usize::try_from(x).ok())).collect()).collect();
         self.ties = data.ties.clone();
         self.shrubs = data.shrubs.clone();
@@ -546,10 +581,13 @@ impl MobyWorld {
         if let Some(b) = usize::try_from(off).ok().and_then(|o| self.shared.get_mut(o..o + 4)) { b.copy_from_slice(&v.to_le_bytes()); }
     }
 
-    /// `CreateMoby(o_class)` `0x311320`: the first free slot (state ≥ 0xfe), initialised, with zeroed pvars.
+    /// `CreateMoby(o_class)` `0x311320`: past the placed mobys, the first slot free (state 0xfe) for two frames, else
+    /// a new one at the end; initialised, with zeroed pvars.
     pub fn create(&mut self, o_class: i16) -> usize {
         let class = self.class(o_class).cloned();
-        let id = self.mobys.iter().position(|m| m.state >= 0xfe).unwrap_or(self.mobys.len());
+        let start = self.first_created.min(self.mobys.len());
+        let frame = self.frame;
+        let id = self.mobys[start..].iter().position(|m| m.state == 0xfe && m.freed_at <= frame).map_or(self.mobys.len(), |k| start + k);
         let mut m = Moby::init(id, o_class, class.as_ref());
         m.pvars = vec![0; PVAR_BYTES];
         self.created += 1;
@@ -606,15 +644,30 @@ impl MobyWorld {
     /// reached: the animation advance (unless mode 0x40), its update (if it has one), the matrix rebuild (unless
     /// mode 4). Mobys created during the loop wait a tick.
     pub fn tick(&mut self, cam: V3, ctx: &mut Ctx) {
+        self.frame = ctx.game.frame;
         if !self.loaded {
             self.loaded = true;
             self.load_pass(ctx);
         }
+        self.draws.clear();
         for id in self.run_list(cam) {
             if self.mobys[id].state >= 0x80 { continue; }
             if self.mobys[id].mode & mode::NO_ADVANCE == 0 { ctx.host.advance(&self.mobys[id]); }
             if let Some(f) = self.mobys[id].update { f(self, id, ctx); }
             if self.mobys[id].mode & mode::NO_MATRIX == 0 { self.rebuild(id, &*ctx.host); }
+        }
+        if ai::death_log() { self.watch_deaths(ctx); }
+    }
+
+    /// `RC_DEATH_LOG`: an enemy still about 300 ticks after its death hit (crate::moby::ai::take_damage adds it) is
+    /// dumped once — a death that never ends; one that went is forgotten.
+    fn watch_deaths(&mut self, ctx: &Ctx) {
+        let mobys = &self.mobys;
+        self.death_watch.retain(|i, (serial, _)| mobys.get(*i).is_some_and(|m| m.state < 0x80 && m.serial == *serial));
+        let ids: Vec<usize> = self.death_watch.keys().copied().collect();
+        for i in ids {
+            let n = { let e = self.death_watch.get_mut(&i).unwrap(); e.1 += 1; e.1 };
+            if n == 300 { println!("death stuck tick {}: 300 ticks after its death hit: {}", ctx.game.frame, ai::death_line(self, i, ctx)); }
         }
     }
 
@@ -632,8 +685,14 @@ impl MobyWorld {
         }
     }
 
-    /// `0x1b1d40`: the free moby slots.
-    pub fn free_slots(&self) -> usize { MAX_MOBYS.saturating_sub(self.mobys.iter().filter(|m| m.state < 0xfe).count()) }
+    /// `0x2e7920(callback, moby)`: the moby's draw callback runs after this tick (crate::fx).
+    pub fn register_draw(&mut self, id: usize) { self.draws.push(id); }
+
+    /// `0x1b1d40`: the free moby slots (past the placed mobys).
+    pub fn free_slots(&self) -> usize {
+        let used = self.mobys.iter().skip(self.first_created).filter(|m| m.state != 0xfe).count();
+        MAX_MOBYS.saturating_sub(self.first_created + used)
+    }
 
     /// Adds a class the level's table does not have (the gadget classes `0x306018` loads), with the next slot.
     pub fn add_class(&mut self, mut c: ClassInfo) {
@@ -642,14 +701,25 @@ impl MobyWorld {
         self.classes.push(c);
     }
 
-    /// `DeleteMoby`: state 0xfe (free), out of the grid.
+    /// `DeleteMoby` `0x311688`: state 0xfd for a placed moby (gone for good), 0xfe for a created one (free from two
+    /// frames on), out of the grid.
     pub fn delete(&mut self, id: usize) {
+        let placed = id < self.first_created;
+        let frame = self.frame;
         let Some(m) = self.mobys.get_mut(id) else { return };
-        m.state = 0xfe;
+        m.state = if placed { 0xfd } else { 0xfe };
+        m.freed_at = frame + 2;
         let old = m.grid_rect;
         m.grid_rect = GRID_NONE;
         self.grid.update(id as u16, old, GRID_NONE);
         self.changed = true;
+    }
+
+    /// `0x2de878(a, b, flags, 0, ignore)` from the moby loop: the line against the world and the mobys as they are now
+    /// (crate::collision::coll_line_live).
+    pub fn coll_line(&self, ctx: &Ctx, a: V3, b: V3, flags: u32, ignore: Option<usize>) -> Option<crate::collision::CollOutput> {
+        let live = |i: usize| self.mobys.get(i).is_some_and(|m| m.state < 0x80 && m.has_collision);
+        crate::collision::coll_line_live(ctx.coll?, ctx.scene, a, b, crate::collision::QueryFlags(flags), ignore, &live)
     }
 
     /// `0x313dc0`: rows from the Euler angles (unless mode 0x100; mode 0x8000 mirrors the second row), the bounding

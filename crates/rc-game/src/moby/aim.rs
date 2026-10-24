@@ -65,10 +65,12 @@ pub fn search(w: &MobyWorld, ctx: &Ctx, cone: Cone, from: V3, dir: V3, crates: b
         if !(dist <= cone.range && 0.1 <= dist) { continue; }
         let k = dist / cone.range;
         let ease = 1.0 - (1.0 - k) * (1.0 - k) * (1.0 - k);
+        // A near limit of 0 keeps the far one all the way (the eased limit only with a near limit above 0).
+        let limit = |near: f32, far: f32| if 0.0 < near { near + (far - near) * ease } else { far };
         let yaw_off = rot_dist(atan2(d[0], d[1]), dir_yaw);
-        if cone.near_yaw + (cone.yaw - cone.near_yaw) * ease <= yaw_off { continue; }
+        if limit(cone.near_yaw, cone.yaw) <= yaw_off { continue; }
         let pitch_off = rot_dist(atan2(len2(d), d[2]), dir_pitch);
-        if cone.near_pitch + (cone.pitch - cone.near_pitch) * ease <= pitch_off { continue; }
+        if limit(cone.near_pitch, cone.pitch) <= pitch_off { continue; }
         let mut score = yaw_off * 3.0 + pitch_off * dist * 0.2 + dist * 0.1;
         if crate_ { score *= 0.8 * cone.range; }
         if best.is_some_and(|(b, _)| b <= score) { continue; }

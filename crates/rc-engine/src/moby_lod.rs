@@ -51,8 +51,11 @@ static DRAW_CAP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::ne
 
 /// Sets the mobys' draw-distance cap (crate::play).
 pub fn set_draw_cap(cap: i32) { DRAW_CAP.store(cap, std::sync::atomic::Ordering::Relaxed); }
-/// moby+0x73 of a class with metal packets (`InitMobyInstance` 0x20c5f0: class byte 6 ≠ 0 → 0x18).
+/// The shine distance (moby `+0x63`) of a class with metal packets: `InitMobyInstance` (`0x311418`) gives 0x18 (class
+/// byte 6 ≠ 0), the static spawn (`0x3035c8`) turns a placed moby's into 8 (the game's own value per moby, which the
+/// loop's mobys carry: rc_game::moby::Moby::shine).
 pub const SHINE_DISTANCE: u8 = 0x18;
+pub const SHINE_PLACED: u8 = 8;
 /// `lui a0, 0x3` (0x211e1c): the LOD depth is clamped to [0, 0x30000] before the compare.
 pub const LOD_DEPTH_MAX: i32 = 0x30000;
 /// TEST_1 of a fading moby: `0x5360b + (t6 << 4) − 0x600` with t6 = 8 (0x212428..0x212434).

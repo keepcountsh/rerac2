@@ -293,6 +293,12 @@ pub fn coll_line(mesh: &Collision, p0: [f32; 3], p1: [f32; 3], flags: QueryFlags
 /// running best (see [`mobys`] for the moby pass). The hit-log write of the fifth argument is
 /// [`mobys::line_hit_record`].
 pub(crate) fn coll_line_m(mesh: &Collision, scene: Option<&MobyScene>, p0: [f32; 3], p1: [f32; 3], flags: QueryFlags, ignore: Option<usize>) -> Option<CollOutput> {
+    coll_line_live(mesh, scene, p0, p1, flags, ignore, &|_| true)
+}
+
+/// [`coll_line_m`] against the mobys as they are now: `live(id)` false drops a moby the snapshot still has (its
+/// collision went off, or it went, earlier in the moby loop; the original's kernels read the live mobys).
+pub(crate) fn coll_line_live(mesh: &Collision, scene: Option<&MobyScene>, p0: [f32; 3], p1: [f32; 3], flags: QueryFlags, ignore: Option<usize>, live: &dyn Fn(usize) -> bool) -> Option<CollOutput> {
     let fl = flags.0;
     let (a, b) = (p0.map(f32::to_bits), p1.map(f32::to_bits));
     if !in_world(a, b) { return None; }
@@ -303,7 +309,7 @@ pub(crate) fn coll_line_m(mesh: &Collision, scene: Option<&MobyScene>, p0: [f32;
     let mut best_t = ONE; // vf24.x
     let mut best = if fl & 0x1 != 0 { None } else { line_world(mesh, fl, a1024, b1024, d, &list, &mut best_t) };
     if let Some(sc) = scene {
-        best = mobys::line_pass(sc, fl, a1024, b1024, d, &list, ignore, &mut best_t, best);
+        best = mobys::line_pass(sc, fl, a1024, b1024, d, &list, ignore, live, &mut best_t, best);
     }
     best.map(|b| output(b, best_t, None))
 }

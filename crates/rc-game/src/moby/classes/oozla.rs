@@ -661,6 +661,7 @@ pub fn update_0cb5(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 ///
 /// Not ported: its moving sound (class 0x9ea's, looped, `+0xa8`), its glow while it is out (`0x321ba0`, `+0xac` /
 /// the moby's `+0x23`).
+#[allow(clippy::collapsible_match)]
 pub fn update_dynamo_platform(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
     let m = &mut w.mobys[id];
@@ -748,9 +749,11 @@ pub fn update_dynamo_platform(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 }
             }
         }
-        7 if tick_down(m, 0xa0) => {
-            m.set_pv_f(0x9c, 0.0);
-            m.set_state(3, -1);
+        7 => {
+            if tick_down(m, 0xa0) {
+                m.set_pv_f(0x9c, 0.0);
+                m.set_state(3, -1);
+            }
         }
         _ => {}
     }

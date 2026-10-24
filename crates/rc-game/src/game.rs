@@ -18,6 +18,8 @@ pub struct GameState {
     pub occlusion: i32,
     /// `0x1b2794`: the frame a crate last played its break sound.
     pub crate_sound_frame: i32,
+    /// `$gp+0x3a6c`: the frame an ammo pickup last played its sound (crate::moby::classes::pickup).
+    pub pickup_sound_frame: i32,
     /// `0x1a7a1c`: the bolt bank: value a drop could not put into bolt mobys (the limit per drop, bolts that fell
     /// far from the camera); each later drop takes (bank + 49) / 50 of it.
     pub bolt_bank: i32,
@@ -82,10 +84,10 @@ pub struct GameState {
     pub checkpoint: Option<([f32; 3], [f32; 3])>,
     /// `0x21ddc0`: the level's uid bits as the checkpoint kept them (a respawn puts them back).
     pub checkpoint_bits: Vec<u8>,
-    /// The checkpoint message's ticks to show (`0x327448(0x2dcc, 0x5a)`) and the spawn point that showed it last
-    /// (`$gp + 0x400`).
-    pub checkpoint_message: Option<i32>,
+    /// The spawn point that showed the checkpoint message last (`$gp + 0x400`).
     pub last_checkpoint: Option<usize>,
+    /// The message boxes' requests this tick (crate::msgbox).
+    pub messages: Vec<crate::msgbox::Request>,
     /// The help panel (`0x27d7c8` its state, 0 none; `0x27d7ec` / `0x27d7f0` the text asked for and its slot) and
     /// the slots' counts (`0x18c958 + 0xc·slot`: the times △ dismissed it; −1 off).
     pub help_state: i32,
@@ -95,9 +97,11 @@ pub struct GameState {
     pub no_item_area: bool,
     /// `0x1c92c0`: the level's variant (the scenes and the level code set it; 0 on a load).
     pub variant: i32,
-    /// `0x1a7bd0`: the items had (one byte each); `0x139948`: the quick-select list (28 slots, 0 free).
+    /// `0x1a7b00`: the items had (one byte each); `0x139948`: the list `0x322730` keeps (28 slots, 0 free).
     pub items: Vec<u8>,
     pub quick_select: Vec<i32>,
+    /// `0x1a73b8`: the quick select's eight slots (their items, 0 empty; crate::quick_select).
+    pub ring: [i32; 8],
     /// `0x139688 + 4·item`: the ammo (items whose row has ammo, crate::hero::items::ItemRow).
     pub ammo: Vec<i32>,
     /// `0x1a7398`: the last weapon held (the hand item ○ brings back), `0x1a7a10`: the wrench was out.
@@ -142,13 +146,21 @@ const HP_LEVELS: [i16; 66] = [
 impl Default for GameState {
     fn default() -> Self {
         GameState {
-            bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
+            bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, pickup_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, boss_bar: None, water_base: 0.0, water_z: 0.0, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), checkpoint_message: None, last_checkpoint: None, help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, play_time: 0, visited: vec![0; 0x1c],
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, play_time: 0, visited: vec![0; 0x1c],
         }
     }
 }
+
+/// The items `0x2f45e0` puts in the quick select: those of the pause's Weapons and Gadgets lists (`0x28297e`,
+/// `0x282706`) that the hand holds (record `−0x04` = 0; item 9's is 3) and that neither `0x286d4e` nor `0x1a8e60`
+/// keeps off.
+pub const RING_ITEMS: [i32; 28] = [
+    0x1e, 0x2a, 0x16, 0x18, 0x17, 0x29, 0x1a, 0x2d, 0x1f, 0x1d, 0x25, 0x1b, 0x1c, 0x19, 0x20, 0x10, 0x12, 0x0c, 0x35, 0x0e, 0x11,
+    0x2b, 0x2c, 0x0d, 0x24, 0x27, 0x2e, 0x37,
+];
 
 impl GameState {
     /// `0x2e5df8(far)`: the view distance, clamped to 1024..4096.
@@ -189,6 +201,7 @@ impl GameState {
             help_counts: old.help_counts,
             items: old.items,
             quick_select: old.quick_select,
+            ring: old.ring,
             ammo: old.ammo,
             held: old.held,
             wrench_out: old.wrench_out,
@@ -205,18 +218,20 @@ impl GameState {
     }
 
     /// `0x2fcf60` (every level start, `0x2fcd40`): the items a game starts with, when not had yet — the Lancer (the
-    /// weapon held, `0x1a7398`) and the pilot's helmet (`0x1a73a0`; the head item is its default already). Not
-    /// ported: the Gravity Bomb (item 0x2a, no row in crate::hero::items), the quick-select slots `0x1a7b70`.
+    /// weapon held, `0x1a7398`), the Gravity Bomb and the pilot's helmet (`0x1a73a0`; the head item is its default
+    /// already). Not ported: the Weapons page's list `0x1a7b70`.
     pub fn start_items(&mut self) {
-        use crate::hero::items::LANCER;
+        use crate::hero::items::{GRAVITY_BOMB, LANCER};
         if self.items.get(LANCER as usize).is_some_and(|&b| b == 0) {
             self.get_item(LANCER);
             self.held = LANCER;
         }
+        if self.items.get(GRAVITY_BOMB as usize).is_some_and(|&b| b == 0) { self.get_item(GRAVITY_BOMB); }
         if let Some(b) = self.items.get_mut(0x2f) { *b = 1; }
     }
 
-    /// `0x2f46e0(item)`: the item had, with its row's starting ammo when it has none.
+    /// `0x2f46e0(item)`: the item had, with its row's starting ammo when it has none, and a slot of the quick select
+    /// for it (`0x2f45e0`).
     pub fn get_item(&mut self, item: i32) {
         let Some(have) = self.items.get_mut(item.max(0) as usize) else { return };
         if *have != 0 { return; }
@@ -224,6 +239,15 @@ impl GameState {
         if let (Some(r), Some(a)) = (crate::hero::items::row(item), self.ammo.get_mut(item.max(0) as usize)) {
             if r.ammo && *a == 0 { *a = r.start_ammo; }
         }
+        self.ring_add(item);
+    }
+
+    /// `0x2f45e0(item)`: an item of the pause's Weapons or Gadgets lists (`0x28297e`, `0x282706`) that the hand holds
+    /// (its record's `−0x04` is 0) and that is not kept off the ring (`0x286d4e`, `0x1a8e60`) takes the first free
+    /// slot, unless it has one: [`RING_ITEMS`].
+    pub fn ring_add(&mut self, item: i32) {
+        if !RING_ITEMS.contains(&item) || self.ring.contains(&item) { return; }
+        if let Some(s) = self.ring.iter_mut().find(|s| **s == 0) { *s = item; }
     }
 
     /// `0x322730(item)`: the item had; a weapon or gadget (below 0x15, or 0x18) goes in the first free
@@ -278,6 +302,13 @@ impl GameState {
 
     /// A help slot's count.
     pub fn help_count(&self, slot: usize) -> i16 { self.help_counts.get(slot).copied().unwrap_or(0) }
+
+    /// `0x2e4450(mission)`: the mission's rank, how many of its enemies come (the placed records' word 9 against
+    /// it, crate::moby::SpawnRules): 3 in the challenge mode (`0x1a7a12`), else `3 − stat / 100`, at least 1. The stat
+    /// (`0x2e43a8`) weighs ten of the player's counters (`0x1a24a8`) by the level's table (`0x25ed60`: per mission
+    /// 0x28 bytes of `{counter row, counter, weight}`); the port keeps no counters yet, so it is 0 and the rank 3, as
+    /// on a fresh game.
+    pub fn mission_rank(&self, _mission: u8) -> u8 { 3 }
 
     /// The two progress bits of a mission's sub-mission on this level.
     pub fn mission(&self, mission: u8, sub: u8) -> u8 {

@@ -143,6 +143,8 @@ pub fn extract(iso_path: &Path, out: &Path, builds: &[Build], opts: &Options, em
         ("disc", id.serial.as_str().into()),
         ("data_format", DATA_FORMAT.into()),
         ("extractor_version", EXTRACTOR_VERSION.into()),
+        // The launcher contract's receipt field: nothing is ever skipped (Going Commando has no `--ntsc-only`).
+        ("ntsc_only", false.into()),
         ("files", summary.files.into()),
         ("bytes", summary.bytes.into()),
     ]) + "\n";

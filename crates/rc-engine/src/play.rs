@@ -107,19 +107,44 @@ fn pause_tick(
             // `0x344dd0`: leaving the menu asks for the hand item the pages took (`0x18c0e8`) when it is not the one held
             // (0: none, 0x77). Only the items the hero can hold (rc_game::hero::items::ROWS); the feet and back slots
             // (the boots, the packs) are not ported.
-            Out::Equip { slot: 0, item } => {
-                let item = if item == 0 { 0x77 } else { item };
-                if item == p.game.held {
-                    p.hero.items.request = 0;
-                } else if item == 0x77 || rc_game::hero::items::row(item).is_some() {
-                    p.hero.items.request = item;
-                } else {
-                    eprintln!("play: item {item:#x} cannot be held yet");
-                }
-            }
+            Out::Equip { slot: 0, item } => equip(p.game.held, &mut p.hero, item),
             Out::Equip { .. } => {}
             Out::Sound(_) => {}
         }
+    }
+}
+
+/// The quick select's screen and ring for a frame (`0x2f84e8`, then the ring's part of `0x443c08`): the item it asks
+/// for is taken as the pause's Weapons page's ([`equip`]).
+#[allow(clippy::too_many_arguments)]
+fn quick_select_frame(qs: &mut rc_game::quick_select::QuickSelect, paused: &mut bool, pad: &PadState, game: &mut rc_game::game::GameState, hero: &mut Hero, records: &[rc_formats::disc::menu_tables::ItemRecord], pause: bool) {
+    let slots = rc_game::quick_select::slots(game, records);
+    for o in qs.update(pad, &slots, pause, *paused) {
+        match o {
+            rc_game::quick_select::Out::Equip(item) => {
+                // Its ammo cut to the most.
+                if let Some(r) = rc_game::hero::items::row(item).filter(|r| r.ammo) {
+                    if let Some(a) = game.ammo.get_mut(item as usize) { *a = (*a).min(r.max_ammo); }
+                }
+                equip(game.held, hero, item);
+            }
+            rc_game::quick_select::Out::Resume => *paused = false,
+            rc_game::quick_select::Out::Sound(_) => {}
+        }
+    }
+    qs.ring_tick(&slots);
+}
+
+/// `0x18c0e8`: the hand item asked for when it is not the one held (0: none, 0x77). Only the items the hero can hold
+/// (rc_game::hero::items::ROWS).
+fn equip(held: i32, hero: &mut Hero, item: i32) {
+    let item = if item == 0 { 0x77 } else { item };
+    if item == held {
+        hero.items.request = 0;
+    } else if item == 0x77 || rc_game::hero::items::row(item).is_some() {
+        hero.items.request = item;
+    } else {
+        eprintln!("play: item {item:#x} cannot be held yet");
     }
 }
 
@@ -157,6 +182,9 @@ pub(crate) struct Play {
     hud: rc_game::hud::Hud,
     /// The help panel (rc_game::help) and the level's English help texts.
     help: rc_game::help::Panel,
+    /// The HUD screen's message boxes, and the font they measure with (the HUD's, kept from its first draw).
+    boxes: rc_game::msgbox::Boxes,
+    glyphs: Option<Box<[rc_formats::disc::boot::Glyph; 256]>>,
     texts: Vec<rc_formats::strings::Message>,
     pub(crate) ticks: u64,
     trace: bool,
@@ -185,6 +213,9 @@ pub(crate) struct Play {
     pause_opened: bool,
     /// The death's fade to black, its frame (the game stopped; [`DEATH_FADE`] frames, then [`death_reset`]).
     death_fade: Option<u32>,
+    /// The quick select (rc_game::quick_select), and the game stopped in its mode (Quick Select Pause on).
+    qs: rc_game::quick_select::QuickSelect,
+    qs_paused: bool,
 }
 
 fn switch_camera(keys: Res<ButtonInput<KeyCode>>, mut source: ResMut<CameraSource>) {
@@ -268,6 +299,18 @@ fn tick(
             .flatten()
             .and_then(|ov| rc_game::canopy::CanopyMesh::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
             .map(rc_game::canopy::Canopy::new);
+        // The nanotech glow's tables (Aranos's overlay's addresses, rc_game::moby::classes::nanotech).
+        m.world.nanotech.tables = (crate::level_load::level_index() == 0)
+            .then(|| crate::level_wad::overlay(&crate::level_load::extracted_root(), 0).ok())
+            .flatten()
+            .and_then(|ov| rc_game::moby::classes::nanotech::GlowTables::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
+            .map(std::sync::Arc::new);
+        // The Gravity Bomb's shockwave mesh (Aranos's overlay's addresses, rc_game::moby::classes::gravity_bomb).
+        m.world.gravity_bomb.mesh = (crate::level_load::level_index() == 0)
+            .then(|| crate::level_wad::overlay(&crate::level_load::extracted_root(), 0).ok())
+            .flatten()
+            .and_then(|ov| rc_game::moby::classes::gravity_bomb::DomeMesh::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
+            .map(std::sync::Arc::new);
         println!("play: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         p.mobys = Some(m);
         // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).
@@ -368,6 +411,16 @@ fn tick(
         }
         _ => {}
     }
+    // The quick select's part of the main loop (`0x3706f0`, rc_game::quick_select): with Quick Select Pause on, the
+    // game stops in the ring's mode until △ lets go; only the ring and its screen run then.
+    let qs_pause = card.as_deref().is_some_and(|c| c.save.u8(rc_game::save::Scope::Global, rc_game::menus::opt::QS_PAUSE) != 0);
+    let qs_ok = !p.qs_paused && 7 < p.game.frame && !matches!(p.hero.state, 0x6f | 0x31) && p.hero.items.flying != 2 && p.hero.mode < 2;
+    if p.qs.main_loop(&p.pad, qs_pause, qs_ok) { p.qs_paused = true; }
+    if p.qs_paused {
+        if let Some(m) = p.mobys.as_ref() { quick_select_frame(&mut p.qs, &mut p.qs_paused, &p.pad, &mut p.game, &mut p.hero, &m.level.items, qs_pause); }
+        p.ticks += 1;
+        return;
+    }
     // Start (level 00 `0x3706f0`: mode 3 kind 1, after the level's first 8 frames, not while dying or in a vehicle's
     // states 0x6f / 0x31).
     if p.pad.pressed & rc_game::pad::button::START != 0 && 7 < p.game.frame && !matches!(p.hero.state, 0x6f | 0x31) {
@@ -405,7 +458,11 @@ fn tick(
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         // The movers' carry of this tick starts from nothing (`0x189f70`).
         (p.hero.carry, p.hero.carry_yaw) = ([0.0; 3], 0.0);
-        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
+        // The view the updates test their spheres against: the camera as the last tick left it (`0x2f0080`).
+        let (tx, ty) = crate::game_camera::projection_tans(None);
+        let [fwd, left, up] = p.camera.rows;
+        let view = Some(rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty));
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys), view };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     // `RC_CUBOIDS=64,85`: those cuboids' centres and angles on the first tick (a dev trace, for placing Ratchet in one).
@@ -427,6 +484,13 @@ fn tick(
                 }
             }
         }
+    }
+    // The collision kernels read the mobys as they are: the hero's queries this tick see where the loop left them
+    // (a lift's floor moved this tick), not where the last tick did.
+    if mobys.world.changed {
+        let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
+        mobys.snap = Some(crate::mobys::take_snapshot(&mobys.world, &mobys.coll, &host));
+        mobys.world.changed = false;
     }
     // `RC_MOBY_TRACE=0b0b,099c`: those classes' mobys every 15 ticks (`RC_MOBY_TRACE_EVERY`; a dev trace).
     let every = std::env::var("RC_MOBY_TRACE_EVERY").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(15).max(1);
@@ -517,6 +581,8 @@ fn tick(
     if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
         (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
         h.mode |= rc_game::moby::mode::KEEP_ROWS;
+        // `0x2a94d8`: his shine distance.
+        h.shine = 0x10;
         // `0x2b2b48` → `0x31a8e4`: his light from the level's light regions where he is.
         if let Some((light, ambient)) = rc_game::light::region_light(&mobys.level.light_regions, h.pos) { (h.light, h.ambient) = (light, ambient); }
     }
@@ -532,7 +598,7 @@ fn tick(
         // The write-back's `0x313dc0`: his moby's sphere and grid cells follow him (the hits find him there).
         if let Some(i) = mobys.hero_moby { mobys.world.rebuild(i, &host); }
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys) };
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys), view: None };
         rc_game::hero::items::item_pass(&mut mobys.world, &mut ctx);
     }
     // The use stance's sequence for Ratchet (`0x2af5e0` / `0x2af848` call `0x2d2508` from the item pass).
@@ -543,7 +609,7 @@ fn tick(
     // `0x2afc38`: his pose layers (the holding layers, the face), after the item pass.
     rc_game::hero::layers::upkeep(&mut p.hero, &p.anim.ctl(class));
     // `UpdateParts` (`0x331150`), after the hero.
-    if let Some(s) = parts.as_deref_mut() { rc_game::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos, &mut p.game.rng); }
+    if let Some(s) = parts.as_deref_mut() { rc_game::particles::update_parts(&mut s.sys, &mobys.world, p.camera.pos, p.hero.pos, &mut p.game.rng); }
     // The draw callbacks the updates registered, called by the frame's draw (rc_game::fx).
     {
         // The callbacks read joints (0x0b0b's glows) through the loop's host, as the draw reads the mobys' poses.
@@ -551,11 +617,11 @@ fn tick(
         let (tx, ty) = crate::game_camera::projection_tans(None);
         let [fwd, left, up] = p.camera.rows;
         let view = rc_game::particles::BSphereView::from_camera(p.camera.pos, fwd, left, up, tx, ty);
-        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, &mobys.level, &view, p.camera.pos);
+        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, p.hero.state, &view, p.camera.pos);
     }
     // `0x2b09e0`: the items take Ratchet's light word and ambient (`+0x38..0x3f`) every tick.
     if let Some((light, ambient)) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get(i)).map(|h| (h.light, h.ambient)) {
-        for id in [p.hero.items.hand, p.hero.items.head].into_iter().flatten() {
+        for id in [p.hero.items.hand, p.hero.items.head, p.hero.items.feet[0], p.hero.items.feet[1]].into_iter().flatten() {
             if let Some(m) = mobys.world.mobys.get_mut(id) { (m.light, m.ambient) = (light, ambient); }
         }
     }
@@ -564,7 +630,7 @@ fn tick(
         let mods = p.hero.posture.modifiers(&mobys.hero_targets);
         let hl = mobys.hero_layers(&p.hero.layers);
         let pose = crate::mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
-        mobys.skin_head(lv, p.hero.items.head, Some(&pose));
+        mobys.skin_worn(lv, &crate::mobys::Mobys::worn(&p.hero.items), Some(&pose));
     }
     if mobys.world.changed {
         let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
@@ -572,13 +638,18 @@ fn tick(
         mobys.world.changed = false;
     }
     if let Some(o) = occl.as_mut() {
-        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance {
-                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0);
-                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+        for &ii in &mobys.left_out { o.set_hidden(ii, true); }
+        for m in &mobys.world.mobys {
+            let Some(ii) = m.instance else { continue };
+            let hidden = m.state >= 0x80 || m.mode & 1 != 0;
+            if m.update.is_some() || m.drive {
+                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), hidden);
+                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist, m.shine);
+            } else {
+                o.set_hidden(ii, hidden);
+                o.set_shine(ii, m.shine);
             }
         }
-        for &ii in &mobys.unspawned { o.hide(ii); }
     }
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), None, p.camera.pos, p.game.scenes.mode);
     {
@@ -609,6 +680,12 @@ fn tick(
     if let Some(on) = cam.letterbox { p.game.scenes.letterbox = on; }
     if cam.follow_reset { p.camera = FollowCamera::new(&cam_input(&p.hero, Some(coll), [0.0; 2])); }
     p.game.scenes.bars_step();
+    // △ opens the quick select's screen with Quick Select Pause off (the hero's transitions `0x2cb650`), then its frame
+    // (the GUI screens' pass) before the HUD's.
+    if !qs_pause && p.pad.pressed & rc_game::pad::button::TRIANGLE != 0 && 7 < p.game.frame && p.hero.no_menu == 0 && p.hero.items.no_use == 0 && p.hero.items.flying != 2 {
+        p.qs.open();
+    }
+    quick_select_frame(&mut p.qs, &mut p.qs_paused, &p.pad, &mut p.game, &mut p.hero, &mobys.level.items, qs_pause);
     // The HUD (`0x443c08`) with this tick's requests.
     let (sb, sh) = (p.game.show_bolts.take(), p.game.show_health.take());
     // `0x2fa770`: the held item when it has ammo (not with the items off, `0x18c0d4`).
@@ -617,6 +694,8 @@ fn tick(
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh, weapon);
     // The boss bar's own update (`0x2f2458`): its ticks left counted down, gone at 0.
     p.game.boss_bar = p.game.boss_bar.and_then(|(f, t)| (1 < t).then_some((f, t - 1)));
+    // The message boxes (`0x4451e8`'s part, after the panel).
+    if let Some(g) = p.glyphs.as_deref() { p.boxes.tick(&mut p.game.messages, &p.texts, g); }
     // The help panel (`0x2f5680`).
     p.help.tick(&mut p.game, p.pad.pressed & rc_game::pad::button::TRIANGLE != 0, &p.texts);
     // The sound step (`sound_update` after the camera): the slots follow their owners (the mobys' positions; a
@@ -806,7 +885,11 @@ fn start_scene(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, id: i32) {
         };
         let m = if o_class == 0 {
             match mobys.hero_moby {
-                Some(h) => h,
+                // `0x305428` makes his moby anew (`0x311418`): a class with metal packets gets 0x18.
+                Some(h) => {
+                    if lv.mobys.classes[ci].class.header.metal_count != 0 { mobys.world.mobys[h].shine = 0x18; }
+                    h
+                }
                 None => {
                     actors.push((usize::MAX, 0xff));
                     continue;
@@ -888,7 +971,7 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
         let pose = crate::mobys::HeroPose { class: p.class, state: &p.anim.state, snapshot: p.anim.snapshot.as_ref(), pos: p.hero.pos, rows: p.hero.rows, scale: p.scale, mods: &mods, layers: &hl };
         let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
+        let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut(), view: None };
         mobys.world.tick(p.camera.pos, &mut ctx);
     }
     let hp = p.hero.hp;
@@ -924,35 +1007,42 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     // `0x2d51f8` → `0x2d4fc8`: the head item on the scene's Ratchet (at his track with the scene's sequence and
     // his head's scale), else on Ratchet as he stands.
     {
-        let head = mobys.hero_targets.get(24).copied().filter(|&t| t != 0xff);
         let (pos, rows, state, snapshot, mods) = match hero_pose {
-            Some((pos, state)) => (pos, identity, state, None, head.map(|t| vec![rc_formats::moby_anim::JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..rc_formats::moby_anim::JointModifier::compose(t) }]).unwrap_or_default()),
+            Some((pos, state)) => (pos, identity, state, None, scene_hero_mods(&mobys.hero_targets, p.hero.items.feet[0].is_some())),
             None => (p.hero.pos, p.hero.rows, p.anim.state, p.anim.snapshot.clone(), p.hero.posture.modifiers(&mobys.hero_targets)),
         };
-        let hl = mobys.hero_layers(&p.hero.layers);
+        // The scene's Ratchet takes none of play's pose layers (below).
+        let scene_hero = hero_pose.is_some();
+        let hl = if scene_hero { Vec::new() } else { mobys.hero_layers(&p.hero.layers) };
         let pose = crate::mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
         {
             let hero_view = rc_game::hero::anim::AnimCtl::view(&p.anim.ctl(&lv.mobys.anim[p.class]));
             let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: Some(pose), hero_chains: &mobys.hero_chains, chains: Some(&mobys.chains), camera: p.camera.pos, sound: None };
             let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
-            let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut() };
+            let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut(), view: None };
             rc_game::hero::items::head_pass(&mut mobys.world, &mut ctx);
+            rc_game::hero::items::feet_pass(&mut mobys.world, &mut ctx);
             // The ship's parts on the scene's ship, the one drawn, at itself (as the original's frames show them).
             let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
             if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
         }
-        let hl = mobys.hero_layers(&p.hero.layers);
+        let hl = if scene_hero { Vec::new() } else { mobys.hero_layers(&p.hero.layers) };
         let pose = crate::mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
-        mobys.skin_head(lv, p.hero.items.head, Some(&pose));
+        mobys.skin_worn(lv, &crate::mobys::Mobys::worn(&p.hero.items), Some(&pose));
     }
     if let Some(o) = occl.as_mut() {
-        for m in mobys.world.mobys.iter().filter(|m| m.update.is_some() || m.drive) {
-            if let Some(ii) = m.instance {
-                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), m.state >= 0x80 || m.mode & 1 != 0);
-                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist);
+        for &ii in &mobys.left_out { o.set_hidden(ii, true); }
+        for m in &mobys.world.mobys {
+            let Some(ii) = m.instance else { continue };
+            let hidden = m.state >= 0x80 || m.mode & 1 != 0;
+            if m.update.is_some() || m.drive {
+                o.drive(ii, m.pos, m.rows, m.scale, crate::mobys::moby_lights(&lv.mobys, m.rows, m.light, m.ambient).as_ref(), hidden);
+                o.game_look(ii, m.alpha, m.mode, m.glow, m.draw_dist, m.shine);
+            } else {
+                o.set_hidden(ii, hidden);
+                o.set_shine(ii, m.shine);
             }
         }
-        for &ii in &mobys.unspawned { o.hide(ii); }
         // Ratchet: at his track with the scene's sequence and his head's scale (`0x2d51f8`), else as he stands.
         let (pos, rows, state) = match hero_pose {
             Some((pos, state)) => (pos, identity, state),
@@ -966,10 +1056,10 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             if let Some(i) = a.instances.get_mut(k) { i.state = s; }
             if hero_pose.is_some() {
                 if let Some(slot) = a.snapshots.get_mut(k) { *slot = None; }
-                let head = mobys.hero_targets.get(24).copied().filter(|&t| t != 0xff);
-                if let Some(mods) = a.mods.get_mut(k) {
-                    *mods = head.map(|t| vec![rc_formats::moby_anim::JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..rc_formats::moby_anim::JointModifier::compose(t) }]).unwrap_or_default();
-                }
+                if let Some(mods) = a.mods.get_mut(k) { *mods = scene_hero_mods(&mobys.hero_targets, p.hero.items.feet[0].is_some()); }
+                // The scene's Ratchet is his moby made anew (`0x305428`: `0x311418(moby, 0)`), posed by the scene alone:
+                // none of play's pose layers (the weapon's hold, the face's look at an enemy) go with him.
+                if let Some(l) = a.layers.get_mut(k) { l.clear(); }
             }
         }
     }
@@ -980,9 +1070,28 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
     }
     let ship = p.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
     canopy_tick(mobys, lv, occl.as_deref(), anim.as_deref_mut(), ship, frame.camera.eye, p.game.scenes.mode);
-    if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye, &mut p.game.rng); }
+    if let Some(sys) = parts.as_deref_mut() { rc_game::particles::update_parts(sys, &mobys.world, frame.camera.eye, p.hero.pos, &mut p.game.rng); }
+    // The frame's draw calls the callbacks the scene tick's updates registered too (rc_game::fx): the enemies hidden
+    // for the scene registered none, so play's last glows go.
+    {
+        let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: frame.camera.eye, sound: None };
+        let (tx, ty) = crate::game_camera::projection_tans(None);
+        let [fwd, left, up] = frame.camera.rows;
+        let view = rc_game::particles::BSphereView::from_camera(frame.camera.eye, fwd, left, up, tx, ty);
+        p.fx_quads = rc_game::fx::callbacks(&mut mobys.world, &host, &mut p.game, p.hero.state, &view, frame.camera.eye);
+    }
     commands.insert_resource(PlayView { view: scene_view(&frame.camera), tan_half_fov: frame.camera.tan_half_fov, far: p.game.view_far * 1024.0 });
     p.scene_listener = Some(rc_game::audio::voices::Listener { pos: frame.camera.eye, rows: frame.camera.rows, underwater: false, water_height: 0.0 });
+}
+
+/// The scene's Ratchet's joint modifiers: his head's scale (list 24: 0.849 × 0.849 × 0.875) and, under the worn feet,
+/// his feet hidden (`0x2ac218`'s 0.01 on the feet records, lists 22 / 23).
+fn scene_hero_mods(targets: &[u8], feet: bool) -> Vec<rc_formats::moby_anim::JointModifier> {
+    use rc_formats::moby_anim::JointModifier;
+    let t = |l: usize| targets.get(l).copied().filter(|&t| t != 0xff);
+    let mut mods: Vec<JointModifier> = t(24).map(|j| JointModifier { scale: [0.848_75, 0.848_75, 0.875], ..JointModifier::compose(j) }).into_iter().collect();
+    if feet { mods.extend([22, 23].into_iter().filter_map(t).map(|j| JointModifier { scale: [0.01; 3], ..JointModifier::compose(j) })); }
+    mods
 }
 
 fn scene_view(c: &rc_game::scene_camera::SceneCamera) -> CameraView {
@@ -1063,7 +1172,7 @@ impl ItemPictures {
 }
 
 /// Level `index`'s pause tables, found from Aranos's (rc_formats::disc::menu_tables); none on a failure.
-fn menu_tables(root: &std::path::Path, index: u32) -> rc_formats::disc::menu_tables::MenuTables {
+pub(crate) fn menu_tables(root: &std::path::Path, index: u32) -> rc_formats::disc::menu_tables::MenuTables {
     let read = || -> anyhow::Result<_> {
         let level = crate::level_wad::overlay(root, index)?;
         let aranos = if index == 0 { level.clone() } else { crate::level_wad::overlay(root, 0)? };
@@ -1168,10 +1277,19 @@ fn draw_hud(
             let alive = |id: usize| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id)).is_some_and(|m| m.state != 0xfe && m.state != 0xfd);
             quads.extend(rc_game::hud::marker_quads(&markers, p.camera.pos, p.camera.rows, crate::play_camera::GAME_TAN_HALF_FOV, &tex, &alive));
         }
-        let draws = p.hud.draw(p.game.bolts);
+        let mut draws = p.hud.draw(p.game.bolts);
+        // The quick select's ring and texts (rc_game::quick_select).
+        if let Some(m) = p.mobys.as_ref() {
+            let slots = rc_game::quick_select::slots(&p.game, &m.level.items);
+            let strings = &hud.data.assets().strings;
+            p.qs.draw(&slots, &p.pad, &|id| strings.get(id).to_vec(), &mut draws);
+        }
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
-        quads = rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon);
-        quads.extend(p.help.draw(&p.game, &p.texts, &hud.data.assets().glyphs, &hud.data.assets().sprites));
+        quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
+        let a = hud.data.assets();
+        if p.glyphs.is_none() { p.glyphs = Some(Box::new(a.glyphs)); }
+        p.boxes.draw(&mut quads, &a.glyphs, &a.sprites);
+        quads.extend(p.help.draw(&p.game, &p.texts, &a.glyphs, &a.sprites));
     }
     // The letterbox (`0x2e82c0`: black bars of `0x1b186c` pixels at the top and the bottom).
     let bars = p.game.scenes.bars as f32;
@@ -1441,8 +1559,8 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     Some(Play {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
         hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
-        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None,
-        help: Default::default(), texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
+        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None, qs: Default::default(), qs_paused: false,
+        help: Default::default(), boxes: Default::default(), glyphs: None, texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })
 }

@@ -45,7 +45,7 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
 
 /// The hand gadgets the port loads with every level (`G/GADGET.WAD`, rc_formats::disc::gadget): the game streams the
 /// one in Ratchet's hand (`0x306018`) when he takes it; the port has them from the start.
-pub const GADGETS: [i32; 1] = [rc_game::hero::items::LANCER_CLASS as i32];
+pub const GADGETS: [i32; 2] = [rc_game::hero::items::LANCER_CLASS as i32, rc_game::hero::items::GRAVITY_BOMB_CLASS as i32];
 
 /// Gadget `o_class` (part A of its `GADGET.WAD` entry): its class and sequences added to the level's moby classes, its
 /// textures appended to the moby texture table (slot `k` = entry `moby_textures.len() + k`, as the armour's).
@@ -74,6 +74,27 @@ fn gadget_blob(root: &Path, o_class: i32) -> Result<(Vec<u8>, Vec<rc_formats::te
     let e = *gadget::gadgets(&toc)?.iter().find(|e| e.o_class == o_class).with_context(|| format!("no gadget {o_class:#x}"))?;
     let g = gadget::read(&crate::disc_source::read(root, "G/GADGET.WAD")?, &e)?;
     Ok((g.class, g.textures))
+}
+
+/// The ship's hull class blob (rc_formats::disc::space; `0x1a7af8 & 3`, 0 on a new game).
+fn ship_hull_blob(root: &Path, hull: usize) -> Result<Vec<u8>> {
+    use rc_formats::disc::{space, toc::Toc};
+    let hdr = crate::disc_source::read(root, "RC2.HDR")?;
+    Ok(space::hull(&Toc::parse(&hdr)?, &crate::disc_source::read(root, "G/SPACE.WAD")?, hull)?)
+}
+
+/// The ship's hull ([`ship_hull_blob`]) as class 0x0d54: the level load (`0x304660`) appends it under that id, so the
+/// ship's mobys draw it (with its metal packets) and not the core's 0x0d54. The core entry stays (its `+8` takes
+/// the paint, [`attach_ship_paint`]).
+fn attach_ship_hull(root: &Path, mobys: &mut crate::moby_render::LevelMobys, hull: usize) -> Result<()> {
+    use rc_formats::disc::space::HULL_CLASS;
+    let blob = ship_hull_blob(root, hull)?;
+    let class = rc_formats::moby::parse_moby_class(&blob).context("ship hull: class")?;
+    let seqs = rc_formats::moby_anim::parse_sequences(&blob, &class).context("ship hull: sequences")?;
+    let i = mobys.classes.iter().position(|c| c.o_class == HULL_CLASS).context("no ship class in the level")?;
+    mobys.anim[i] = rc_formats::moby_anim::MobyAnimClass::new(&class, seqs);
+    mobys.classes[i].class = class;
+    Ok(())
 }
 
 /// The ship's paint (rc_formats::disc::space; `0x1a7af8 >> 16 & 0x1f`, 0 on a new game) appended to the level's moby
@@ -124,6 +145,18 @@ pub fn class_blobs(root: &Path, index: u32) -> Result<ClassBlobs> {
         .collect();
     for g in GADGETS {
         if let Ok((b, _)) = gadget_blob(root, g) { blobs.insert(g, b); }
+    }
+    // The ship's mobys use the hull's class (attach_ship_hull), its collision and joint lists included.
+    let mut collision = collision;
+    if let Ok(b) = ship_hull_blob(root, 0) {
+        let hull = rc_formats::disc::space::HULL_CLASS;
+        collision.retain(|(c, _)| *c != hull);
+        match rc_formats::moby_collision::MobyCollision::of_class(&b) {
+            Ok(Some(c)) => collision.push((hull, c)),
+            Ok(None) => {}
+            Err(e) => eprintln!("level: the ship hull's collision not parsed ({e})"),
+        }
+        blobs.insert(hull, b);
     }
     Ok(ClassBlobs { collision, blobs })
 }
@@ -194,6 +227,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     for g in GADGETS {
         if let Err(e) = attach_gadget(root, &core, &mut mobys, &mut textures, g) { eprintln!("level: gadget {g:#x} not loaded ({e:#})"); }
     }
+    if let Err(e) = attach_ship_hull(root, &mut mobys, 0) { eprintln!("level: the ship's hull not attached ({e:#})"); }
     if let Err(e) = attach_ship_paint(root, &core, &mut mobys, &mut textures, 0) { eprintln!("level: the ship's paint not attached ({e:#})"); }
     let occlusion = crate::occlusion::load(&core, &core_data, &gameplay, &tfrags, &ties.instances, &mobys.instances).context("loading occlusion")?;
     let particles = crate::particle_render::LevelParticles {
