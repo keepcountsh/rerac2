@@ -821,8 +821,8 @@ pub fn draw_flame(w: &MobyWorld, id: usize, cam: V3, rng: &mut crate::rng::Rng, 
             let b = cross(f, a);
             let (s, c) = roll.sin_cos();
             let (a, b) = (add(scale(a, c), scale(b, s)), sub(scale(b, c), scale(a, s)));
-            // `0x300aa0`'s size taken as the sprite's width.
-            let h = 0.5 * size;
+            // `0x300aa0`'s size as the sprite's half width (matched to the PS2's boost flame).
+            let h = size;
             let corner = |x: f32, y: f32| add(q, add(scale(a, x * h), scale(b, y * h)));
             out.push(crate::fx::FxQuad { fx: 0x2e, additive: true, corners: [corner(-1.0, -1.0), corner(1.0, -1.0), corner(-1.0, 1.0), corner(1.0, 1.0)], st, rgba: [rgba; 4] });
             p = add(p, back);
