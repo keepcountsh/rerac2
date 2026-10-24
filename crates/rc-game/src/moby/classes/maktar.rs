@@ -3,6 +3,13 @@
 //! * 0x0afc (`0x3f0618`): no update (an empty function); 0x0873 creates one in its place.
 //! * 0x0aaf (`0x3eb9f8`): on its first tick sequence state 1, no collision, mode 0x43 without TARGET ([`update_0aaf`]).
 //! * 0x0873 (`0x3c1d20`): on its first tick a 0x0afc in its place ([`update_0873`]).
+//! * 0x0e93 (`0x42fb20`): a breakable (crate::moby::classes::props::update_breakable: a hit with the flags 0x4010000
+//!   while `+0x68`[0] = 0); its start's two glows (`0x346250`), its break's shards, burst, debris and sound are not
+//!   ported, nor the count of them `0x12cf` keeps (`$gp−0x3c0`; at 10 left, once: `0x367f58`, `0x32c310(0x1233)`).
+//!
+//! Not ported: 0x000b (`0x396448`, the ship's pad: its hologram 0x477 and the △ prompt that starts the travel, the
+//! main dev's progression), 0x12cf (`0x38b458`, that count), 0x0c24 (`0x40b4c0`, the help voice lines), 0x0e96
+//! (`0x4301b0`, an ambient animation tied to another moby's `+0x6c`), 0x0e9c (`0x4305f8`, a tie texture scroll).
 
 use crate::moby::{mode, Ctx, MobyWorld};
 
