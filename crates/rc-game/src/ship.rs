@@ -429,9 +429,9 @@ impl Flight {
         let (pos, rows) = (w.mobys[ship].pos, w.mobys[ship].rows);
         // `0x36cb90(3, 0, ship)`: the volley's sound.
         host.play_sound(&w.mobys[ship], 3, 0);
-        for gun in laser::GUNS {
+        for (gun, side) in laser::GUNS.into_iter().zip([-1.0, 1.0]) {
             let at = add(pos, through(&rows, gun));
-            spawn_laser(w, &*host, at, sub(target, at), rows, ship);
+            spawn_laser(w, &*host, at, sub(target, at), rows, ship, side);
         }
     }
 
@@ -683,9 +683,13 @@ mod laser {
 pub const LASER_CLASS: i16 = 0x0ffa;
 
 /// `0x413268(side, owner, at, dir, …)` for the ship's lasers. pvars: `+0` the ticks left, `+4` the owner (index + 1),
-/// `+0x10` the step, `+0x20` the colour, `+0x3c` the radius, `+0x40` its growth a tick.
-fn spawn_laser(w: &mut MobyWorld, host: &dyn MobyHost, at: V3, dir: V3, rows: [V3; 3], owner: usize) {
+/// `+8` its flare's turn (a random start), `+0xc` its gun's side (−1, 1), `+0x10` the step, `+0x20` the colour, `+0x3c`
+/// the radius, `+0x40` its growth a tick.
+fn spawn_laser(w: &mut MobyWorld, host: &dyn MobyHost, at: V3, dir: V3, rows: [V3; 3], owner: usize, side: f32) {
     if w.class(LASER_CLASS).is_none() { return; }
+    // The flare's random start (`0x32e1c0`), here from where it starts.
+    let seed = (at[0].to_bits() ^ at[1].to_bits().rotate_left(11) ^ at[2].to_bits().rotate_left(22)).wrapping_mul(0x9e37_79b9);
+    let turn = (seed >> 20) as f32 / 4096.0 * std::f32::consts::TAU;
     let speed = laser::SPEED / 60.0;
     let ticks = (laser::RANGE / speed) as i32;
     let id = w.create(LASER_CLASS);
@@ -699,6 +703,8 @@ fn spawn_laser(w: &mut MobyWorld, host: &dyn MobyHost, at: V3, dir: V3, rows: [V
     m.pos = at;
     m.set_pv_i(0, ticks);
     m.set_pv_i(4, owner as i32 + 1);
+    m.set_pv_f(8, turn);
+    m.set_pv_f(0xc, side);
     m.set_pv_v(0x10, set_len(dir, speed));
     m.set_pv_i(0x20, laser::RGB as i32);
     m.set_pv_f(0x3c, laser::RADIUS.0);
@@ -749,22 +755,100 @@ pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     w.register_draw(id);
 }
 
-/// The laser's streak (standing in for `0x4137d0`'s meshes): FX 0xe, additive, over its last step and a half, a thin
-/// bright core and a wide faint glow in its colour.
+/// `0x4137d0`'s meshes (`$gp+0x1e38..0x1ef0`, `0x2b2dc0..0x2b3100`), each a strip (`0x2ff8c8`) of (x, y, z) and its
+/// texels.
+mod bolt {
+    /// The core: 34 points along the shot (x its length, 0..1), in the ship's frame.
+    pub const CORE: [[f32; 3]; 34] = [
+        [0.016, 0.0, -0.008], [0.016, 0.008, 0.0], [0.0, 0.0, 0.0], [0.016, 0.0, 0.008], [0.0, 0.0, 0.0], [0.016, -0.008, 0.0],
+        [0.016, 0.0, -0.008], [0.926, -0.025, 0.0], [0.016, 0.0, -0.008], [0.926, 0.0, -0.025], [0.016, 0.008, 0.0], [0.926, 0.025, 0.0],
+        [0.016, 0.0, 0.008], [0.926, 0.0, 0.025], [0.016, -0.008, 0.0], [0.926, 0.0, 0.025], [0.926, -0.025, 0.0], [0.975, 0.0, 0.012],
+        [0.975, -0.012, 0.0], [1.002, 0.0, 0.0], [0.975, -0.012, 0.0], [0.975, 0.0, -0.012], [0.926, -0.025, 0.0], [0.975, 0.0, -0.012],
+        [0.926, 0.0, -0.025], [0.975, 0.012, 0.0], [0.926, 0.025, 0.0], [0.975, 0.012, 0.0], [0.926, 0.0, 0.025], [0.975, 0.012, 0.0],
+        [0.975, 0.0, 0.012], [0.975, 0.012, 0.0], [1.002, 0.0, 0.0], [0.975, 0.0, -0.012],
+    ];
+    pub const CORE_ST: [[f32; 2]; 34] = [
+        [0.625, 0.557], [0.75, 0.557], [0.5, 0.637], [0.375, 0.557], [0.5, 0.637], [0.5, 0.557], [0.625, 0.557], [0.5, 0.159],
+        [0.625, 0.557], [0.75, 0.159], [0.75, 0.557], [1.0, 0.159], [0.375, 0.557], [0.25, 0.159], [0.5, 0.557], [0.25, 0.159],
+        [0.5, 0.159], [0.375, 0.08], [0.5, 0.08], [0.5, 0.0], [0.5, 0.08], [0.625, 0.08], [0.5, 0.159], [0.625, 0.08],
+        [0.75, 0.159], [0.75, 0.08], [1.0, 0.159], [0.25, 0.08], [0.25, 0.159], [0.25, 0.08], [0.375, 0.08], [0.25, 0.08],
+        [0.5, 0.0], [0.625, 0.08],
+    ];
+    /// The sheath: a flat strip along the shot, turned to the camera.
+    pub const SHEATH: [[f32; 3]; 8] = [
+        [-0.075, -0.032, 0.0], [-0.075, 0.032, 0.0], [-0.026, -0.032, 0.0], [-0.026, 0.032, 0.0],
+        [0.964, -0.104, 0.0], [0.964, 0.104, 0.0], [1.033, -0.104, 0.0], [1.033, 0.104, 0.0],
+    ];
+    pub const SHEATH_ST: [[f32; 2]; 8] = [[0.0, 0.0], [0.0, 1.0], [0.4, 0.0], [0.4, 1.0], [0.6, 0.0], [0.6, 1.0], [1.0, 0.0], [1.0, 1.0]];
+    /// The head's square (set to its size) and the flare's ray (0, y · 0.075, z · 0.375).
+    pub const HEAD: [[f32; 3]; 4] = [[0.0, -1.0, 1.0], [0.0, -1.0, -1.0], [0.0, 1.0, 1.0], [0.0, 1.0, -1.0]];
+    pub const RAY: [[f32; 3]; 4] = [[0.0, -1.0, 0.0], [0.0, -1.0, 2.0], [0.0, 1.0, 0.0], [0.0, 1.0, 2.0]];
+    pub const QUAD_ST: [[f32; 2]; 4] = [[1.0, 1.0], [1.0, 0.05], [0.0, 1.0], [0.0, 0.05]];
+    /// The layers' alphas over the colour (`$gp+0x1f94..0x1fa4`, `+0x1fb8`; the core and the head's small square
+    /// white). The red shot (`+0x30`, the upgrade's) sets the first and last to 0xffff0000 for good: not ported.
+    pub const CORE_RGBA: u32 = 0xffff_ffff;
+    pub const SHEATH_A: u32 = 0x8000_0000;
+    pub const GLOW_A: u32 = 0x2000_0000;
+    pub const HEAD_A: u32 = 0x4000_0000;
+    pub const DOT_RGBA: u32 = 0xffff_ffff;
+    pub const RAY_A: u32 = 0x1000_0000;
+}
+
+/// A strip of points in the frame (rows, origin) as its quads.
+fn push_strip(out: &mut Vec<crate::fx::FxQuad>, fx: usize, additive: bool, rows: [V3; 3], at: V3, pts: &[[f32; 3]], st: &[[f32; 2]], rgba: u32) {
+    let world: Vec<V3> = pts.iter().map(|&p| add(at, through(&rows, p))).collect();
+    for k in (0..world.len().saturating_sub(2)).step_by(2) {
+        out.push(crate::fx::FxQuad { fx, additive, corners: [world[k], world[k + 1], world[k + 2], world[k + 3]], st: [st[k], st[k + 1], st[k + 2], st[k + 3]], rgba: [rgba; 4] });
+    }
+}
+
+/// `0x4137d0`, the ship's laser: from 1 behind it (`$gp+0x1fa8`), 1.5 long (`+0x1fc0`; a gunship's 0.2):
+/// - the core (FX 0x16, additive, white) in the ship's frame;
+/// - turned about its length to the camera, the sheath (FX 0xb, blended, 0x80 its colour) and its glow (additive,
+///   ×1.1 long, ×3 wide, 0x20);
+/// - at its head (`+0x1fd4` 1.5 on), a square 0.4 (blended, 0x40) and one 0.04 (additive, white);
+/// - facing the camera, four rays (FX 0x40, additive, 0x10) a quarter turn apart, the flare turning 2° a frame
+///   (`+0x1fbc`) by its gun's side (`+0xc`) from a random start (`+8`).
+///
+/// A fighter's shot: `0x378960` twice (0.05 white, 0.1 in its colour 0x60008000, from its tail to its head).
 pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::FxQuad>) {
     let m = &w.mobys[id];
-    let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
-    // A fighter's shot (`0x378960` twice: 0.05 white, 0.1 in its colour 0x60008000, from its tail to its head).
-    let (a, b, layers) = if m.pv_i(0x44) != 0 {
-        (m.pv_v(0x50), m.pos, [(0.05, 0x807f_7f7fu32), (0.1, m.pv_i(0x68) as u32)])
-    } else {
-        let step = m.pv_v(0x10);
-        let rgb = m.pv_i(0x20) as u32 & 0xff_ffff;
-        (sub(m.pos, scale(step, 1.5)), m.pos, [(0.03, 0x7fa0_a0ff), (0.12, 0x6000_0000 | rgb)])
-    };
-    for (half, c) in layers {
-        let side = set_len(cross(sub(b, a), sub(cam, a)), half);
-        out.push(crate::fx::FxQuad { fx: 0xe, additive: true, corners: [add(a, side), sub(a, side), add(b, side), sub(b, side)], st, rgba: [c; 4] });
+    if m.pv_i(0x44) != 0 {
+        let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+        let (a, b) = (m.pv_v(0x50), m.pos);
+        for (half, c) in [(0.05, 0x807f_7f7fu32), (0.1, m.pv_i(0x68) as u32)] {
+            let side = set_len(cross(sub(b, a), sub(cam, a)), half);
+            out.push(crate::fx::FxQuad { fx: 0xe, additive: true, corners: [add(a, side), sub(a, side), add(b, side), sub(b, side)], st, rgba: [c; 4] });
+        }
+        return;
+    }
+    let rgb = m.pv_i(0x20) as u32 & 0xff_ffff;
+    let gunship = usize::try_from(m.pv_i(4) - 1).ok().and_then(|o| w.mobys.get(o)).is_some_and(|o| o.o_class == crate::moby::classes::space::GUNSHIP);
+    let (long, ahead) = if gunship { (0.2, 0.2) } else { (1.5, 1.5) };
+    let r = m.rows;
+    let tail = sub(m.pos, r[0]);
+    let stretch = |pts: &[[f32; 3]], x: f32, y: f32| -> Vec<[f32; 3]> { pts.iter().map(|p| [p[0] * x, p[1] * y, p[2] * y]).collect() };
+    push_strip(out, 0x16, true, r, tail, &stretch(&bolt::CORE, long, 1.0), &bolt::CORE_ST, bolt::CORE_RGBA);
+    let across = unit(cross(r[0], sub(cam, tail)));
+    let facing = [r[0], across, cross(across, r[0])];
+    let flat = |pts: &[[f32; 3]], x: f32, y: f32| -> Vec<[f32; 3]> { pts.iter().map(|p| [p[0] * x, p[1] * y, p[2]]).collect() };
+    push_strip(out, 0xb, false, facing, tail, &flat(&bolt::SHEATH, long, 1.0), &bolt::SHEATH_ST, bolt::SHEATH_A | rgb);
+    push_strip(out, 0xb, true, facing, tail, &flat(&bolt::SHEATH, long * 1.1, 3.0), &bolt::SHEATH_ST, bolt::GLOW_A | rgb);
+    let head = add(tail, scale(r[0], ahead));
+    let sized = |l: f32| -> Vec<[f32; 3]> { bolt::HEAD.iter().map(|&p| set_len(p, l)).collect() };
+    push_strip(out, 0xb, false, facing, head, &sized(0.4), &bolt::QUAD_ST, bolt::HEAD_A | rgb);
+    push_strip(out, 0xb, true, facing, head, &sized(0.04), &bolt::QUAD_ST, bolt::DOT_RGBA);
+    // The flare: its rows toward the camera, across (against world up) and up, turned about the first.
+    let to_cam = unit(sub(cam, head));
+    let a0 = unit(cross(to_cam, [0.0, 0.0, 1.0]));
+    let b0 = cross(a0, to_cam);
+    let age = (laser::RANGE / (laser::SPEED / 60.0)) as i32 - m.pv_i(0);
+    let turn = m.pv_f(8) + m.pv_f(0xc) * DEG * 2.0 * age as f32;
+    let ray: Vec<[f32; 3]> = bolt::RAY.iter().map(|p| [p[0], p[1] * 0.075, p[2] * 0.375]).collect();
+    for k in 0..4 {
+        let (s, c) = (turn + k as f32 * std::f32::consts::FRAC_PI_2).sin_cos();
+        let (a, b) = (add(scale(a0, c), scale(b0, s)), sub(scale(b0, c), scale(a0, s)));
+        push_strip(out, 0x40, true, [to_cam, a, b], head, &ray, &bolt::QUAD_ST, bolt::RAY_A | rgb);
     }
 }
 
