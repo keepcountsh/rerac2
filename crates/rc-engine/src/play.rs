@@ -174,6 +174,8 @@ pub(crate) struct Play {
     scale: f32,
     pad: PadState,
     camera: FollowCamera,
+    /// The space fights' flight while the ship's camera is current (rc_game::ship).
+    ship: Option<rc_game::ship::Flight>,
     /// The level's mobys (crate::mobys).
     mobys: Option<crate::mobys::Mobys>,
     /// The game-wide state (bolts, health limit).
@@ -317,8 +319,16 @@ fn tick(
         use rc_formats::disc::gameplay as g2;
         let pvars = g2::pvar_blocks(&lv.gameplay).unwrap_or_default();
         let records = g2::cameras(&lv.gameplay).map_err(|e| eprintln!("play: cameras: {e}")).unwrap_or_default();
+        // `RC_CAM_LIST=1`: the level's camera records (a dev trace).
+        if std::env::var_os("RC_CAM_LIST").is_some() {
+            for (i, r) in records.iter().enumerate() {
+                let rec = usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default();
+                let words: Vec<String> = rec.chunks(4).map(|c| format!("{:08x}", u32::from_le_bytes([c[0], c.get(1).copied().unwrap_or(0), c.get(2).copied().unwrap_or(0), c.get(3).copied().unwrap_or(0)]))).collect();
+                println!("camera {i}: class {:#x} pos ({:.1}, {:.1}, {:.1}) pvars {}", r.class, r.pos[0], r.pos[1], r.pos[2], words.join(" "));
+            }
+        }
         p.game.cameras = rc_game::cameras::Cameras::load(
-            records.iter().map(|r| (r.class as i16, r.pos, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
+            records.iter().map(|r| (r.class as i16, r.pos, r.rot, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
         );
     }
     // `0x2f50f8`: the level's main loop ends; the next level loads (crate::level_switch) and replaces this one.
@@ -680,7 +690,26 @@ fn tick(
     // current one's update (`0x2d8618`: the fly-bys).
     p.game.scenes.fade_step();
     let g = &mut p.game;
-    let cam = g.cameras.tick(&p.hero, &mobys.level, (p.camera.pos, p.camera.rows), &mut g.scenes.fade, &mut g.scenes.fade_in);
+    let mut cam = g.cameras.tick(&p.hero, &mobys.level, (p.camera.pos, p.camera.rows), &mut g.scenes.fade, &mut g.scenes.fade_in);
+    // The ship's camera (class 0x19, rc_game::ship): its update flies the ship and is the view.
+    if p.game.cameras.current_class() == rc_game::ship::CLASS {
+        if p.ship.is_none() {
+            if let Some((pos, rot, idx)) = p.game.cameras.current_record(0x20) {
+                let ms = &mobys.world.mobys;
+                let ship = ms.iter().position(|m| m.index as i32 == idx && m.o_class == rc_game::ship::SHIP_CLASS).or_else(|| ms.iter().position(|m| m.o_class == rc_game::ship::SHIP_CLASS && m.state < 0x80));
+                p.ship = Some(rc_game::ship::Flight::new(pos, rot, ship));
+            }
+        }
+        if let Some(f) = p.ship.as_mut() {
+            let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, sound: None };
+            f.tick(&p.pad, &mut mobys.world, &host);
+            cam.view = Some((f.pos, f.rows));
+            // The mobys' distances, the sounds and the draw callbacks go by this camera next tick.
+            (p.camera.pos, p.camera.rows) = (f.pos, f.rows);
+        }
+    } else {
+        p.ship = None;
+    }
     if let Some(st) = cam.hero_state { p.hero.request_state(st, true); }
     if let Some(on) = cam.letterbox { p.game.scenes.letterbox = on; }
     if cam.follow_reset { p.camera = FollowCamera::new(&cam_input(&p.hero, Some(coll), [0.0; 2])); }
@@ -1563,7 +1592,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     println!("play: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
-        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
+        hero, class, instance, scale, pad: PadState::default(), camera, ship: None, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
         fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None, qs: Default::default(), qs_paused: false,
         help: Default::default(), boxes: Default::default(), glyphs: None, texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),

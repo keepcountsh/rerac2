@@ -32,5 +32,6 @@ pub mod rng;
 pub mod save;
 pub mod scene;
 pub mod scene_camera;
+pub mod ship;
 pub mod sky;
 pub mod spline;

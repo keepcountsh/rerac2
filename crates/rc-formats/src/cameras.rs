@@ -25,7 +25,7 @@ pub struct CameraRecord {
     /// File +0x04 (runtime +0x00).
     pub pos: [f32; 3],
     /// File +0x10 (runtime +0x10); class 17 reads `rot.z` as the region's facing (`0x318de0`).
-    pub(crate) rot: [f32; 3],
+    pub rot: [f32; 3],
     /// File +0x1c: the pvar index (−1: none).
     pub pvar_index: i32,
 }
