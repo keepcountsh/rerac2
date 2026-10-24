@@ -113,6 +113,8 @@ pub struct Flight {
     dying: i32,
     /// The death is over: the fight starts again (`0x2c63f0`, the engine's).
     pub restart: bool,
+    /// The ram's wait (the camera record's `+0x58`, 15 ticks).
+    ram_wait: i32,
     /// The mission (0x0eee, [`Flight::mission`]): its state (1 fighting, 3 the cut), the quiet start's ticks, the
     /// wait's, the waves done, the cut's ticks, the place kept over the cut, the screen's fade, the level won.
     mission_state: i32,
@@ -222,6 +224,7 @@ impl Flight {
             shield: k::SHIELD,
             dying: 0,
             restart: false,
+            ram_wait: 0,
             mission_state: 0,
             quiet: 0,
             wave_wait: 0,
@@ -251,7 +254,7 @@ impl Flight {
     }
 
     /// `0x434670`, mode 0; the ship's parts made on the first tick (0x0fbf's start) and moved with it.
-    pub fn tick(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
+    pub fn tick(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost, coll: Option<&rc_formats::collision::Collision>, scene: Option<&crate::collision::mobys::MobyScene>) {
         if self.ship.is_some() && self.parts.is_empty() { self.make_parts(w, host); }
         self.take_hits(w);
         if self.mode == 6 { return self.dying(w); }
@@ -261,7 +264,10 @@ impl Flight {
         let (pitch, yaw) = self.steer(pad);
         self.turn(pitch, yaw);
         self.advance(w);
+        let before = self.ship.map(|s| w.mobys[s].pos);
         self.place_ship(w);
+        if let Some(from) = before { self.collide(w, coll, scene, from); }
+        if self.mode == 6 { return; }
         self.follow(w, host);
         self.fire(pad, w, host);
         self.lock(w, TAN);
@@ -285,25 +291,31 @@ impl Flight {
         if n == 0 { return; }
         w.mobys[ship].set_pv_i(HITS, 0);
         if self.mode == 6 { return; }
-        for _ in 0..n {
-            if 0 < self.shield {
-                self.shield -= 1;
-                continue;
-            }
-            self.hull -= 1;
-            if self.hull < 1 {
-                self.hull = 0;
-                self.mode = 6;
-                self.dying = k::DEATH_TICKS;
-                for id in std::iter::once(ship).chain(self.parts.iter().map(|p| p.0)) {
-                    let m = &mut w.mobys[id];
-                    m.draw_dist = 0;
-                    m.drawn = 0;
-                }
-                w.changed = true;
-                return;
-            }
+        self.damage(w, n);
+    }
+
+    /// `0x375e78(n)`: the shield takes it first, then the hull; at 0 the death.
+    fn damage(&mut self, w: &mut MobyWorld, n: i32) {
+        if self.mode == 6 { return; }
+        let from_shield = n.min(self.shield);
+        self.shield -= from_shield;
+        self.hull -= n - from_shield;
+        if self.hull < 1 { self.die(w); }
+    }
+
+    /// `0x434ad0`: mode 6, the ship and its parts gone, 60 ticks.
+    fn die(&mut self, w: &mut MobyWorld) {
+        if self.mode == 6 { return; }
+        self.hull = self.hull.max(0);
+        self.mode = 6;
+        self.fade = 0.0;
+        self.dying = k::DEATH_TICKS;
+        for id in self.ship.into_iter().chain(self.parts.iter().map(|p| p.0)) {
+            let m = &mut w.mobys[id];
+            m.draw_dist = 0;
+            m.drawn = 0;
         }
+        w.changed = true;
     }
 
     /// `0x434670` mode 6: the camera drifts back (`0x434bf0`) until the death's ticks run out.
@@ -582,7 +594,10 @@ pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let seg_len2 = dot(seg, seg);
     let hit = (0..w.mobys.len()).find(|&i| {
         let m = &w.mobys[i];
-        if i == id || i as i32 == owner || m.state >= 0x80 || m.mode & mode::TARGET == 0 { return false; }
+        let rock = crate::moby::classes::space::ASTEROIDS.contains(&m.o_class);
+        if i == id || i as i32 == owner || m.state >= 0x80 || (m.mode & mode::TARGET == 0 && !rock) || m.draw_dist == 0 { return false; }
+        // The rocks by their size (the lasers' moby search `0x2f45d0` takes their spheres).
+        let r = if rock { r + m.scale * 2.0 } else { r };
         let t = if 0.0 < seg_len2 { (dot(sub(m.pos, from), seg) / seg_len2).clamp(0.0, 1.0) } else { 0.0 };
         crate::hero::physics::dist(add(from, scale(seg, t)), m.pos) < r
     });
@@ -1099,4 +1114,53 @@ pub fn update_missile(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         return w.delete(id);
     }
     w.rebuild(id, &*ctx.host);
+}
+
+impl Flight {
+    /// `0x437a70`: the ship's step swept in 0.25 spheres (0.075 up in its frame; at most 30 long) against the world
+    /// and the mobys. The world met nose-on (|n · forward| > 0.75) is the death (`0x434ad0`); else the camera and the
+    /// ship are pushed out and the hull takes 1 every fourth frame. A moby met head-on (its facing against the ship's)
+    /// takes 1 (flags 0x10000) and the hull 30, once in 15 ticks (the record's `+0x58`). Not ported: the Hrugis
+    /// special case, the sparks (`0x4382b0`), the camera shake.
+    fn collide(&mut self, w: &mut MobyWorld, coll: Option<&rc_formats::collision::Collision>, scene: Option<&crate::collision::mobys::MobyScene>, from: V3) {
+        countdown(&mut self.ram_wait);
+        let (Some(ship), Some(c)) = (self.ship, coll) else { return };
+        let to = w.mobys[ship].pos;
+        let up = scale(w.mobys[ship].rows[2], 0.075);
+        let d = sub(to, from);
+        let l = crate::hero::physics::len(d);
+        if 30.0 < l { return; }
+        let n = if l <= 0.25 { 2 } else { (l / 0.25) as i32 + 2 };
+        for i in 1..=n {
+            let p = add(add(from, scale(d, i as f32 / n as f32)), up);
+            let Some(h) = crate::collision::coll_sphere_m(c, scene, p, 0.25, crate::collision::QueryFlags(0), Some(ship)) else { continue };
+            match h.moby {
+                Some(m) if w.mobys.get(m).is_some_and(|x| x.o_class != SHIP_CLASS) => {
+                    let facing = dot(w.mobys[m].rows[0], w.mobys[ship].rows[0]);
+                    if facing <= 0.0 && self.ram_wait == 0 {
+                        let dir = unit(sub(w.mobys[m].pos, to));
+                        let tmpl = HitTemplate::new(1.0, Some(ship), 0x0001_0000, [dir[0], dir[1], dir[2], 0.0]);
+                        let q = w.mobys[m].pos;
+                        w.deliver_hit_any(m, &tmpl, [q[0], q[1], q[2], 1.0]);
+                        self.damage(w, 30);
+                        self.ram_wait = 15;
+                    }
+                }
+                _ => {
+                    let nrm = unit(h.normal);
+                    if 0.75 < dot(nrm, w.mobys[ship].rows[0]).abs() {
+                        self.die(w);
+                        return;
+                    }
+                    if let Some(c) = h.pushed_centre {
+                        let out = sub(c, p);
+                        self.pos = add(self.pos, out);
+                        w.mobys[ship].pos = add(w.mobys[ship].pos, out);
+                    }
+                    if self.frame % 4 == 0 { self.damage(w, 1); }
+                }
+            }
+            return;
+        }
+    }
 }

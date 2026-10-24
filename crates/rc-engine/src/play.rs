@@ -706,7 +706,8 @@ fn tick(
         }
         if let Some(f) = p.ship.as_mut() {
             let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, sound: None };
-            f.tick(&p.pad, &mut mobys.world, &host);
+            let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+            f.tick(&p.pad, &mut mobys.world, &host, Some(coll), scene.as_ref());
             cam.view = Some((f.pos, f.rows));
             // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it.
             if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }

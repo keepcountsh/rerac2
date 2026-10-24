@@ -38,7 +38,7 @@
 //! the step's collision (`0x378570`, `0x376650`'s push), the burst (`0x4184c8`) and the bolts (`0x40fbc8`), the
 //! exhaust (`0x3ca6c0`), the sounds; the waves that bring them back (the mission object 0x0eee).
 
-use crate::hero::physics::{add, atan2, dist, len, len2, rot_dist, set_len, sub, sub_rot, V3};
+use crate::hero::physics::{add, atan2, dist, len, len2, rot_dist, scale, set_len, sub, sub_rot, V3};
 use crate::moby::{mode, Ctx, MobyWorld};
 
 /// The fighter's class.
@@ -446,5 +446,123 @@ pub fn update_pickup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &mut w.mobys[id];
     m.rot[2] = crate::hero::physics::add_rot(m.rot[2], 0.03);
     if class == BOLT_PICKUP { m.rot[0] = crate::hero::physics::add_rot(m.rot[0], 0.01); }
+    w.rebuild(id, &*ctx.host);
+}
+
+/// The asteroid field's spawner (0x095f, `0x3ca8b0`) and the asteroids (0x0953..0x0956, 0x0971: `0x3c91c8`).
+pub const FIELD: i16 = 0x095f;
+pub const ASTEROIDS: [i16; 5] = [0x0953, 0x0954, 0x0955, 0x0956, 0x0971];
+
+/// The asteroids' tables by kind (`0x3c9db0`: the class − 0x953, 0x971 → 4): their size (`$gp+0xb18`), the class of
+/// their pieces (`+0xb30`), how many (`+0xb78`), how many chips (`+0xb48`, of 0x955; 0x956's of 0x971).
+const AST_SIZE: [f32; 5] = [5.0, 2.0, 0.5, 10.0, 2.0];
+const AST_PIECE: [i16; 5] = [0x0954, 0x0955, -1, 0x0971, -1];
+const AST_PIECES: [i32; 5] = [3, 2, -1, -1, -1];
+const AST_CHIPS: [i32; 5] = [20, 10, -1, 40, -1];
+
+fn kind(class: i16) -> usize { if class == 0x0971 { 4 } else { (class - 0x0953).clamp(0, 4) as usize } }
+
+/// `0x3c9128` + `0x3c9b50`: an asteroid of `class` at `at` moving `vel`: its spin random (to ½°, 1°, 2° a tick), its
+/// angles random, its scale its class's by its kind's size, in `state` (1 still; 2 a piece settling; 3 a chip).
+fn spawn_asteroid(w: &mut MobyWorld, ctx: &mut Ctx, class: i16, at: V3, vel: V3, state: u8) {
+    if w.class(class).is_none() { return; }
+    let base = w.class(class).map_or(1.0, |c| c.scale);
+    let g = &mut ctx.game.rng;
+    let rot = [g.rand_angle(), g.rand_angle(), g.rand_angle()];
+    let spin = [g.randf(0.0, 0.5) * 0.017_453_294, g.randf(0.0, 1.0) * 0.017_453_294, g.randf(0.0, 2.0) * 0.017_453_294];
+    let id = w.create(class);
+    let m = &mut w.mobys[id];
+    m.state = state;
+    m.update_dist = 0xff;
+    m.draw_dist = 0x1ff;
+    m.drawn = 1;
+    m.pos = at;
+    m.rot = rot;
+    m.scale = base * AST_SIZE[kind(class)];
+    m.set_pv_v(0, spin);
+    m.set_pv_v(0x10, vel);
+    w.rebuild(id, &*ctx.host);
+}
+
+/// `0x3ca8b0`: on its first tick, its counts of asteroids (`+0xe` of 0x956, `+0xc` of 0x953, `+8` of 0x954) at
+/// random points of its cuboid (`+0`, `0x3caa48`), then gone. Not ported: the light they take from 0x12b3 / 0x12b6.
+pub fn update_field(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &w.mobys[id];
+    let (cuboid, n953, n954, n956) = (m.pv_i(0), m.pv_s(0xc) as i32, m.pv_i(8), m.pv_s(0xe) as i32);
+    let Some(c) = usize::try_from(cuboid).ok().and_then(|i| ctx.level.cuboids.get(i)).cloned() else { return w.delete(id) };
+    for (class, n) in [(0x0956, n956), (0x0953, n953), (0x0954, n954)] {
+        for _ in 0..n.max(0) {
+            let g = &mut ctx.game.rng;
+            let l = [g.randf(-1.0, 1.0), g.randf(-1.0, 1.0), g.randf(-1.0, 1.0)];
+            let mx = &c.matrix;
+            let at = std::array::from_fn(|k| mx[0][k] * l[0] + mx[1][k] * l[1] + mx[2][k] * l[2] + mx[3][k]);
+            spawn_asteroid(w, ctx, class, at, [0.0; 3], 1);
+        }
+    }
+    w.delete(id);
+}
+
+/// `0x3c91c8`: the asteroid drifts (its velocity ×0.99 a tick; a piece settles to 1 when still), spins; the ship
+/// within its size breaks it (`0x3c9c40` → `0x3c9d18`: a hit on itself of 5, the ship's own damage is its collision's);
+/// a hit with the flags 0x230000 (0x956 not by the lasers) or the world's box ends it (`0x3c94d8`): its pieces thrown
+/// apart (24 a second along the hit, 3× for the ram; and 12 a second each way), its chips; the big ones (size 5 or
+/// more) a drop (`0x3c9e78`, as the fighters'). Not ported: the dust (`0x342520`), the camera's shake, the sounds.
+pub fn update_asteroid(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let class = w.mobys[id].o_class;
+    let k = kind(class);
+    {
+        let m = &mut w.mobys[id];
+        let v = m.pv_v(0x10);
+        m.pos = add(m.pos, v);
+        let v = [v[0] * 0.99, v[1] * 0.99, v[2] * 0.99];
+        m.set_pv_v(0x10, v);
+        if m.state == 2 && v.iter().all(|c| c.abs() < 0.01) { m.state = 1; }
+        let s = m.pv_v(0);
+        m.rot = [crate::hero::physics::add_rot(m.rot[0], s[0]), crate::hero::physics::add_rot(m.rot[1], s[1]), crate::hero::physics::add_rot(m.rot[2], s[2])];
+    }
+    let cam = ctx.host.camera_pos();
+    let mut push: Option<(V3, bool)> = None;
+    if dist(w.mobys[id].pos, cam) <= AST_SIZE[k] && class != 0x0956 {
+        push = Some((set_len(sub(w.mobys[id].pos, cam), 1.0), true));
+    }
+    if let Some(h) = w.hit_message(id) {
+        w.clear_hit(id);
+        let laser = h.tmpl.flags & 0x0010_0000 != 0;
+        if h.tmpl.flags & 0x0023_0000 != 0 && !(laser && class == 0x0956) && push.is_none() {
+            push = Some((set_len([h.tmpl.dir[0], h.tmpl.dir[1], h.tmpl.dir[2]], 1.0), false));
+        }
+    }
+    let p = w.mobys[id].pos;
+    let out = p.iter().any(|&c| !(2.0..=1021.0).contains(&c));
+    if let Some((dir, ram)) = push {
+        let along = scale(dir, 24.0 / 60.0 * if ram { 3.0 } else { 1.0 });
+        let half = AST_SIZE[k] * 0.5;
+        let jitter = |g: &mut crate::rng::Rng| [p[0] + g.randf(-half, half), p[1] + g.randf(-half, half), p[2] + g.randf(-half, half)];
+        if 0 < AST_PIECES[k] {
+            for _ in 0..AST_PIECES[k] {
+                let at = jitter(&mut ctx.game.rng);
+                let g = &mut ctx.game.rng;
+                let v = add(along, super::shot::polar(24.0 / 120.0, g.rand_angle(), g.rand_angle()));
+                spawn_asteroid(w, ctx, AST_PIECE[k], at, v, 2);
+            }
+        }
+        if 0 < AST_CHIPS[k] {
+            let chip = if class == 0x0956 { 0x0971 } else { 0x0955 };
+            let speed = 24.0 / 120.0 * if class == 0x0956 { 2.0 } else { 1.0 };
+            for _ in 0..AST_CHIPS[k] {
+                let at = jitter(&mut ctx.game.rng);
+                let v = if class == 0x0956 {
+                    set_len(sub(at, p), speed)
+                } else {
+                    let g = &mut ctx.game.rng;
+                    super::shot::polar(speed, g.rand_angle(), g.rand_angle())
+                };
+                spawn_asteroid(w, ctx, chip, at, add(along, v), 3);
+            }
+        }
+        if 5.0 <= AST_SIZE[k] { drop(w, id, ctx); }
+        return w.delete(id);
+    }
+    if out { return w.delete(id); }
     w.rebuild(id, &*ctx.host);
 }
