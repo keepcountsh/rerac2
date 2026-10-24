@@ -104,6 +104,16 @@ pub struct Flight {
     dying: i32,
     /// The death is over: the fight starts again (`0x2c63f0`, the engine's).
     pub restart: bool,
+    /// The mission (0x0eee, [`Flight::mission`]): its state (1 fighting, 3 the cut), the quiet start's ticks, the
+    /// wait's, the waves done, the cut's ticks, the place kept over the cut, the screen's fade, the level won.
+    mission_state: i32,
+    quiet: i32,
+    wave_wait: i32,
+    pub waves: i32,
+    cut_ticks: i32,
+    saved: (V3, [V3; 3]),
+    pub fade: f32,
+    pub done: bool,
     /// `$gp+0x2630`.
     pub mode: i32,
     /// `$gp+0x2684` / `+0x2688`: the d-pad's yaw and pitch ramps (0.1 a tick to 1).
@@ -198,6 +208,14 @@ impl Flight {
             shield: k::SHIELD,
             dying: 0,
             restart: false,
+            mission_state: 0,
+            quiet: 0,
+            wave_wait: 0,
+            waves: 0,
+            cut_ticks: 0,
+            saved: (pos, [[0.0; 3]; 3]),
+            fade: 0.0,
+            done: false,
             mode: 0,
             ramp_yaw: 0.0,
             ramp_pitch: 0.0,
@@ -223,7 +241,8 @@ impl Flight {
         if self.ship.is_some() && self.parts.is_empty() { self.make_parts(w, host); }
         self.take_hits(w);
         if self.mode == 6 { return self.dying(w); }
-        if self.mode != 0 { return; }
+        self.mission(w);
+        if !self.cut() { return; }
         self.frame = self.frame.wrapping_add(1);
         let (pitch, yaw) = self.steer(pad);
         self.turn(pitch, yaw);
@@ -233,6 +252,7 @@ impl Flight {
         self.fire(pad, w, host);
         // The boost's ramp in the ship's `+0x34` (its flame's, [`draw_flame`]).
         if let Some(ship) = self.ship { w.mobys[ship].set_pv_i(0x34, self.boost); }
+        self.cut_after();
     }
 
     /// `0x375e78(1)` for each shot that hit: the shield first, then the hull; at 0 the death (`0x434ad0`: mode 6,
@@ -601,6 +621,8 @@ pub fn spawn_enemy_shot(w: &mut MobyWorld, host: &dyn MobyHost, from: V3, at: V3
 /// `0x375410`'s shot: a step of 0.6..1.1 along its direction; gone after 350; within 1 of the ship a hit (1, through
 /// `0x375e78`).
 fn update_enemy_shot(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    // The quiet (`0x22182c`) takes the shots away.
+    if w.mobys.iter().any(|m| m.o_class == MISSION_CLASS && m.state < 0x80 && m.pv_i(crate::moby::classes::space::PASSIVE) != 0) { return w.delete(id); }
     let r = ctx.game.rng.randf(1.1, 0.6);
     let m = &mut w.mobys[id];
     let step = set_len(m.pv_v(0x10), r);
@@ -716,7 +738,8 @@ impl Flight {
             let Some((t, [tw, th])) = tex(fx) else { return };
             out.push(Quad { pos: [[x - h, y + h], [x + h, y + h], [x - h, y - h], [x + h, y - h]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex: t, rgba: rgba.to_le_bytes() });
         };
-        if self.mode == 6 { return out; }
+        // Not over the death or the cut's view.
+        if matches!(self.mode, 3..=6) { return out; }
         let r = self.rows;
         let (cx, cy) = (SCREEN_W * 0.5, SCREEN_H * 0.5);
         // The crosshair at the aim point: four strips (`$gp+0x2750`: the corner and texel pairs into `0x2b32e0` /
@@ -747,5 +770,132 @@ impl Flight {
             sprite(&mut out, hud::DOT_FX, rx - left, ry - ahead, size * 0.5, 0x80 | alpha << 24);
         }
         out
+    }
+}
+
+/// The mission object's class (Wupash's waves, `0x40e340`).
+pub const MISSION_CLASS: i16 = 0x0eee;
+
+/// The mission's tuning (its pvars from the disc: `+0x34` the quiet start 720 ticks, `+0x2c` the wait before the
+/// second wave 150, then the wait before the end 540; `$gp+0x1c70` / `+0x1c80` the cut's angles and place, 240 ticks;
+/// the second wave's gathering point and goals (`0x378250` / `0x378878`, 10 round them), the ship's new place and
+/// the point it faces (`0x4381d0`)).
+mod mission {
+    pub const QUIET: i32 = 0x2d0;
+    pub const WAVE_WAIT: i32 = 0x96;
+    pub const END_WAIT: i32 = 0x21c;
+    pub const CUT_POS: [f32; 3] = [390.0, 430.0, 524.36];
+    pub const CUT_ROT: [f32; 3] = [0.0, -0.01, 2.0];
+    pub const CUT_TICKS: i32 = 0xf0;
+    pub const GATHER: [f32; 3] = [359.0, 440.0, 524.0];
+    pub const GOAL: [f32; 3] = [403.0, 456.0, 524.0];
+    pub const SHIP_AT: [f32; 3] = [420.93, 413.79, 534.54];
+    pub const SHIP_FACES: [f32; 3] = [417.18, 454.03, 532.6];
+    pub const WAVES: i32 = 1;
+}
+
+impl Flight {
+    /// The mission object 0x0eee (`0x40e340`, run here with the flight it drives): the quiet start (`0x22182c`: the
+    /// fighters hold their fire and their shots go, [`crate::moby::classes::space`]); when no fighter is active, the
+    /// next wave after 150 ticks (the cut `0x434f60`: the camera fades to the cut's view for 240 ticks and back; the
+    /// fighters come back (`0x376548`) gathered at a point and going for another, the ship moved to the wave's start),
+    /// or after the last one, 540 ticks and the level's end (`0x3763b8`, `0x307bf0(2, 1)`: Maktar Nebula, saved).
+    fn mission(&mut self, w: &mut MobyWorld) {
+        let Some(mid) = w.mobys.iter().position(|m| m.o_class == MISSION_CLASS && m.state < 0x80) else { return };
+        if self.mission_state == 0 {
+            self.mission_state = 1;
+            self.quiet = mission::QUIET;
+            self.wave_wait = mission::WAVE_WAIT;
+        }
+        countdown(&mut self.quiet);
+        let mut passive = self.quiet != 0;
+        let active = crate::moby::classes::space::active_count(w);
+        if self.mission_state == 3 {
+            passive = true;
+            if self.cut_ticks == 0 && self.mode == 0 {
+                self.waves += 1;
+                self.mission_state = 1;
+                passive = self.quiet != 0;
+            }
+        } else if active == 0 && 5 < self.frame {
+            passive = true;
+            if self.waves < mission::WAVES {
+                if countdown(&mut self.wave_wait) {
+                    self.wave_wait = mission::END_WAIT;
+                    // `0x434f60`: the cut.
+                    self.mode = 1;
+                    self.cut_ticks = mission::CUT_TICKS;
+                    self.mission_state = 3;
+                    crate::moby::classes::space::next_wave(w, mission::GATHER, mission::GOAL);
+                    // `0x4381d0`: the ship at the wave's start.
+                    self.pos = mission::SHIP_AT;
+                    let f = unit(sub(mission::SHIP_FACES, self.pos));
+                    let l = unit(cross(self.rows[2], f));
+                    self.rows = [f, l, unit(cross(f, l))];
+                }
+            } else if countdown(&mut self.wave_wait) {
+                self.done = true;
+            }
+        }
+        w.mobys[mid].set_pv_i(crate::moby::classes::space::PASSIVE, passive as i32);
+        w.mobys[mid].set_pv_i(crate::moby::classes::space::ACTIVE_COUNT, active as i32);
+    }
+
+    /// `0x434670`'s modes 1..5: the fades of the cut (`$gp+0x2a70`, 0.05 a tick). 1 flying while the screen goes
+    /// black, then the cut's view (4: back in; 5: its ticks; 3: black again), then the flight where it was (2: back
+    /// in while flying). Returns whether the flight flies this tick.
+    fn cut(&mut self) -> bool {
+        match self.mode {
+            // Black: the cut's view after this tick's flight ([`Flight::cut_after`]).
+            1 => {
+                self.fade = (self.fade + 0.05).min(1.0);
+                true
+            }
+            4 => {
+                self.fade -= 0.05;
+                if self.fade <= 0.0 {
+                    self.fade = 0.0;
+                    self.mode = 5;
+                }
+                false
+            }
+            5 => {
+                if countdown(&mut self.cut_ticks) { self.mode = 3; }
+                false
+            }
+            3 => {
+                self.fade = (self.fade + 0.05).min(1.0);
+                if 1.0 <= self.fade {
+                    self.mode = 2;
+                    (self.pos, self.rows) = self.saved;
+                }
+                false
+            }
+            2 => {
+                self.fade -= 0.05;
+                if self.fade <= 0.0 {
+                    self.fade = 0.0;
+                    self.mode = 0;
+                }
+                true
+            }
+            _ => true,
+        }
+    }
+
+    /// The end of mode 1's tick (`0x434670` flies first): black, the flight kept and the cut's view.
+    fn cut_after(&mut self) {
+        if self.mode == 1 && 1.0 <= self.fade {
+            self.mode = 4;
+            self.saved = (self.pos, self.rows);
+            self.pos = mission::CUT_POS;
+            self.rows = crate::moby::attach::rows_of(mission::CUT_ROT);
+        }
+    }
+
+    /// The HUD's counts (`0x40e7a8`: `"%s: %d"` with the strings 0x3067 and 0x3068 at (24, 357) and (24, 384)): the
+    /// fighters active and the wave.
+    pub fn counts(&self, w: &MobyWorld) -> [(u32, i32, [f32; 2]); 2] {
+        [(0x3067, crate::moby::classes::space::active_count(w) as i32, [24.0, 357.0]), (0x3068, self.waves + 1, [24.0, 384.0])]
     }
 }

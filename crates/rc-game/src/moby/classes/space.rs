@@ -45,6 +45,13 @@ pub const FIGHTER: i16 = 0x0957;
 const AI: usize = 0x200;
 const HEALTH: usize = 0x1f0;
 const STARTED: usize = 0x1f4;
+/// A wave's return asked (`0x376428`): gather round `+0x1e0`, go for `+0x1e8`... (the points kept in the pvars).
+const REVIVE: usize = 0x1f8;
+const REVIVE_AT: usize = 0x1d0;
+const REVIVE_GOAL: usize = 0x1e0;
+/// The mission object's words the flight keeps (`0x22182c` the quiet, `0x221810` the active count).
+pub const PASSIVE: usize = 0x100;
+pub const ACTIVE_COUNT: usize = 0x104;
 /// The gun's wait (`+0x1b8`).
 const GUN: usize = 0x1b8;
 
@@ -257,6 +264,7 @@ fn hits(w: &mut MobyWorld, id: usize) {
 fn range(w: &mut MobyWorld, id: usize, ctx: &Ctx) {
     set_ai_i(w, id, a::CONE, 0);
     set_ai_i(w, id, a::RANGE, 0);
+    if passive(w) { return; }
     let Some(t) = target(w, id) else { return };
     let (p, q) = (w.mobys[id].pos, w.mobys[t].pos);
     if 176.0 < dist(p, q) { return; }
@@ -296,9 +304,69 @@ fn maybe_attack(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     set_ai_i(w, id, a::TIMER, t);
 }
 
+/// A dev aid (`RC_SPACE_CLEAR`): every active fighter put away as if shot.
+pub fn clear_all(w: &mut MobyWorld) {
+    let ids: Vec<usize> = (0..w.mobys.len()).filter(|&i| w.mobys[i].o_class == FIGHTER && w.mobys[i].state < 0x80 && ai_i(w, i, a::ACTIVE) == 1).collect();
+    for id in ids {
+        set_ai_i(w, id, a::ACTIVE, 0);
+        set_ai_i(w, id, a::ATTACKING, 0);
+        let m = &mut w.mobys[id];
+        (m.has_collision, m.draw_dist, m.drawn) = (false, 0, 0);
+        m.mode |= 3;
+    }
+    w.changed = true;
+}
+
+/// The fighters active (`0x221810`).
+pub fn active_count(w: &MobyWorld) -> usize {
+    w.mobys.iter().filter(|m| m.o_class == FIGHTER && m.state < 0x80 && m.pv_i(STARTED) != 0 && m.pv_i(AI + a::ACTIVE) == 1).count()
+}
+
+/// `0x22182c`: the quiet (the mission object's word).
+fn passive(w: &MobyWorld) -> bool { w.mobys.iter().find(|m| m.o_class == 0x0eee && m.state < 0x80).is_some_and(|m| m.pv_i(PASSIVE) != 0) }
+
+/// `0x376548(1)` / `0x378250(10, at)` / `0x378878(10, goal)`: every fighter back (`0x376068`), within 10 of `at`,
+/// going for a point within 10 of `goal`.
+pub fn next_wave(w: &mut MobyWorld, at: V3, goal: V3) {
+    for m in w.mobys.iter_mut().filter(|m| m.o_class == FIGHTER && m.state < 0x80) {
+        // Updated again (`0x376068` clears the mode's 3); the rest of the return is its next update's.
+        m.mode &= !3;
+        m.set_pv_i(REVIVE, 1);
+        m.set_pv_v(REVIVE_AT, at);
+        m.set_pv_v(REVIVE_GOAL, goal);
+    }
+}
+
+/// The return: active again (`0x376068`), shown, its health back, within 10 of the gathering point, its goal within 10
+/// of the wave's.
+fn revive(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let (at, goal) = (w.mobys[id].pv_v(REVIVE_AT), w.mobys[id].pv_v(REVIVE_GOAL));
+    let g = &mut ctx.game.rng;
+    let p = super::shot::polar(g.randf(0.0, 10.0), g.rand_angle(), g.rand_angle());
+    let q = super::shot::polar(g.randf(0.0, 10.0), g.rand_angle(), g.rand_angle());
+    let ship = w.mobys.iter().position(|m| m.o_class == crate::ship::SHIP_CLASS && m.state < 0x80);
+    {
+        let m = &mut w.mobys[id];
+        m.set_pv_i(REVIVE, 0);
+        m.mode &= !3;
+        m.draw_dist = 0x1ff;
+        m.has_collision = true;
+        m.pos = add(at, p);
+        m.set_pv_f(HEALTH, 1.0);
+    }
+    for o in (0..0x160).step_by(4) { set_ai_i(w, id, o, 0); }
+    set_ai_i(w, id, a::ACTIVE, 1);
+    set_ai_i(w, id, a::STATE, 1);
+    set_ai_i(w, id, a::TARGET, ship.map_or(0, |s| s as i32 + 1));
+    set_goal(w, id, ctx, add(goal, q));
+    set_ai_i(w, id, a::TIMER, 300);
+    w.changed = true;
+}
+
 /// `0x3ca118`.
 pub fn update_fighter(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if w.mobys[id].pv_i(STARTED) == 0 { return start(w, id, ctx); }
+    if w.mobys[id].pv_i(REVIVE) != 0 { revive(w, id, ctx); }
     if ai_i(w, id, a::ACTIVE) != 1 { return; }
     think(w, id, ctx);
     hits(w, id);

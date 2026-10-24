@@ -700,14 +700,20 @@ fn tick(
                 p.ship = Some(rc_game::ship::Flight::new(pos, rot, ship));
             }
         }
+        // `RC_SPACE_CLEAR=t1,t2`: every fighter shot at those ticks (a dev aid for the waves).
+        if std::env::var("RC_SPACE_CLEAR").is_ok_and(|v| v.split(',').any(|t| t.trim().parse::<u64>() == Ok(p.ticks))) {
+            rc_game::moby::classes::space::clear_all(&mut mobys.world);
+        }
         if let Some(f) = p.ship.as_mut() {
             let host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, sound: None };
             f.tick(&p.pad, &mut mobys.world, &host);
             cam.view = Some((f.pos, f.rows));
             // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it.
             if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }
-            // `0x2c63f0`: the ship's death starts the fight again.
+            // `0x2c63f0`: the ship's death starts the fight again; `0x307bf0(2, 1)`: the fight won, Maktar Nebula.
             if f.restart && p.game.next_level.is_none() { p.game.go_to_level(p.game.level, false); }
+            if f.done && p.game.next_level.is_none() { p.game.go_to_level(2, true); }
+            p.game.scenes.fade = f.fade;
             // The mobys' distances, the sounds and the draw callbacks go by this camera next tick.
             (p.camera.pos, p.camera.rows) = (f.pos, f.rows);
         }
@@ -1321,6 +1327,15 @@ fn draw_hud(
         if let (Some(f), Some(m)) = (p.ship.as_ref(), p.mobys.as_ref()) {
             let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
             quads.extend(f.hud_quads(&m.world, crate::play_camera::GAME_TAN_HALF_FOV, &tex));
+            // `0x40e7a8`: the fighters left and the wave.
+            let strings = &hud.data.assets().strings;
+            let mut draws = Vec::new();
+            for (id, n, pos) in f.counts(&m.world) {
+                let label = String::from_utf8_lossy(strings.get(id)).trim_end_matches('\0').to_string();
+                draws.push(rc_game::hud::Draw::Text { text: format!("{label}: {n}"), pos, scale: 1.0, colour: 0x8080_8080, align: rc_game::hud::Align::Left });
+            }
+            let icon = |id: u16, fr: u16| hud.icons.get(&(id, fr)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+            quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
         }
         let mut draws = p.hud.draw(p.game.bolts);
         // The quick select's ring and texts (rc_game::quick_select).
