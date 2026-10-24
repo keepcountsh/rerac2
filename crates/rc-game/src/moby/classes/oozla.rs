@@ -660,8 +660,9 @@ pub fn update_0cb5(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// else it counts its trips down (`+0xa4`): with some left it waits `+0x94` and goes again, at the last its group's
 /// pokes cleared (`0x31c970(group, 0)`) it is home again (1). It carries Ratchet (`0x322668`, the block `+0x20`).
 ///
-/// Not ported: its moving sound (class 0x9ea's, looped, `+0xa8`), its glow while it is out (`0x321ba0`, `+0xac` /
-/// the moby's `+0x23`).
+/// Its look: a green projection, shown only once poked ([`hologram`], the phase `+0xac`, on from state 2).
+///
+/// Not ported: its moving sound (class 0x9ea's, looped, `+0xa8`).
 #[allow(clippy::collapsible_match)]
 pub fn update_dynamo_platform(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
@@ -764,6 +765,29 @@ pub fn update_dynamo_platform(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let (pos, yaw) = (m.pos, m.rot[2]);
         carry_hero(ctx, id, old, old_rot[2], pos, yaw);
     }
+    let on = 1 < w.mobys[id].state;
+    hologram(&mut w.mobys[id], 0xac, on, &mut ctx.game.rng);
+}
+
+/// `0x321ba0(m, phase, on)`: a projection's look. While it is on, or not yet faded out, the phase (a pvar) turns 0.1455
+/// a tick (wrapped to ±π) and the ambient pulses between (0x20, 0xc0, 0) and (0, 0x80, 0) by `(sin + 0.5) / 2`, one
+/// tick in twenty (`0x3117a0`) 0.3 of the way to (0xff, 0xff, 0x80); the alpha (`+0x23`) goes 3 a tick up to 0x40 on, down
+/// to 0 off. So a platform spawned at 0x80 fades out at the start and shows only while it is out.
+fn hologram(m: &mut crate::moby::Moby, phase: usize, on: bool, rng: &mut crate::rng::Rng) {
+    if m.alpha == 0 && !on { return; }
+    let mut p = m.pv_f(phase) + 0.145_444_1;
+    if PI <= p { p = p - PI - PI; } else if p < -PI { p = p + PI + PI; }
+    m.set_pv_f(phase, p);
+    let lerp = |t: f32, a: [u8; 3], b: [u8; 3]| -> [u8; 3] { std::array::from_fn(|k| (a[k] as f32 * (1.0 - t) + b[k] as f32 * t) as u8) };
+    let mut c = lerp((p.sin() + 0.5) * 0.5, [0x20, 0xc0, 0x00], [0x00, 0x80, 0x00]);
+    if rng.randf(0.0, 1.0) < 0.05 { c = lerp(0.3, c, [0xff, 0xff, 0x80]); }
+    m.ambient = c;
+    m.alpha = match (on, m.alpha) {
+        (false, a) if a < 4 => 0,
+        (false, a) => a - 3,
+        (true, a) if a < 0x3d => a + 3,
+        (true, _) => 0x40,
+    };
 }
 
 /// 0x0a95 (`0x3d01f8`, 1 placed): the Dynamo (item 0x24) to pick up. Not had yet it floats 0.75 over its place at
