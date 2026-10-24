@@ -30,6 +30,10 @@ pub mod wrench;
 use super::UpdateFn;
 
 /// The port of `o_class`'s update (`None`: not ported, the moby gets mode 2 like a class without one).
+/// The ported classes without a model that are only created at run time (the space fights' laser), added to every
+/// level's class table as the overlay's table holds them.
+pub const CREATED_LOGIC: &[i16] = &[crate::ship::LASER_CLASS];
+
 pub fn update_for(o_class: i16) -> Option<UpdateFn> {
     match o_class {
         0x47 => Some(wrench::update),
@@ -112,6 +116,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0afc => Some(maktar::update_0afc),
         0x0aaf => Some(maktar::update_0aaf),
         0x0873 => Some(maktar::update_0873),
+        crate::ship::LASER_CLASS => Some(crate::ship::update_laser),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),
         _ => None,

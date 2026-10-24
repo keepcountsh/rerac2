@@ -15,6 +15,7 @@
 //! | `0x3cac30` | Oozla's conveyor 0x0a7b out | its belt of light ([`crate::moby::classes::oozla::draw_0a7b`]) |
 //! | `0x3d2ea8` | Oozla's hatch 0x0a9d open | its light ([`crate::moby::classes::oozla::draw_0a9d`]) |
 //! | `0x38e4c8` | the Tractor Beam holding | its beam ([`crate::moby::classes::tractor::draw`]) |
+//! | `0x4137d0` | the space fights' laser 0xffa | a streak ([`crate::ship::draw_laser`]) |
 //!
 //! The frame's first list (`0x2e7718`, run by `0x2e7768` before the particles, `0x3311e0`) holds on Aranos the
 //! arrival ship's draw (`0x362b40`, which the engine's created-moby draw does), class 0xd0's ribbon (`0x39ac30`, not
@@ -118,6 +119,7 @@ pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut
             0x0a7b => crate::moby::classes::oozla::draw_0a7b(w, id, &mut out),
             0x0a9d => crate::moby::classes::oozla::draw_0a9d(w, id, &mut out),
             0x00bc => crate::moby::classes::tractor::draw(w, id, cam, -0.3 * (game.frame % 27) as f32, &mut out),
+            crate::ship::LASER_CLASS => crate::ship::draw_laser(w, id, cam, &mut out),
             _ => {}
         }
     }

@@ -508,6 +508,11 @@ impl Mobys {
             if classes.iter().any(|c| c.o_class == o) { continue; }
             classes.push(ClassInfo { o_class: o, update: rc_game::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
         }
+        // The model-less classes only created at run time (the overlay's class table has them all).
+        for &o in rc_game::moby::classes::CREATED_LOGIC {
+            if classes.iter().any(|c| c.o_class == o) { continue; }
+            classes.push(ClassInfo { o_class: o, update: rc_game::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
+        }
         let mut world = MobyWorld::new(classes);
         let (shared, shared_ptrs) = g2::shared_data(&lv.gameplay).map_err(|e| eprintln!("mobys: shared data: {e}")).unwrap_or_default();
         let data = rc_game::moby::SpawnData {

@@ -19,11 +19,23 @@
 //!
 //! Not ported: the other modes (the fades, the death `0x434ad0`, the U-turn `0x434c98`), the auto level `0x4356c8`,
 //! the boost (`0x22183c`, `0x375168`), Gorn's and Hrugis's special cases (levels 0xf, 0x14, 5 / 10), the spheres the
-//! ship must stay in (the mission object 0x0eee's `+0x68`[0]), the collision `0x437a70`, the guns `0x436440`, the
+//! ship must stay in (the mission object 0x0eee's `+0x68`[0]), the collision `0x437a70`, the guns but the
+//! lasers (the missiles ○ `0x3caae8`, the weapons 2 / 3 / 4, the boost □ and its fuel `0x29c300` slot 7), the
 //! upgrades' parts, the ship's light and draws (`0x436d20`, `0x437258`, `0x4383d8`).
+//!
+//! **The lasers** (`0x436440`, ✕): every 10 ticks (`$gp+0x25b0`; during a barrel roll only on even frames) a shot
+//! from each gun (`$gp+0x2640` / `+0x2650`: 1.23 ahead, ±0.045 across, 0.055 up in the ship's frame) toward the point
+//! 50 along the aim (`+0x25ac`). The shot (`0x413268`, class 0xffa) flies at 125 a second for 256 (`$gp+0x1df0`,
+//! `+0x1df8`), its hit radius growing from 0.6 to 8 (`+0x1e14`, `+0x1e18`), red (0x2020ff; an enemy's blue). Its
+//! update (`0x412e38`): the step; gone at the end of its time or out of the 2..1021 box; the step's line against the
+//! world (`0x2f1998`, not the material 6) ends it; a moby (`0x2f45d0`) whose centre comes within the radius of the
+//! step takes a hit (1, flags 0x110000; `0x32f910`) and ends it. Its draw (`0x4137d0`, meshes of FX 0xb and 8 with a
+//! spinning star) is drawn here as an additive streak. Not ported: the shots' sounds (`0x36cb90`), the burst of the
+//! end (`0x4134b0`), an enemy's shots hitting the ship.
 
 use crate::hero::physics::{add, cross, dot, scale, set_len, sub, unit, V3};
-use crate::moby::{mode, MobyHost, MobyWorld};
+use crate::moby::hits::HitTemplate;
+use crate::moby::{countdown, mode, Ctx, MobyHost, MobyWorld};
 use crate::pad::{button, PadState};
 
 /// The camera class.
@@ -68,6 +80,10 @@ pub struct Flight {
     pub ship: Option<usize>,
     /// Its parts (the moby, the second side).
     parts: Vec<(usize, bool)>,
+    /// The ship's `+8`: the lasers' wait; the aim point (`+0x20`); the frames flown (`0x1b1b48`'s parity).
+    gun_wait: i16,
+    aim: V3,
+    frame: u32,
     /// `$gp+0x2630`.
     pub mode: i32,
     /// `$gp+0x2684` / `+0x2688`: the d-pad's yaw and pitch ramps (0.1 a tick to 1).
@@ -145,6 +161,9 @@ impl Flight {
             rows: crate::moby::attach::rows_of(rot),
             ship,
             parts: Vec::new(),
+            gun_wait: 0,
+            aim: pos,
+            frame: 0,
             mode: 0,
             ramp_yaw: 0.0,
             ramp_pitch: 0.0,
@@ -169,11 +188,27 @@ impl Flight {
     pub fn tick(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
         if self.ship.is_some() && self.parts.is_empty() { self.make_parts(w, host); }
         if self.mode != 0 { return; }
+        self.frame = self.frame.wrapping_add(1);
         let (pitch, yaw) = self.steer(pad);
         self.turn(pitch, yaw);
         self.advance(w);
         self.place_ship(w);
         self.follow(w, host);
+        self.fire(pad, w, host);
+    }
+
+    /// `0x436440`'s lasers.
+    fn fire(&mut self, pad: &PadState, w: &mut MobyWorld, host: &dyn MobyHost) {
+        if self.roll_dir != 0 && self.frame & 1 != 0 { return; }
+        let Some(ship) = self.ship else { return };
+        if dec_timer(&mut self.gun_wait) == 0 || pad.held & button::CROSS == 0 { return; }
+        self.gun_wait = laser::WAIT;
+        let target = add(self.pos, set_len(sub(self.aim, self.pos), laser::AIM));
+        let (pos, rows) = (w.mobys[ship].pos, w.mobys[ship].rows);
+        for gun in laser::GUNS {
+            let at = add(pos, through(&rows, gun));
+            spawn_laser(w, host, at, sub(target, at), rows, ship);
+        }
     }
 
     /// `0x415ca8` / `0x4247c8` for the parts of a ship without upgrades.
@@ -336,6 +371,7 @@ impl Flight {
         let across = self.yaw / (k::YAW.3 * DEG) * k::AIM.1;
         let up = -self.pitch / (k::PITCH.3 * DEG) * k::AIM.2;
         let aim = add(add(add(self.pos, scale(r[0], k::AIM.0)), scale(r[1], across)), scale(r[2], up));
+        self.aim = aim;
         let far = add(self.pos, set_len(sub(aim, self.pos), k::AIM_FAR));
         let f = unit(sub(far, p));
         let l = unit(cross(r[2], f));
@@ -356,5 +392,92 @@ impl Flight {
         m.rows = rows;
         m.pos = p;
         w.changed = true;
+    }
+}
+
+/// The laser shot's tuning (`$gp+0x1df0..`, `+0x2640..`, `+0x25ac`, `+0x25b0`).
+mod laser {
+    pub const SPEED: f32 = 125.0;
+    pub const RANGE: f32 = 256.0;
+    pub const RADIUS: (f32, f32) = (0.6, 8.0);
+    pub const WAIT: i16 = 10;
+    pub const AIM: f32 = 50.0;
+    pub const GUNS: [[f32; 3]; 2] = [[1.23, 0.045, 0.055], [1.23, -0.045, 0.055]];
+    /// The ship's shot's colour (`+0x20`).
+    pub const RGB: u32 = 0x2020ff;
+}
+
+/// The laser's class.
+pub const LASER_CLASS: i16 = 0x0ffa;
+
+/// `0x413268(side, owner, at, dir, …)` for the ship's lasers. pvars: `+0` the ticks left, `+4` the owner (index + 1),
+/// `+0x10` the step, `+0x20` the colour, `+0x3c` the radius, `+0x40` its growth a tick.
+fn spawn_laser(w: &mut MobyWorld, host: &dyn MobyHost, at: V3, dir: V3, rows: [V3; 3], owner: usize) {
+    if w.class(LASER_CLASS).is_none() { return; }
+    let speed = laser::SPEED / 60.0;
+    let ticks = (laser::RANGE / speed) as i32;
+    let id = w.create(LASER_CLASS);
+    let m = &mut w.mobys[id];
+    m.state = 0;
+    m.update_dist = 0xff;
+    m.draw_dist = 0xff;
+    m.drawn = 1;
+    m.mode |= mode::KEEP_ROWS;
+    m.rows = rows;
+    m.pos = at;
+    m.set_pv_i(0, ticks);
+    m.set_pv_i(4, owner as i32 + 1);
+    m.set_pv_v(0x10, set_len(dir, speed));
+    m.set_pv_i(0x20, laser::RGB as i32);
+    m.set_pv_f(0x3c, laser::RADIUS.0);
+    m.set_pv_f(0x40, (laser::RADIUS.1 - laser::RADIUS.0) / ticks.max(1) as f32);
+    w.rebuild(id, host);
+}
+
+/// `0x412e38`.
+pub fn update_laser(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let from = w.mobys[id].pos;
+    let step = w.mobys[id].pv_v(0x10);
+    let to = add(from, step);
+    w.mobys[id].pos = to;
+    let mut left = w.mobys[id].pv_i(0);
+    let over = countdown(&mut left);
+    w.mobys[id].set_pv_i(0, left);
+    if over || to.iter().any(|&c| !(2.0..=1021.0).contains(&c)) { return w.delete(id); }
+    let r = w.mobys[id].pv_f(0x3c) + w.mobys[id].pv_f(0x40);
+    w.mobys[id].set_pv_f(0x3c, r);
+    if ctx.coll.and_then(|c| crate::collision::coll_line_m(c, ctx.scene, from, to, crate::collision::QueryFlags(0), ctx.hero_moby)).is_some() {
+        return w.delete(id);
+    }
+    let owner = w.mobys[id].pv_i(4) - 1;
+    let seg = sub(to, from);
+    let seg_len2 = dot(seg, seg);
+    let hit = (0..w.mobys.len()).find(|&i| {
+        let m = &w.mobys[i];
+        if i == id || i as i32 == owner || m.state >= 0x80 || m.mode & mode::TARGET == 0 { return false; }
+        let t = if 0.0 < seg_len2 { (dot(sub(m.pos, from), seg) / seg_len2).clamp(0.0, 1.0) } else { 0.0 };
+        crate::hero::physics::dist(add(from, scale(seg, t)), m.pos) < r
+    });
+    if let Some(t) = hit {
+        let d = unit(seg);
+        let tmpl = HitTemplate::new(1.0, Some(id), 0x0011_0000, [d[0], d[1], d[2], 0.0]);
+        let p = w.mobys[t].pos;
+        w.deliver_hit(t, &tmpl, [p[0], p[1], p[2], 1.0]);
+        return w.delete(id);
+    }
+    w.register_draw(id);
+}
+
+/// The laser's streak (standing in for `0x4137d0`'s meshes): FX 0xe, additive, over its last step and a half, a thin
+/// bright core and a wide faint glow in its colour.
+pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::FxQuad>) {
+    let m = &w.mobys[id];
+    let step = m.pv_v(0x10);
+    let (a, b) = (sub(m.pos, scale(step, 1.5)), m.pos);
+    let rgb = m.pv_i(0x20) as u32 & 0xff_ffff;
+    let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
+    for (half, c) in [(0.03, 0x7fa0_a0ffu32), (0.12, 0x6000_0000 | rgb)] {
+        let side = set_len(cross(sub(b, a), sub(cam, a)), half);
+        out.push(crate::fx::FxQuad { fx: 0xe, additive: true, corners: [add(a, side), sub(a, side), add(b, side), sub(b, side)], st, rgba: [c; 4] });
     }
 }
