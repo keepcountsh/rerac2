@@ -1389,21 +1389,26 @@ pub fn update_0a1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     m.scale = class_scale;
     m.set_pv_f(0x74, frame);
 }
-/// 0x02e1 (`0x395620`): the scripted-camera talk (Ratchet held in 0x6f at a cuboid, the script camera `0x42bd08`; not
-/// ported: the script camera is not). **Stand-in** for Oozla's Tractor Beam sale (uid 104, the end of the tube: the
-/// shopkeeper's scene offers it for 1000 bolts; the scene is not ported): Ratchet within 5 of it gets the Tractor Beam
-/// (crate::hero::items::TRACTOR) once, its uid counted as the game does when a talk is over. Remove when the scene and
-/// the sale are ported.
-pub fn update_02e1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+/// **Stand-in** for Oozla's Tractor Beam sale: at the end of the slide tube the shopkeeper's scene (the talk 0x02e1
+/// uid 104, `0x395620`, poked by the scene's start; its script camera and the scene are not ported) offers the
+/// Tractor Beam for 1000 bolts. Here Ratchet within 6 of the tube's end (its checkpoint 0x0325, where the scene starts),
+/// 8 of the shopkeeper (0x0ab4, hidden until the scene shows it) or 5 of the talk's spot gets it (crate::hero::items::TRACTOR) once, the talk's uid counted as the game does when a talk
+/// is over. The talk never updates in the port (no model, update distance 0), so the boxes nearby call this
+/// (crate::moby::classes::tractor::update_box). Remove when the scene and the sale are ported.
+pub fn shop_stand_in(w: &MobyWorld, ctx: &mut Ctx) {
+    const TUBE_END: V3 = [294.9, 349.7, 109.0];
     use crate::hero::items::TRACTOR;
-    let m = &w.mobys[id];
-    if ctx.game.level != 1 || m.uid != 104 || ctx.game.uid_count(m.uid) != 0 { return; }
-    if dist2(m.pos, ctx.hero.pos) < 5.0 {
-        let uid = m.uid;
+    if ctx.game.level != 1 { return; }
+    let Some(talk) = w.mobys.iter().find(|m| m.o_class == 0x02e1 && m.uid == 104 && m.state < 0x80) else { return };
+    if ctx.game.uid_count(talk.uid) != 0 { return; }
+    // Where the scene starts in the PS2: Ratchet out of the tube, at its checkpoint (0x0325 at (294.9, 349.7)).
+    let exit = w.mobys.iter().find(|k| k.o_class == 0x0325 && k.state < 0x80 && dist2(k.pos, TUBE_END) < 1.0).map_or(TUBE_END, |k| k.pos);
+    let keeper = w.mobys.iter().find(|k| k.o_class == 0x0ab4 && k.state < 0x80).map(|k| k.pos);
+    if dist2(exit, ctx.hero.pos) < 6.0 || dist2(talk.pos, ctx.hero.pos) < 5.0 || keeper.is_some_and(|k| dist2(k, ctx.hero.pos) < 8.0) {
         if ctx.game.items.get(TRACTOR as usize).copied().unwrap_or(0) == 0 {
             ctx.game.get_item(TRACTOR);
             ctx.game.give_item(TRACTOR);
         }
-        ctx.game.count_uid(uid);
+        ctx.game.count_uid(talk.uid);
     }
 }
