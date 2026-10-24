@@ -722,7 +722,12 @@ fn tick(
             if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }
             // `0x2c63f0`: the ship's death starts the fight again; `0x307bf0(2, 1)`: the fight won, Maktar Nebula.
             if f.restart && p.game.next_level.is_none() { p.game.go_to_level(p.game.level, false); }
-            if f.done && p.game.next_level.is_none() { p.game.go_to_level(2, true); }
+            if f.done && p.game.next_level.is_none() {
+                // `0x1a7c09` = 1 (Wupash's byte of `0x1a7bf0`): the galactic map's way to Maktar (`0x33c0c0`) no longer
+                // goes through the fight.
+                if let Some(v) = p.game.visited.get_mut(25) { *v = 1; }
+                p.game.go_to_level(2, true);
+            }
             p.game.scenes.fade = f.fade;
             // The mobys' distances, the sounds and the draw callbacks go by this camera next tick.
             (p.camera.pos, p.camera.rows) = (f.pos, f.rows);
