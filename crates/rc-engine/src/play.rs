@@ -467,6 +467,11 @@ fn tick(
     }
     // `RC_CUBOIDS=64,85`: those cuboids' centres and angles on the first tick (a dev trace, for placing Ratchet in one).
     if p.ticks == 0 {
+        // `RC_EQUIP=24` (dev, hex): that item had and asked for in the hand (as the pause menu's pages ask).
+        if let Some(item) = std::env::var("RC_EQUIP").ok().and_then(|v| i32::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok()) {
+            p.game.get_item(item);
+            p.hero.items.request = item;
+        }
         if let Ok(list) = std::env::var("RC_CUBOIDS") {
             for i in list.split(',').filter_map(|x| x.trim().parse::<i32>().ok()) {
                 match mobys.level.cuboid_place(i) {
