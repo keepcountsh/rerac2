@@ -838,6 +838,10 @@ mod hud {
     pub const REACH: f32 = 48.0;
     pub const RANGE: f32 = 128.0;
     pub const DOT_FX: u16 = 0x3c;
+    /// The dots' colours (the ship's 0x80808080, a fighter's `+0x150` 0x80) on FX 0x3c, whose texels the HUD atlas
+    /// holds at half the GS's (its colours up to 2.0): doubled here.
+    pub const DOT_SELF: u32 = 0x80ff_ffff;
+    pub const DOT_ENEMY: u32 = 0x0000_00ff;
     pub const CROSS_FX: u16 = 0x3f;
     pub const CROSS: f32 = 0.2;
     pub const CROSS_RGBA: u32 = 0x8020_8020;
@@ -870,10 +874,6 @@ impl Flight {
     pub fn hud_quads(&self, w: &MobyWorld, tan: f32, tex: &dyn Fn(u16) -> Option<(crate::gui::Tex, [f32; 2])>) -> Vec<crate::gui::Quad> {
         use crate::gui::{Quad, SCREEN_H, SCREEN_W};
         let mut out = Vec::new();
-        let sprite = |out: &mut Vec<Quad>, fx: u16, x: f32, y: f32, h: f32, rgba: u32| {
-            let Some((t, [tw, th])) = tex(fx) else { return };
-            out.push(Quad { pos: [[x - h, y + h], [x + h, y + h], [x - h, y - h], [x + h, y - h]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex: t, rgba: rgba.to_le_bytes() });
-        };
         // Not over the death or the cut's view.
         if matches!(self.mode, 3..=6) { return out; }
         let r = self.rows;
@@ -914,10 +914,23 @@ impl Flight {
                 }
             }
         }
-        // The radar.
+        out
+    }
+
+    /// The radar's dots (`0x3757f0`, the last of the HUD: over its frame) — see [`Flight::hud_quads`]'s doc.
+    pub fn radar_quads(&self, w: &MobyWorld, tex: &dyn Fn(u16) -> Option<(crate::gui::Tex, [f32; 2])>) -> Vec<crate::gui::Quad> {
+        use crate::gui::Quad;
+        let mut out = Vec::new();
+        if matches!(self.mode, 3..=6) { return out; }
+        let sprite = |out: &mut Vec<Quad>, fx: u16, x: f32, y: f32, h: f32, rgba: u32| {
+            let Some((t, [tw, th])) = tex(fx) else { return };
+            out.push(Quad { pos: [[x - h, y + h], [x + h, y + h], [x - h, y - h], [x + h, y - h]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], tex: t, rgba: rgba.to_le_bytes() });
+        };
+        let r = self.rows;
         let [rx, ry] = hud::RADAR;
-        sprite(&mut out, hud::DOT_FX, rx, ry, hud::DOT * 0.5, 0x8080_8080);
-        for m in w.mobys.iter().filter(|m| m.o_class == crate::moby::classes::space::FIGHTER && m.state < 0x80 && m.draw_dist != 0) {
+        sprite(&mut out, hud::DOT_FX, rx, ry, hud::DOT * 0.5, hud::DOT_SELF);
+        let ai = |c: i16| c == crate::moby::classes::space::FIGHTER || c == crate::moby::classes::space::GUNSHIP;
+        for m in w.mobys.iter().filter(|m| ai(m.o_class) && m.state < 0x80 && m.draw_dist != 0) {
             let rel = sub(m.pos, self.pos);
             let dist = crate::hero::physics::len(rel);
             if hud::RANGE < dist || dist == 0.0 { continue; }
@@ -925,7 +938,7 @@ impl Flight {
             let (ahead, left, up) = (dot(r[0], v), dot(r[1], v), dot(r[2], v));
             let size = (up * 0.125 + hud::DOT * 0.5).clamp(0.0, hud::DOT * 2.0);
             let alpha = ((1.0 - dist / hud::RANGE).max(0.0).sqrt() * 128.0) as u32;
-            sprite(&mut out, hud::DOT_FX, rx - left, ry - ahead, size * 0.5, 0x80 | alpha << 24);
+            sprite(&mut out, hud::DOT_FX, rx - left, ry - ahead, size * 0.5, hud::DOT_ENEMY | alpha << 24);
         }
         out
     }
@@ -1400,7 +1413,7 @@ fn bar(out: &mut Vec<HudItem>, top: i32, bottom: i32, x0: f32, x1: f32, left: u3
 }
 
 impl Flight {
-    /// `0x40e7a8` (with `0x40f3e0(0, 1, 1, 1)` first) in its order:
+    /// `0x40e7a8` (with `0x40f3e0(0, 1, 1, 1)` first) in its order (the last the frame's highlight 0x82):
     /// * the panels: the bolts' (sprites 0xbf / 0xc0 at (84, 0x1b0cbc), growing in and out over its 300 ticks after a
     ///   bolt is taken, its icon 0xeaa2 frame 3 and its count) and the counts' (0xc1 / 0xc2, ×1.1 across, at (84, 365)
     ///   and (84, 392));
@@ -1455,6 +1468,8 @@ impl Flight {
             out.push(d(Draw::Icon { id: HUD_ICONS, frame, pos, size: [30.0, 30.0], colour }));
         }
         out.push(d(Draw::Text { text: format!("{}/{}", self.missiles, missile::AMMO), pos: [67.0, 5.0], scale: 1.0, colour: 0x8080_8080, align: Align::Left }));
+        // The frame's highlight over the bars (sprite 0x82, 0x80f0f0f0).
+        out.push(d(Draw::Sprite { id: 0x82, pos: mid, scale: [1.0, 1.0], frame: 0.0, colour: 0x80f0_f0f0 }));
         // The radar's frame.
         for (id, colour) in [(0xba, 0x6044_2d00), (0xbb, 0x6024_1700), (0xbc, 0x55f0_c070)] {
             out.push(d(Draw::Sprite { id, pos: [444.0, 344.0], scale: [0.8, 0.8], frame: 0.0, colour }));

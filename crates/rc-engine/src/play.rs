@@ -1372,6 +1372,8 @@ fn draw_hud(
                     rc_game::ship::HudItem::Draw(d) => quads.extend(rc_game::hud::quads(std::slice::from_ref(&d), &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon)),
                 }
             }
+            let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+            quads.extend(f.radar_quads(&m.world, &tex));
         }
         // In the space fights the ship's HUD stands for Ratchet's (rc_game::ship::Flight::status).
         let mut draws = if p.ship.is_some() { Vec::new() } else { p.hud.draw(p.game.bolts) };
