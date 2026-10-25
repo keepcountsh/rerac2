@@ -26,7 +26,8 @@ Commands:
       placed / created instances, its class-port unit (update + private callees, grouped across levels by code
       identity) and the shared functions it calls. Writes classes.tsv, units.tsv, shared.tsv and, with the tag
       table (default tools/ghidra/names/census_systems.tsv), unit_systems.tsv + systems.tsv to work/census/
-      (--out).
+      (--out). Also the ported units' gaps (ported.tsv, ported_systems.tsv), the mode roots' unported engine code
+      (tools/census/roots.tsv in; roots.tsv, engine_uncited.tsv) and the Aranos-only lint (aranos_only.tsv).
   info --state <p2s>                  list savestate entries and version
   dump-ee <source> [--out FILE] [--entry NAME]   write EE RAM (or any savestate entry) to FILE
                                       (default work/trace/<savestate name>_ee.bin)
@@ -98,8 +99,8 @@ fn run() -> Result<i32> {
             a.done()?;
             let s = rc_trace::class_census::run(&extracted, &rc_trace::repo_root(), &rc_trace::work_dir(), &out, Some(&tags))?;
             println!(
-                "class census: {} unported class-levels ({} placed, {} created instances), {} class-port units, {} shared functions -> {}",
-                s.classes, s.placed, s.created, s.units, s.shared, s.out.display()
+                "class census: {} unported class-levels ({} placed, {} created instances), {} class-port units, {} shared functions; {} ported units, {} mode roots -> {}",
+                s.classes, s.placed, s.created, s.units, s.shared, s.ported_units, s.roots, s.out.display()
             );
             Ok(0)
         }

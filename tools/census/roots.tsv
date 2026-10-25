@@ -1,0 +1,47 @@
+# The census's mode roots (tools/trace/src/class_census.rs, docs/plan/class_census.md): the game's engine code that no
+# class reaches, at Aranos's (L00) addresses. The main loop `entry` (0x2a3b88) runs each mode's frame and draw by
+# 0x1a8f00; the mode change 0x32c858 runs the old mode's leave and the new one's enter; the level change 0x367400 runs
+# after the main loop ends.
+address	name	kind
+3706f0	play frame (mode 0)	frame
+2e6d60	play draw (mode 0)	draw
+371e50	mode 1 frame	frame
+371bd8	mode 1 enter	enter
+371d90	mode 1 leave	leave
+3716f8	scene frame (mode 2)	frame
+2e6d88	scene draw (mode 2)	draw
+2e82c0	scene letterbox (mode 2)	draw
+370e08	scene enter (mode 2)	enter
+3711e8	scene leave (mode 2)	leave
+3450d0	menus frame (mode 3)	frame
+2e6e60	menus draw (mode 3)	draw
+344498	menus enter (mode 3)	enter
+344f90	menus leave (mode 3)	leave
+2f2af0	mode 4 frame	frame
+2e6db0	mode 4 draw	draw
+2f1c20	mode 4 enter	enter
+2f1bc0	mode 4 leave	leave
+375f40	vendor frame (mode 5)	frame
+37ba50	vendor draw (mode 5)	draw
+374038	vendor enter (mode 5)	enter
+374628	vendor leave (mode 5)	leave
+364260	ship mode frame (mode 6)	frame
+3658e0	ship mode draw (mode 6)	draw
+361f98	take-off (mode 6 enter)	enter
+362010	pages closed (mode 6 enter)	enter
+362138	arrival (mode 6 enter)	enter
+3621c8	ship mode leave (mode 6)	leave
+370d58	mode 7 frame	frame
+2e6e18	mode 7 draw	draw
+3599b8	mode 7 enter	enter
+359a58	mode 7 leave	leave
+380c50	mode 8 frame	frame
+380bf8	mode 8 draw	draw
+37fb50	mode 8 enter	enter
+37fd00	mode 8 leave	leave
+2fd1f8	mode 9 frame	frame
+2fd218	mode 9 draw	draw
+2fd1b8	mode 9 enter	enter
+2fd1d8	mode 9 leave	leave
+367400	level change	level
+2f50f8	level end	level

@@ -64,3 +64,7 @@ L00:002da530	vec_to_angles	math	trivial	L	maths only
 L00:0031e048	ballistic	math	trivial	L	maths only: a throw's speed for a time and gravity
 L00:00326248	moby_matrix_point	math	trivial	L	maths only
 L00:0031f230	spring	math	trivial	L	maths only
+B:1	sound bank 1	level chunks	has	L	chunk 0's sound bank (level header +0x48), loaded at the level start (0x304420 stage 4 → 0x32e4a0(0)); the port appends it (level_wad::chunk_sounds)
+B:2	sound bank 2	level chunks	missing	L	chunk 1's sound bank: loaded only by the chunk switch 0x2f9bd8 → 0x323ca0(1) (L01), not ported: its sounds play nothing
+B:3	sound bank 3	level chunks	missing	L	chunk 2's sound bank: the chunk switch, as bank 2
+B:4	sound bank 4	gadget banks	has	L	the hand gadget's bank (0x306018), appended per gadget (level_wad::gadget_sounds)

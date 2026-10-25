@@ -29,7 +29,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 
 | ID | System | Consumers | Census | Sources | Seen |
 |---|---|---|---|---|---|
-| G-REN-001 | **Blob shadows** `0x31da58` | enemies 0x0b0a / 0x0b0b; 86 class-port units on every level | 86 / 2,260 (38 / 727) | rc-game/src/moby/classes/enemies.rs:20, 340; bringup.md §6 | yes |
+| G-REN-001 | **Moby shadow-volume pass** `0x31da58` (`+0x70` / `+0x74`; not the blob shadows, crate::shadows, which landed) | enemies 0x0b0a / 0x0b0b; 80 class-port units on every level (census 2026-10-25) | 80 / 2,512 | rc-game/src/moby/classes/enemies.rs:20, 340; bringup.md §6 | yes |
 | G-REN-002 | **Breakable effects**: shards `0x32b580`, burst `0x2ecfb0`, debris `0x3210a8` / `0x327498`, death bursts `0x3f8348`, thrown chunks `0x327648` (mobys 0x43e, callback `0x39c6b8`) | the props that break (rc-game props.rs:155, 175), the enemies' deaths, 67 units | 67 / 2,312 (45 / 1,465) | props.rs:155, 175; enemies.rs:340, 842; census | yes |
 | G-REN-003 | **The first draw-callback list** `0x2e7718` (0x40 entries `0x1be040` / `0x1be140`, run by `0x2e7768` before the particles `0x3311e0`). The port has the second list (`0x2e7920`, crate::fx); each user's callback is its own code. On Aranos only the arrival ship's draw (`0x362b40`, done by the engine) and class 0xd0's ribbon (`0x39ac30`, not placed) use it (2026-10-22: Aranos's 0x0ce9 / 0x0340 were a census keying collision; they use the second list) | 152 units on the other levels (the registrar `H:582266980bbdcff0`, L01 `0x2dce00`) | partly: 72 / 485 | census; rc-game/src/fx.rs | yes |
 | G-REN-004 | **Effect quads**: the beam strip `0x2edd50`, trails `0x323c90` (the wrench's `+0x70`, the bites' `0x3dbde8` / `0x3dbe88` / `0x3dc100`), 0x0b0a's emerge flash `0x3d8920` → `0x2ee190` (FX 0x3b), 0x0b0b's wire `0x3db790`, the group branch of `0x3dc220` | wrench, 0x0b0a, 0x0b0b, 4 units | 4 / 400 (2 / 21) | fx.rs:13; wrench.rs:15; enemies.rs:340, 842 | yes |
@@ -43,6 +43,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-REN-012 | **After-images**: translucent copies of a moby where it was a few ticks ago | the users (to map) | — | R&C2's code not mapped yet; R&C1's port: `afterimage.rs`, `afterimage_render.rs` (porting_from_rac1.md) | yes |
 | G-REN-013 | **The explosion moby 0x986** (L25 `0x3cbfe8(at, 0, kind)`: at most 5 alive, the oldest recycled) | Wupash: the missiles' hits and the ship's death (the ground blast `0x4184c8` stands in) | — | rc-game/src/ship.rs (`update_mission`, the missile's hit) | yes |
 | G-REN-014 | **The Tractor Beam's rope** `0x38dd68` (20 points, springy and waving) | the Tractor Beam (a straight line with a slight wave stands in) | — | rc-game/src/moby/classes/tractor.rs:22 | yes |
+| G-REN-015 | **Overlay tables read at Aranos's addresses only**: the nanotech cluster's glow tables (`GlowTables`, gated on level 0) | the nanotech cluster 0x326 on every level with nanotech crates | — (lint) | rc-engine/src/play.rs:330; census `aranos_only.tsv` | yes |
 
 ## Particles (PRT)
 
@@ -83,6 +84,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-LVL-004 | **Sliding floors and ice** (the drag `0x18a890`, `0x2b96a0`) | Ratchet's walk, jump, melee | — | physics.rs:467; walk.rs:17; jump.rs:28; melee.rs:12 | yes |
 | G-LVL-005 | **Platform carry** (`0x189f20`; a carried moby's velocity `0x3222a8`) | Ratchet, the nanotech crate, bolts on platforms, 2 units | 2 / 50 | physics.rs:26, 685; crate_.rs:160; bolt.rs:7 | yes |
 | G-LVL-006 | **Space travel** and the level end's autosave `0x30d658` | Aranos's last trigger (to Oozla) | — | props.rs:1239; game.rs:146; bringup.md §6 | yes |
+| G-LVL-007 | **Level chunks**: the chunk switch `0x2f9bd8` (L01): chunk k's data (header `+0x30 + 8k`, its terrain and tables) and sound bank (`+0x48 + 8k`, bank k + 1, `0x323ca0`). The port loads chunk 0's bank only (level_wad::chunk_sounds), so banks 2 / 3's sounds play nothing | levels 01, 02, 04, 07, 08, 11, 19, 20 (chunked); 33 units on banks 2 / 3 | 33 / 430 (`B:2` / `B:3`) | rc-engine/src/level_wad.rs (chunk_sounds); census 2026-10-25 | yes |
 
 ## Ratchet and Clank (HERO)
 
@@ -160,3 +162,4 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-TRI-001 | `0x2e6330` → `0x30ef70` → `0x42f608` on `0x1a9054 + 0x36f28` (9 units / 387): a level-code module behind a pointer; also called by the message slot `0x327a28` | census |
 | G-TRI-002 | The 417 untagged census keys; the heaviest are listed in `class_census.md` ("Untagged shared functions") | census |
 | G-TRI-003 | The level-08 family (H:b475d9038b64efbf, H:7ea40223d9c5f399, H:45a2f8ef05e2e2a9, H:20d7834dfd80b5e8, H:17e83ec9eed89fc4: 3 units / 575) | census |
+| G-TRI-004 | The planet page's missions tables (`0x281560`) are read from Aranos's overlay on every level: confirm the table is the same in every overlay, or relocate it | travel's planet page | — (lint) | rc-engine/src/play.rs:1276; census `aranos_only.tsv` | yes |

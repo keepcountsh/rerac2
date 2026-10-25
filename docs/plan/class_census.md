@@ -41,6 +41,68 @@ function with the same masked code is that function, and a hash shared by severa
 123 / 1,192. The missing-system ranking below is unchanged; the partly line now reads the first draw list 72 units /
 485 (G-REN-003).
 
+**Re-run 2026-10-25 (after the Oozla, Maktar and vendor ports; four extensions).** **923 unported class-levels,
+10,393 placed / 10,351 created** instances in **597 units**; 872 shared functions. Verdicts: cheap 190 units / 2,081,
+missing 235 / 6,853, partly 80 / 524, unknown 92 / 893. The rise in "missing" instances against the fewer units is the
+new reach: the tags now cover the functions only ported units call (`tags.py` reads them from `shared.tsv` too), and
+the sound-bank tags (`B:`) add the level chunks. The extensions, each for a blind spot this port hit:
+
+* **Ported units** (`ported.tsv`, `ported_systems.tsv`): 114 ported units read like the unported ones: **38 complete
+  (814 created), 46 calling a missing system (3,371), 19 partly (96), 11 unknown (202)**. The heaviest: the crates
+  (U9: 0x1f4 / 0x1f5 / 0x1f9 …, 2,498 instances on 26 levels) call the colour take-over (`0x31fa50` / `0x3241d8`,
+  G-REN-005), platform carry (`0x3222a8`, G-LVL-005) and the moby group helpers in part (G-CLS-002); the bolts (U0:
+  0x0d..0x13) the colour take-over and particle types. And each ported unit's **own code the port cites nowhere**
+  (the copy with the most cited, a function cited when any level's copy of the class's code is): 47 units leave
+  15,962 words uncited, the level-17 crates' copy first (`0x39fc38`, 246 words: their own linking), then 0x0f6e's
+  `0x412048` (386), 0x046f's `0x3a9d80` (338), 0x0b1a's four (434). A class port that left a branch out shows here.
+* **Mode roots** (`tools/census/roots.tsv` in; `roots.tsv`, `engine_uncited.tsv` out): the 42 entry points of the
+  game modes (`entry` 0x2a3b88's frame and draw per mode, `0x32c858`'s enter and leave, the level change `0x367400`)
+  and what they reach on Aranos, the classes' own code left out; a function is the port's when cited or tagged had /
+  trivial. "Beyond play" is what a root reaches that the play frame and draw do not (the mode's own code): the ship
+  mode's frame 165 functions, 114 uncited (7,010 words; `0x30b1a8`, 1,960 words, shared with mode 1 and the level
+  change), the level change 199 / 129 (8,476), the menus 108 / 82 (5,532), mode 1's frame 107 / 98 (5,880), mode 4's
+  48 / 39, the vendor's frame 63 / 18 (390) and draw 54 / 20 (1,452). The draws' totals are mostly the renderer, which
+  the port draws natively (decisions: native first), so read "uncited" there as "not cited", not "missing".
+* **Sound banks** (`classes.tsv` `bank`; `B:<handle>` dependencies, tags in `tags_manual.tsv`): a class's sounds play
+  from the bank its remap list's first word + 1 names (`0x304660`): 0 the level's (832 class-levels), 1 the level's
+  chunk 0 (57, loaded at the level start; the port appends it since 679973d), 2 and 3 a later chunk's (40, levels 01,
+  02, 04, 11, 19, 20: loaded only by the chunk switch `0x2f9bd8`, not ported: G-LVL-007), 4 the hand gadget's.
+  "level chunks" ranks 33 units / 430 created. Before 679973d the port played bank 1's sounds from the level bank:
+  Oozla's path riders' sound 2 was a UI bleep.
+* **Aranos-only lint** (`aranos_only.tsv`): the port's lines that read Aranos's overlay or gate on level 0 without a
+  `Relocation` / `level_code::` within 3 lines. Four: the nanotech glow's tables (`play.rs` 330–331: Aranos only;
+  the cluster 0x326 is on every level with nanotech crates: G-REN-015), the planet page's missions tables read from
+  Aranos's overlay on every level (`play.rs` 1276: the same table in every overlay, to confirm: G-TRI-004), New Game's
+  "already on level 0" (`front_end.rs` 404: right). The canopy's tables were the fifth (relocated in 04c4ea4).
+
+Missing systems now (`systems.tsv`, every unit calling the system, not only the blocked; status as the ranking reads
+it):
+
+| system | status | units | created | example classes (created) | gap |
+|---|---|---|---|---|---|
+| moby shadow-volume pass `0x31da58` | missing | 80 | 2,512 | 2921 (261), 2502 (244), 3343 (153) | G-REN-001 |
+| breakable effects | partly | 64 | 2,361 | 2480/2487/2835 (368), 2729/3254/3534 (352) | G-REN-002 |
+| the first draw list (fxdraw) | partly | 126 | 2,294 | 2480/2487/2835 (368), 2921 (261) | G-REN-003 |
+| particle types | partly | 47 | 1,713 | 4095 (296), 3389 (244), 2502 (244) | G-PRT-001 |
+| animation helpers | partly | 33 | 1,667 | 4304 (700), 2638 (141) | — |
+| level (variant regions, streaming) | partly | 22 | 1,249 | 4304 (700), 3343 (153) | G-LVL-001 / 002 |
+| hero queries | partly | 22 | 1,118 | 3389 (244), 2502 (244) | — |
+| moby groups | partly | 20 | 760 | 4095 (296), 2502 (244) | G-CLS-002 |
+| script camera | partly | 24 | 561 | 2921 (261), 3776/3809 (80) | G-CAM-001 |
+| collision queries | partly | 6 | 519 | 4095 (296), 4022 (91) | G-CLS-005 |
+| level sound table | partly | 28 | 505 | 2921 (261), 4083 (87) | G-AUD-001 |
+| level chunks (sound banks 2 / 3) | partly | 33 | 430 | 3776/3809 (80), 2861 (38) | G-LVL-007 |
+| moby helpers | partly | 13 | 423 | 4022 (91), 2952 (88) | — |
+| colour take-over | missing | 10 | 362 | 2502 (244), 3504 (84) | G-REN-005 |
+| message / prompt slot | partly | 27 | 194 | 3776/3809 (80) | G-UI-001 |
+| point lights | partly | 2 | 56 | 3808 (38), 3968 (18) | G-REN-006 |
+| platform carry | missing | 2 | 50 | 3370 (34), 3357 (16) | G-LVL-005 |
+| dialogue | missing | 11 | 25 | 4569/4570/4571 (10) | G-AUD-003 |
+| reward items | partly | 14 | 20 | 3279 (3), 3425 (3) | G-WPN-002 |
+| Clank's animation | missing | 1 | 2 | 3004 (2) | G-HERO-004 |
+
+The 2026-10-22 tables below are kept as they were read then; `work/census/` holds this run's.
+
 ## Method (to regenerate)
 
 ```
@@ -82,9 +144,13 @@ keys is level 0 (Aranos: the only level with a decompiler export, `work/decomp/l
    * `wrap`: at most 12 words with one tagged callee takes the callee's tag;
    * `calls`: at most 40 words whose callees are all tagged, with at most one system past the maths, takes that one.
    Statuses: has / partly / missing / trivial (R&C1's `family` is not used yet).
-6. **Outputs** in `work/census/`: `classes.tsv` (level, class, placed, created, update, unit, port), `units.tsv`,
-   `shared.tsv` (per key: units, instances, words, citations, callees, near), `globals.tsv` (engine globals the units'
-   own code forms), `unit_systems.tsv` (verdict, systems, blocking keys, untagged keys) and `systems.tsv` (the ranking).
+6. **Outputs** in `work/census/`: `classes.tsv` (level, class, placed, created, update, unit, port, sound bank),
+   `units.tsv`, `shared.tsv` (per key: units, instances, words, citations, callees, near; the ported units' uses last),
+   `globals.tsv` (engine globals the units' own code forms), `unit_systems.tsv` (verdict, systems, blocking keys,
+   untagged keys) and `systems.tsv` (the ranking); `ported.tsv` / `ported_systems.tsv` (the same for the ported units,
+   with their own code the port does not cite); `roots.tsv` / `engine_uncited.tsv` (the mode roots of
+   `tools/census/roots.tsv`); `aranos_only.tsv` (the lint). Citations skip the files with R&C1's addresses (tags.py's
+   `RAC1_ADDRESSED`).
 7. **Direct reads** (`G:` tags per global, `X:` overrides) work as in R&C1; no R&C2 `G:` / `X:` rows exist yet.
 
 ## Main table: missing systems, ranked by the instances they block

@@ -22,8 +22,26 @@
 //! level 01 has no copy, by the hash of its masked code (`H:hash`, with a representative level address). Units are
 //! grouped across levels by the hash of their update's masked code (one class-port unit, as `LevelPorts` groups).
 //!
-//! Outputs (tab-separated, `work/census/` by default): `classes.tsv`, `units.tsv`, `shared.tsv`, `globals.tsv`, and,
-//! when a system tag table is given (`tools/ghidra/names/census_systems.tsv`), `systems.tsv` and `unit_systems.tsv`.
+//! **Ported units** get the same reading (`ported.tsv`, `ported_systems.tsv`): the missing and partly systems their
+//! original code calls, and their own functions the port cites nowhere (the copy it cites most) — a ported class that
+//! leaves part of its code out shows there.
+//!
+//! **Mode roots** (`tools/census/roots.tsv`: the game modes' frames, draws, enters and leaves, the level change, at
+//! their reference-level addresses): each root's code reached through the graph, less the classes' own code, the
+//! functions the port neither cites nor tags as had or trivial (`roots.tsv`, `engine_uncited.tsv`) — the engine code
+//! no class reaches (the flight, the vendor's frame, the story chain).
+//!
+//! **Sound banks**: a class's sound defs play from the bank its remap list's first word + 1 names (`0x304660`; 0 the
+//! level's, 1..3 a level chunk's, 4 the hand gadget's): the `bank` column, and a unit on bank `h` depends on `B:<h>`
+//! (tagged like a global).
+//!
+//! **Aranos-only lint** (`aranos_only.tsv`): the port's lines that read Aranos's overlay or test for level 0 (a table
+//! read at Aranos's addresses works on Aranos only unless relocated: `Relocation` / `level_code::` in code within 3
+//! lines).
+//!
+//! Outputs (tab-separated, `work/census/` by default): `classes.tsv`, `units.tsv`, `shared.tsv`, `globals.tsv`,
+//! `ported.tsv`, `roots.tsv`, `engine_uncited.tsv`, `aranos_only.tsv`, and, when a system tag table is given
+//! (`tools/ghidra/names/census_systems.tsv`), `systems.tsv`, `unit_systems.tsv` and `ported_systems.tsv`.
 
 use anyhow::{Context, Result};
 use rc_formats::level_overlay::{address_refs_gp, mask, LevelOverlay, Relocation, TEXT_SECTION};
@@ -314,9 +332,24 @@ pub struct Layout {
     pub boot_program: &'static str,
     /// Where the port's citations count (`repo_refs`): path prefixes under the repo.
     pub cites: &'static [&'static str],
+    /// Files that came from R&C1's port with its addresses (tools/census/tags.py's `RAC1_ADDRESSED`): not citations.
+    pub skip: &'static [&'static str],
 }
 
-pub const LAYOUT: Layout = Layout { base: 0x1a_7c80, gp: 0x1a_eff0, ref_level: 0, ref_program: "level00.elf", boot_program: "SCUS_972.68", cites: &["crates/", "docs/"] };
+pub const LAYOUT: Layout = Layout {
+    base: 0x1a_7c80,
+    gp: 0x1a_eff0,
+    ref_level: 0,
+    ref_program: "level00.elf",
+    boot_program: "SCUS_972.68",
+    cites: &["crates/", "docs/"],
+    skip: &[
+        "crates/rc-game/src/audio", "crates/rc-game/src/collision", "crates/rc-game/src/hero/anim.rs", "crates/rc-game/src/hero/quat.rs",
+        "crates/rc-game/src/pad.rs", "crates/rc-game/src/particles/pool.rs", "crates/rc-game/src/particles/type23.rs",
+        "crates/rc-game/src/particles/type48.rs", "crates/rc-game/src/point_lights.rs", "crates/rc-game/src/ps2v.rs",
+        "crates/rc-game/src/scene_camera.rs", "crates/rc-game/src/spline.rs",
+    ],
+};
 
 /// Function names from the decompiler export (`work/decomp/<program>/index.tsv`).
 pub fn names(work: &Path, program: &str) -> HashMap<u32, String> {
@@ -326,7 +359,7 @@ pub fn names(work: &Path, program: &str) -> HashMap<u32, String> {
 
 /// Hex tokens cited in the repo: token value → (files under crates/, files under docs/). Lower-case `0x…` (5–8 digits)
 /// and `fun_XXXXXXXX`.
-fn repo_refs(root: &Path, cites: &[&str]) -> HashMap<u32, (BTreeSet<String>, BTreeSet<String>)> {
+fn repo_refs(root: &Path, cites: &[&str], skip: &[&str]) -> HashMap<u32, (BTreeSet<String>, BTreeSet<String>)> {
     let mut out: HashMap<u32, (BTreeSet<String>, BTreeSet<String>)> = HashMap::new();
     fn walk(d: &Path, ext: &str, files: &mut Vec<PathBuf>) {
         let Ok(rd) = std::fs::read_dir(d) else { return };
@@ -341,8 +374,8 @@ fn repo_refs(root: &Path, cites: &[&str]) -> HashMap<u32, (BTreeSet<String>, BTr
         for p in files {
             let Ok(s) = std::fs::read_to_string(&p) else { continue };
             let s = s.to_ascii_lowercase();
-            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().into_owned();
-            if !cites.iter().any(|c| rel.starts_with(c)) { continue; }
+            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            if !cites.iter().any(|c| rel.starts_with(c)) || skip.iter().any(|x| rel.starts_with(x)) { continue; }
             let b = s.as_bytes();
             let mut i = 0;
             while i + 2 < b.len() {
@@ -377,6 +410,8 @@ struct ClassRow {
     update: u32,
     port: String,
     unit: usize,
+    /// The bank its sound defs play from (`0x304660`), None without sounds.
+    bank: Option<u32>,
 }
 
 #[derive(Default)]
@@ -393,6 +428,14 @@ struct Unit {
     /// Shared key → edge kinds.
     leaves: BTreeMap<String, BTreeSet<Edge>>,
     ported: bool,
+    /// The banks its classes' sounds play from.
+    banks: BTreeSet<u32>,
+    /// A ported unit: the copy the port cites most, as (cited own functions, level, own functions it does not cite
+    /// with their words), a function cited when any level's copy of it (the same masked code in a ported unit of the
+    /// same class) is.
+    cites: Option<(usize, u32, Vec<(u32, usize)>)>,
+    /// A ported unit's copies' own functions: (level, address, masked-code hash, words, cited at that address).
+    own: Vec<(u32, u32, u64, usize, bool)>,
 }
 
 #[derive(Default)]
@@ -404,6 +447,69 @@ struct Shared {
     /// Direct callees (keys) of the representative copy.
     callees: BTreeSet<String>,
     words: usize,
+}
+
+/// A mode root (`tools/census/roots.tsv`).
+struct Root {
+    addr: u32,
+    name: String,
+    kind: String,
+}
+
+fn roots(path: &Path) -> Vec<Root> {
+    let Ok(s) = std::fs::read_to_string(path) else { return Vec::new() };
+    s.lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty() && !l.starts_with("address\t"))
+        .filter_map(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            Some(Root { addr: u32::from_str_radix(c.first()?.trim_start_matches("0x"), 16).ok()?, name: c.get(1)?.to_string(), kind: c.get(2).unwrap_or(&"").to_string() })
+        })
+        .collect()
+}
+
+/// The Aranos-only lint (module docs): (file, line, kind, relocated nearby, the line).
+fn aranos_lint(root: &Path) -> Vec<(String, usize, &'static str, bool, String)> {
+    fn walk(d: &Path, files: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(d) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() { walk(&p, files); } else if p.extension().is_some_and(|x| x == "rs") { files.push(p); }
+        }
+    }
+    let mut files = Vec::new();
+    walk(&root.join("crates"), &mut files);
+    files.sort();
+    let mut out = Vec::new();
+    for p in files {
+        let Ok(s) = std::fs::read_to_string(&p) else { continue };
+        let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+        let lines: Vec<&str> = s.lines().collect();
+        for (i, l) in lines.iter().enumerate() {
+            let t = l.trim();
+            if t.starts_with("//") { continue; }
+            let compact: String = t.chars().filter(|c| !c.is_whitespace()).collect();
+            // The relocation idiom itself (the reference overlay is the level's own on Aranos).
+            if compact.contains(".clone()}else{") { continue; }
+            let kind = if compact.contains("level_index()==0") || compact.contains("index==0{") || compact.contains("index==0)") {
+                "level-0 gate"
+            } else if compact.contains("overlay(") && (compact.contains(",0)") || compact.contains(",0)?")) && !compact.contains("fnoverlay") {
+                "Aranos overlay read"
+            } else if compact.contains("game.level==0") || compact.contains(".level==0&&") {
+                "level-0 test"
+            } else {
+                continue;
+            };
+            let near = lines[i.saturating_sub(3)..(i + 4).min(lines.len())].iter().any(|x| !x.trim().starts_with("//") && (x.contains("Relocation") || x.contains("level_code::")));
+            out.push((rel.clone(), i + 1, kind, near, t.chars().take(160).collect()));
+        }
+    }
+    out
+}
+
+/// A class's sound bank by its remap list (`0x304660`: the first word + 1 into each def's handle).
+fn sound_banks(core_index: &[u8], core: &rc_formats::level::LevelCore, core_data: &[u8]) -> HashMap<i32, u32> {
+    let Ok(s) = rc_formats::sound_bank::parse_level_sounds(core_index, core, core_data) else { return HashMap::new() };
+    s.classes.iter().filter_map(|c| Some((c.o_class, c.defs.first()?.bank_handle))).collect()
 }
 
 /// A tag row of `census_systems.tsv`.
@@ -437,6 +543,8 @@ pub struct Summary {
     pub created: usize,
     pub units: usize,
     pub shared: usize,
+    pub ported_units: usize,
+    pub roots: usize,
     pub out: PathBuf,
 }
 
@@ -446,6 +554,8 @@ pub struct LevelIn {
     pub ov: Arc<LevelOverlay>,
     pub placed: BTreeMap<i32, (usize, usize)>,
     pub ports: HashMap<i32, String>,
+    /// Class → the bank its sounds play from.
+    pub banks: HashMap<i32, u32>,
 }
 
 /// The census: every `G/LEVELn.WAD` of `extracted` (the data folder),
@@ -475,7 +585,17 @@ pub fn run(extracted: &Path, repo: &Path, work: &Path, out: &Path, tag_file: Opt
             if !skip { e.1 += 1; }
         }
         let ports: HashMap<i32, String> = ov.vtbl().iter().filter(|e| rc_game::moby::classes::update_for(e.o_class as i16).is_some()).map(|e| (e.o_class, "rc_game".to_string())).collect();
-        inputs.push((level, LevelIn { ov, placed, ports }));
+        let banks = (|| -> Result<HashMap<i32, u32>> {
+            let ci = wad.lump(Lump::CoreIndex)?.context("core index")?;
+            let cd = rc_formats::wad::decompress(wad.lump(Lump::CoreData)?.context("core data")?)?;
+            let core = rc_formats::level::parse_level_core(ci, cd.len())?;
+            Ok(sound_banks(ci, &core, &cd))
+        })()
+        .unwrap_or_else(|e| {
+            eprintln!("level {level:02}: no sound banks ({e:#})");
+            HashMap::new()
+        });
+        inputs.push((level, LevelIn { ov, placed, ports, banks }));
     }
     census(&LAYOUT, inputs, repo, work, out, tag_file)
 }
@@ -497,6 +617,10 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
     // Boot global key → (units whose own code forms it, one is ported).
     let mut globals: BTreeMap<String, (BTreeSet<usize>, bool)> = BTreeMap::new();
     let mut level_names: HashMap<u32, HashMap<u32, String>> = HashMap::new();
+    let refs = repo_refs(repo, g.cites, g.skip);
+    let cited = |a: u32| refs.get(&a).is_some_and(|(c, _)| !c.is_empty());
+    // The reference level's functions that are some class's own (the roots leave them to the classes).
+    let mut class_owned: BTreeSet<u32> = BTreeSet::new();
 
     for (level, input) in &inputs {
         let (level, ov, placed) = (*level, &input.ov, &input.placed);
@@ -514,6 +638,7 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
             let (p, _c): (usize, usize) = cls.iter().map(|c| placed.get(c).copied().unwrap_or_default()).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
             if p == 0 && !is_ported { continue; }
             let (private, leaves) = graph.unit(update);
+            if level == g.ref_level { class_owned.extend(private.iter().copied()); }
             let h = code_hash(ov, update).unwrap_or(0);
             let uid = *unit_by_hash.entry((h, is_ported)).or_insert_with(|| {
                 units.push(Unit { ported: is_ported, ..Default::default() });
@@ -526,13 +651,18 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
                 u.jalr = private.iter().map(|f| graph.jalr.get(f).copied().unwrap_or(0)).sum();
             }
             u.copies.insert((level, update));
+            if is_ported {
+                for &f in &private { u.own.push((level, f, code_hash(ov, f).unwrap_or(0), graph.extent.get(&f).copied().unwrap_or(0), cited(f))); }
+            }
             if u.l01.is_none() { u.l01 = if level == 1 { Some(update) } else { to_l01.func(update) }; }
             for &c in cls {
                 let (pl, cr) = placed.get(&c).copied().unwrap_or_default();
+                let bank = input.banks.get(&c).copied();
                 u.classes.insert((level, c));
                 u.placed += pl;
                 u.created += cr;
-                rows.push(ClassRow { level, o_class: c, placed: pl, created: cr, update, port: ported.first().cloned().unwrap_or_default(), unit: uid });
+                u.banks.extend(bank);
+                rows.push(ClassRow { level, o_class: c, placed: pl, created: cr, update, port: ported.first().cloned().unwrap_or_default(), unit: uid, bank });
             }
             for (&leaf, kinds) in &leaves {
                 let (key, _) = key_in(g, level, leaf, ov, &to_l01, &l01_graph, &by_hash);
@@ -552,6 +682,7 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
             // override (`X:<class>`: state the census cannot see, with its reason in the table) counts the same way.
             let mut data: BTreeSet<String> = private.iter().flat_map(|f| graph.data.get(f).into_iter().flatten().cloned()).collect();
             data.extend(cls.iter().map(|c| format!("X:{c}")).filter(|k| tagmap.contains_key(k)));
+            data.extend(cls.iter().filter_map(|c| input.banks.get(c)).map(|b| format!("B:{b}")).filter(|k| tagmap.contains_key(k)));
             for key in &data {
                 let a = key.get(2..10).and_then(|h| u32::from_str_radix(h, 16).ok()).unwrap_or(0);
                 if key.starts_with("G:") && a < g.base {
@@ -577,7 +708,21 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
         level_names.insert(level, lnames);
     }
 
-    let refs = repo_refs(repo, g.cites);
+    // The ported units' own functions: cited when any level's copy is (by class and masked code).
+    let mut cited_code: HashMap<i32, BTreeSet<u64>> = HashMap::new();
+    for u in units.iter().filter(|u| u.ported) {
+        for &(_, c) in &u.classes { cited_code.entry(c).or_default().extend(u.own.iter().filter(|x| x.4).map(|x| x.2)); }
+    }
+    for u in units.iter_mut().filter(|u| u.ported) {
+        let hashes: BTreeSet<u64> = u.classes.iter().flat_map(|(_, c)| cited_code.get(c).into_iter().flatten().copied()).collect();
+        let levels: BTreeSet<u32> = u.own.iter().map(|x| x.0).collect();
+        for lv in levels {
+            let own: Vec<&(u32, u32, u64, usize, bool)> = u.own.iter().filter(|x| x.0 == lv).collect();
+            let left: Vec<(u32, usize)> = own.iter().filter(|x| !x.4 && !hashes.contains(&x.2)).map(|x| (x.1, x.3)).collect();
+            let n = own.len() - left.len();
+            if u.cites.as_ref().is_none_or(|c| c.2.len() > left.len()) { u.cites = Some((n, lv, left)); }
+        }
+    }
     let name_of = |key: &str, s: Option<&Shared>| -> String {
         if key.starts_with("G:") || key.starts_with("X:") { return tagmap.get(key).map(|t| t.name.clone()).unwrap_or_default(); }
         if let Some(a) = key.strip_prefix(rp.as_str()).and_then(|h| u32::from_str_radix(h, 16).ok()) {
@@ -592,8 +737,8 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
 
     std::fs::create_dir_all(out)?;
     // classes.tsv
-    let mut t = String::from("level\to_class\tplaced\tcreated\tupdate\tunit\tport\n");
-    for r in &rows { t += &format!("{:02}\t{}\t{}\t{}\t{:08x}\tU{}\t{}\n", r.level, r.o_class, r.placed, r.created, r.update, r.unit, r.port); }
+    let mut t = String::from("level\to_class\tplaced\tcreated\tupdate\tunit\tport\tbank\n");
+    for r in &rows { t += &format!("{:02}\t{}\t{}\t{}\t{:08x}\tU{}\t{}\t{}\n", r.level, r.o_class, r.placed, r.created, r.update, r.unit, r.port, r.bank.map(|b| b.to_string()).unwrap_or_default()); }
     crate::write_output(&out.join("classes.tsv"), t)?;
     // units.tsv (unported only, by created instances)
     let mut order: Vec<usize> = (0..units.len()).filter(|&i| !units[i].ported).collect();
@@ -623,7 +768,6 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
     // shared.tsv (functions unported units call)
     let mut srow: Vec<(&String, &Shared, usize, usize)> = shared
         .iter()
-        .filter(|(_, s)| s.units.iter().any(|&u| !units[u].ported))
         .map(|(k, s)| {
             let un: Vec<usize> = s.units.iter().copied().filter(|&u| !units[u].ported).collect();
             (k, s, un.len(), un.iter().map(|&u| units[u].created).sum::<usize>())
@@ -647,7 +791,7 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
         }
         if best.0 >= 0.85 { format!("L{:02}:{:08x}@{:.2}", g.ref_level, best.1, best.0) } else { String::new() }
     };
-    let mut t = String::from("key\tname\tunported_units\tcreated\tported_unit_uses\tcrates_refs\tdocs_refs\twords\trep_site\tn_levels\tsystem\tstatus\tconf\tcrates_files\tdocs_files\tcallees\tnear\n");
+    let mut t = String::from("key\tname\tunported_units\tcreated\tported_unit_uses\tcrates_refs\tdocs_refs\twords\trep_site\tn_levels\tsystem\tstatus\tconf\tcrates_files\tdocs_files\tcallees\tnear\tported_units\tported_created\n");
     for (k, s, n, c) in &srow {
         let (cr, dr) = addr_of(k).and_then(|a| refs.get(&a)).map(|(c, d)| (c.len(), d.len())).unwrap_or((0, 0));
         let files = |doc: bool| -> String {
@@ -656,8 +800,9 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
         let nlev = s.sites.iter().map(|x| x.0).collect::<BTreeSet<_>>().len();
         let tag = tagmap.get(*k);
         let rep = s.sites.iter().next().map(|(l, a)| format!("L{l:02}:{a:06x}")).unwrap_or_default();
+        let pu: Vec<usize> = s.units.iter().copied().filter(|&u| units[u].ported).collect();
         t += &format!(
-            "{k}\t{}\t{n}\t{c}\t{}\t{cr}\t{dr}\t{}\t{rep}\t{nlev}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{k}\t{}\t{n}\t{c}\t{}\t{cr}\t{dr}\t{}\t{rep}\t{nlev}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             name_of(k, Some(s)),
             s.in_ported_unit as u8,
             s.words,
@@ -667,7 +812,9 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
             files(false),
             files(true),
             s.callees.iter().cloned().collect::<Vec<_>>().join(";"),
-            near(k, s)
+            near(k, s),
+            pu.len(),
+            pu.iter().map(|&u| units[u].created).sum::<usize>()
         );
     }
     crate::write_output(&out.join("shared.tsv"), t)?;
@@ -701,67 +848,164 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
     }
     crate::write_output(&out.join("globals.tsv"), t)?;
 
-    // With a tag table: per-unit systems and the system ranking.
+    // With a tag table: per-unit systems and the system ranking, for the unported units and (`ported_*`) the ported.
+    let is_gap = |k: &str| tagmap.get(k).is_some_and(|t| t.status == "missing" || t.status == "partly");
+    let mut ported_order: Vec<usize> = (0..units.len()).filter(|&i| units[i].ported).collect();
+    ported_order.sort_by_key(|&i| (std::cmp::Reverse(units[i].created), std::cmp::Reverse(units[i].placed), i));
     if !tagmap.is_empty() {
-        let mut t = String::from("unit\tcreated\tclasses\tlevels\tverdict\tmissing\tpartly\thas\tfamily\tjalr\tblocking_functions\tuntagged\n");
-        let mut sys: BTreeMap<String, SystemTally> = BTreeMap::new();
-        for &i in &order {
-            let u = &units[i];
-            let mut by: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
-            let mut untagged = Vec::new();
-            for k in u.leaves.keys() {
-                match tagmap.get(k) {
-                    Some(Tag { system, status, .. }) => {
-                        by.entry(status.as_str()).or_default().insert(system.clone());
-                        if status == "missing" || status == "partly" {
-                            let e = sys.entry(system.clone()).or_default();
-                            e.0.insert(i);
-                            e.1.extend(u.classes.iter().copied());
-                            *e.3.entry(k.clone()).or_default() += 1;
+        let tally = |ids: &[usize], file: &str, sysfile: &str, ported: bool| -> Result<()> {
+            let mut t = String::from(if ported {
+                "unit\tcreated\tclasses\tlevels\tverdict\tmissing\tpartly\thas\tbanks\tcited_own\tuncited_own\tuncited_words\tblocking_functions\tuntagged\tuncited_functions\n"
+            } else {
+                "unit\tcreated\tclasses\tlevels\tverdict\tmissing\tpartly\thas\tfamily\tjalr\tblocking_functions\tuntagged\n"
+            });
+            let mut sys: BTreeMap<String, SystemTally> = BTreeMap::new();
+            for &i in ids {
+                let u = &units[i];
+                let mut by: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+                let mut untagged = Vec::new();
+                for k in u.leaves.keys() {
+                    match tagmap.get(k) {
+                        Some(Tag { system, status, .. }) => {
+                            by.entry(status.as_str()).or_default().insert(system.clone());
+                            if status == "missing" || status == "partly" {
+                                let e = sys.entry(system.clone()).or_default();
+                                e.0.insert(i);
+                                e.1.extend(u.classes.iter().copied());
+                                *e.3.entry(k.clone()).or_default() += 1;
+                            }
                         }
+                        None => untagged.push(k.clone()),
                     }
-                    None => untagged.push(k.clone()),
+                }
+                let need = |s: &str| by.get(s).map(|v| v.iter().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default();
+                let levels: BTreeSet<u32> = u.copies.iter().map(|c| c.0).collect();
+                let classes: BTreeSet<i32> = u.classes.iter().map(|c| c.1).collect();
+                let verdict = if by.contains_key("missing") { "missing" } else if by.contains_key("partly") { "partly" } else if !untagged.is_empty() { "unknown" } else if ported { "complete" } else { "cheap" };
+                let blocking: Vec<&String> = u.leaves.keys().filter(|k| is_gap(k)).collect();
+                let head = format!(
+                    "U{i}\t{}\t{}\t{}\t{verdict}\t{}\t{}\t{}",
+                    u.created,
+                    classes.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(","),
+                    levels.iter().map(|l| format!("{l:02}")).collect::<Vec<_>>().join(","),
+                    need("missing"),
+                    need("partly"),
+                    need("has")
+                );
+                let blocking = blocking.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(";");
+                if ported {
+                    let (n, lv, left) = u.cites.clone().unwrap_or((0, 0, Vec::new()));
+                    let words: usize = left.iter().map(|x| x.1).sum();
+                    let names = level_names.get(&lv);
+                    let list = left.iter().map(|(f, w)| format!("L{lv:02}:{f:06x}{}/{w}", names.and_then(|m| m.get(f)).map(|n| format!(" {n}")).unwrap_or_default())).collect::<Vec<_>>().join(";");
+                    let banks = u.banks.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(",");
+                    t += &format!("{head}\t{banks}\t{n}\t{}\t{words}\t{blocking}\t{}\t{list}\n", left.len(), untagged.join(";"));
+                } else {
+                    t += &format!("{head}\t{}\t{}\t{blocking}\t{}\n", need("family"), u.jalr, untagged.join(";"));
                 }
             }
-            let need = |s: &str| by.get(s).map(|v| v.iter().cloned().collect::<Vec<_>>().join(",")).unwrap_or_default();
-            let levels: BTreeSet<u32> = u.copies.iter().map(|c| c.0).collect();
-            let classes: BTreeSet<i32> = u.classes.iter().map(|c| c.1).collect();
-            let verdict = if by.contains_key("missing") { "missing" } else if by.contains_key("partly") { "partly" } else if !untagged.is_empty() { "unknown" } else { "cheap" };
-            let blocking: Vec<&String> = u.leaves.keys().filter(|k| tagmap.get(*k).is_some_and(|t| t.status == "missing" || t.status == "partly")).collect();
-            t += &format!(
-                "U{i}\t{}\t{}\t{}\t{verdict}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                u.created,
-                classes.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(","),
-                levels.iter().map(|l| format!("{l:02}")).collect::<Vec<_>>().join(","),
-                need("missing"),
-                need("partly"),
-                need("has"),
-                need("family"),
-                u.jalr,
-                blocking.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(";"),
-                untagged.join(";")
-            );
-        }
-        crate::write_output(&out.join("unit_systems.tsv"), t)?;
-        for (k, e) in sys.iter_mut() {
-            e.2 = e.0.iter().map(|&u| units[u].created).sum();
-            // The system's status: partly when the port has any of its functions, else missing.
-            let has = tagmap.values().any(|t| &t.system == k && t.status != "missing");
-            e.4 = if has { "partly".into() } else { "missing".into() };
-        }
-        let mut ranked: Vec<_> = sys.iter().collect();
-        ranked.sort_by_key(|(k, e)| (std::cmp::Reverse(e.2), (*k).clone()));
-        let mut t = String::from("system\tstatus\tunits\tclass_levels\tcreated\texample_classes\tkey_functions\n");
-        for (k, e) in ranked {
-            let mut ex: Vec<(usize, usize)> = e.0.iter().map(|&u| (units[u].created, u)).collect();
-            ex.sort_by(|a, b| b.cmp(a));
-            let exs: Vec<String> = ex.iter().take(4).map(|&(c, u)| format!("{} ({c})", units[u].classes.iter().map(|x| x.1).collect::<BTreeSet<_>>().iter().take(3).map(|x| x.to_string()).collect::<Vec<_>>().join("/"))).collect();
-            let mut fns: Vec<(&String, &usize)> = e.3.iter().collect();
-            fns.sort_by(|a, b| b.1.cmp(a.1));
-            t += &format!("{k}\t{}\t{}\t{}\t{}\t{}\t{}\n", e.4, e.0.len(), e.1.len(), e.2, exs.join("; "), fns.iter().take(6).map(|(f, n)| { let nm = name_of(f, shared.get(*f)); format!("{f}{}×{n}", if nm.is_empty() { String::new() } else { format!(" {nm}") }) }).collect::<Vec<_>>().join(" "));
-        }
-        crate::write_output(&out.join("systems.tsv"), t)?;
+            crate::write_output(&out.join(file), t)?;
+            for (k, e) in sys.iter_mut() {
+                e.2 = e.0.iter().map(|&u| units[u].created).sum();
+                // The system's status: partly when the port has any of its functions, else missing.
+                let has = tagmap.values().any(|t| &t.system == k && t.status != "missing");
+                e.4 = if has { "partly".into() } else { "missing".into() };
+            }
+            let mut ranked: Vec<_> = sys.iter().collect();
+            ranked.sort_by_key(|(k, e)| (std::cmp::Reverse(e.2), (*k).clone()));
+            let mut t = String::from("system\tstatus\tunits\tclass_levels\tcreated\texample_classes\tkey_functions\n");
+            for (k, e) in ranked {
+                let mut ex: Vec<(usize, usize)> = e.0.iter().map(|&u| (units[u].created, u)).collect();
+                ex.sort_by(|a, b| b.cmp(a));
+                let exs: Vec<String> = ex.iter().take(4).map(|&(c, u)| format!("{} ({c})", units[u].classes.iter().map(|x| x.1).collect::<BTreeSet<_>>().iter().take(3).map(|x| x.to_string()).collect::<Vec<_>>().join("/"))).collect();
+                let mut fns: Vec<(&String, &usize)> = e.3.iter().collect();
+                fns.sort_by(|a, b| b.1.cmp(a.1));
+                t += &format!("{k}\t{}\t{}\t{}\t{}\t{}\t{}\n", e.4, e.0.len(), e.1.len(), e.2, exs.join("; "), fns.iter().take(6).map(|(f, n)| { let nm = name_of(f, shared.get(*f)); format!("{f}{}×{n}", if nm.is_empty() { String::new() } else { format!(" {nm}") }) }).collect::<Vec<_>>().join(" "));
+            }
+            crate::write_output(&out.join(sysfile), t)
+        };
+        tally(&order, "unit_systems.tsv", "systems.tsv", false)?;
+        tally(&ported_order, "ported.tsv", "ported_systems.tsv", true)?;
     }
+
+    // The mode roots (module docs): each root's reach on the reference level, the classes' own code left out; a
+    // function counts as the port's when it is cited or tagged had / trivial.
+    let root_list = roots(&repo.join("tools/census/roots.tsv"));
+    let covered = |f: u32| -> bool {
+        cited(f) || tagmap.get(&format!("{rp}{f:08x}")).is_some_and(|t| t.status == "has" || t.status == "trivial")
+    };
+    let mut reached_by: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    // Each root's reach (its code and the overlay code under it, the classes' own left out) and the boot calls.
+    let reach: Vec<(BTreeSet<u32>, BTreeSet<u32>)> = root_list
+        .iter()
+        .map(|r| {
+            let mut seen: BTreeSet<u32> = BTreeSet::new();
+            let mut boot: BTreeSet<u32> = BTreeSet::new();
+            let mut stack = vec![r.addr];
+            while let Some(f) = stack.pop() {
+                if f < g.base { boot.insert(f); continue; }
+                if (f != r.addr && class_owned.contains(&f)) || !seen.insert(f) { continue; }
+                for &(c, e) in l01_graph.callees.get(&f).into_iter().flatten() {
+                    if e != Edge::Data && !seen.contains(&c) { stack.push(c); }
+                }
+            }
+            (seen, boot)
+        })
+        .collect();
+    // What play reaches (its frame and draw): a mode's code beyond it is that mode's own.
+    let play: BTreeSet<u32> = root_list.iter().zip(&reach).filter(|(r, _)| r.name.starts_with("play ")).flat_map(|(_, x)| x.0.iter().copied()).collect();
+    let words_of = |fs: &[u32]| -> usize { fs.iter().map(|f| l01_graph.extent.get(f).copied().unwrap_or(0)).sum() };
+    let list = |fs: &[u32]| -> String { fs.iter().take(8).map(|f| format!("{:06x}{}/{}", f, l01_names.get(f).map(|n| format!(" {n}")).unwrap_or_default(), l01_graph.extent.get(f).copied().unwrap_or(0))).collect::<Vec<_>>().join(";") };
+    let mut t = String::from("root\tname\tkind\tcited\treach_fns\treach_words\tuncited_fns\tuncited_words\tbeyond_play_fns\tbeyond_play_uncited_fns\tbeyond_play_uncited_words\tmissing\tpartly\tbiggest_uncited_beyond_play\tbiggest_uncited\n");
+    for (ri, (r, (seen, boot))) in root_list.iter().zip(&reach).enumerate() {
+        let by_size = |mut v: Vec<u32>| { v.sort_by_key(|f| std::cmp::Reverse(l01_graph.extent.get(f).copied().unwrap_or(0))); v };
+        let left = by_size(seen.iter().copied().filter(|&f| !covered(f)).collect());
+        for &f in &left { reached_by.entry(f).or_default().push(ri); }
+        let own: Vec<u32> = seen.iter().copied().filter(|f| !play.contains(f)).collect();
+        let own_left = by_size(own.iter().copied().filter(|&f| !covered(f)).collect());
+        let keys: Vec<String> = seen.iter().map(|f| format!("{rp}{f:08x}")).chain(boot.iter().map(|f| format!("boot:{f:08x}"))).collect();
+        let sys_of = |st: &str| -> String {
+            keys.iter().filter_map(|k| tagmap.get(k)).filter(|t| t.status == st).map(|t| t.system.clone()).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>().join(",")
+        };
+        let all: Vec<u32> = seen.iter().copied().collect();
+        t += &format!(
+            "{rp}{:08x}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            r.addr,
+            r.name,
+            r.kind,
+            cited(r.addr) as u8,
+            all.len(),
+            words_of(&all),
+            left.len(),
+            words_of(&left),
+            own.len(),
+            own_left.len(),
+            words_of(&own_left),
+            sys_of("missing"),
+            sys_of("partly"),
+            list(&own_left),
+            list(&left)
+        );
+    }
+    crate::write_output(&out.join("roots.tsv"), t)?;
+    let mut eu: Vec<(&u32, &Vec<usize>)> = reached_by.iter().collect();
+    eu.sort_by_key(|(f, _)| std::cmp::Reverse(l01_graph.extent.get(f).copied().unwrap_or(0)));
+    let mut t = String::from("function\tname\twords\tcallers\troots\n");
+    for (f, rs) in eu {
+        t += &format!(
+            "{rp}{f:08x}\t{}\t{}\t{}\t{}\n",
+            l01_names.get(f).cloned().unwrap_or_default(),
+            l01_graph.extent.get(f).copied().unwrap_or(0),
+            l01_graph.callers.get(f).map_or(0, |c| c.len()),
+            rs.iter().map(|&i| root_list[i].name.as_str()).collect::<Vec<_>>().join(",")
+        );
+    }
+    crate::write_output(&out.join("engine_uncited.tsv"), t)?;
+
+    // The Aranos-only lint.
+    let mut t = String::from("file\tline\tkind\trelocated\ttext\n");
+    for (f, l, k, r, x) in aranos_lint(repo) { t += &format!("{f}\t{l}\t{k}\t{}\t{x}\n", r as u8); }
+    crate::write_output(&out.join("aranos_only.tsv"), t)?;
 
     let un: Vec<&ClassRow> = rows.iter().filter(|r| r.port.is_empty()).collect();
     Ok(Summary {
@@ -769,7 +1013,9 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
         placed: un.iter().map(|r| r.placed).sum(),
         created: un.iter().map(|r| r.created).sum(),
         units: order.len(),
-        shared: srow.len(),
+        shared: srow.iter().filter(|r| r.2 > 0).count(),
+        ported_units: ported_order.len(),
+        roots: root_list.len(),
         out: out.to_path_buf(),
     })
 }
