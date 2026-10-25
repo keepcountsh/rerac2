@@ -14,7 +14,8 @@
 //! | 0x5a | [`streak`] `0x33f940` | `0x33fa58` ([`update_streak`]) | streaks: a ribbon from the point back along its last move |
 //! | 0x61 | [`burst`] `0x340830` | `0x3409a8` ([`update_burst`]) | the blasts' sprites: size and alpha stepped over the life |
 //! | 0x3b | [`sparkle`] `0x33b468` | `0x33b588` ([`update_sparkle`]) | the nanotech healing ring's sparkles, riding Ratchet |
-//! | 0x3c | [`glint`] `0x33b5e0` | `0x33b710` ([`update_glint`]) | the nanotech heal's glints: drifting, fading out |
+//! | 0x3c | [`glint`] `0x33b5e0` | `0x33b710` ([`update_glint`]) | the nanotech heal's glints (and the flying bolts'): drifting, fading out |
+//! | 0x35 | [`twinkle`] `0x33a6a0` | `0x33a848` ([`update_twinkle`]) | the bolts' twinkles: swelling and fading |
 //! | 0x3e | [`orb`] `0x33bb60` | `0x33bc70` ([`update_orb`]) | the nanotech orbs (kind 1, moved by their cluster) and their trail puffs (kinds 0, 2) |
 //! | 4 | [`trail`] `0x332c10` | `0x332d28` ([`update_trail`]) | the debris' smoke trails: growing, colour eased over the life |
 //! | 0xb | [`billow`] `0x333a70` | `0x333d00` ([`update_billow`]) | the Gravity Bomb's smoke: billowing, splitting, rising and fading |
@@ -451,6 +452,67 @@ pub fn update_sparkle(sys: &mut Particles, i: usize, hero: [f32; 3]) {
     if dec_life(r) { sys.kill_part(i); }
 }
 
+/// Type 0x35: a twinkle.
+pub const TWINKLE: u8 = 0x35;
+
+/// `0x33a6a0(size, end, fall, pos, life, rgba, rot, spin, vel, w)`: a twinkle (type 0x35) 0.05 above `pos`, its
+/// frame `*def[0x35]`, additive, far 32, for `life` ticks: from `end`·210000 it swells to `size`·210000 and fades
+/// out ([`update_twinkle`]), turning `spin` a tick from `rot` (0: 0, 1: 0x20, else random), moving `vel` a tick
+/// that falls `fall` a tick; `+0x1c` = `w` (2: the gravity-boots bend, not ported).
+#[allow(clippy::too_many_arguments)]
+pub fn twinkle(sys: &mut Particles, rng: &mut Rng, size: f32, end: f32, fall: f32, pos: [f32; 3], life: i16, rgba: u32, rot: u8, spin: i8, vel: [f32; 3], w: i32) -> Option<usize> {
+    let i = sys.create_part(TWINKLE)?;
+    let frame = sys.def_first(TWINKLE);
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, [pos[0], pos[1], pos[2] + 0.05]);
+    rec::set_ff(r, 0x1c, w as f32);
+    rec::set_u32(r, 4, rgba);
+    r[3] = 0x48;
+    r[1] = 0;
+    r[9] = 0x20;
+    rec::set_i16(r, 0xa, life);
+    r[2] = frame;
+    rec::set_ff(r, 0xc, size * 210000.0);
+    r[8] = match rot { 0 => 0, 1 => 0x20, _ => rng.randi(0xff) as u8 };
+    rec::set_i16(r, 0x28, life);
+    rec::set_ff(r, 0x20, size * 210000.0);
+    r[0x2a] = spin as u8;
+    rec::set_ff(r, 0x24, end * 210000.0);
+    r[0x2b] = (rgba >> 24) as u8;
+    rec::set_ff(r, 0x38, fall);
+    rec::set_v3(r, 0x2c, vel);
+    Some(i)
+}
+
+/// `0x33a848`: it turns; over its first 6 ticks it grows from its end size halfway to its full size while its alpha
+/// halves, then it grows on to the full size as the alpha runs out with the life; it moves, its velocity falling;
+/// killed outside [2, 1021]³ or when its life is out.
+pub fn update_twinkle(sys: &mut Particles, i: usize) {
+    let r = &mut sys.pool.recs[i];
+    r[8] = r[8].wrapping_add(r[0x2a]);
+    let (life0, life) = (rec::i16(r, 0x28) as i32, rec::i16(r, 0xa) as i32);
+    let (full, end, a) = (rec::ff(r, 0x20), rec::ff(r, 0x24), r[0x2b] as i32);
+    let mid = (full + end) * 0.5;
+    let e = life0 - life;
+    let alpha = if e < 6 {
+        let f = e as f32 * 0.2;
+        rec::set_ff(r, 0xc, end + (mid - end) * f);
+        a as f32 + ((a >> 1) - a) as f32 * f
+    } else {
+        let f = life as f32 / (life0 - 6) as f32;
+        rec::set_ff(r, 0xc, full + (mid - full) * f);
+        (a >> 1) as f32 * f
+    };
+    let c = rec::u32(r, 4);
+    rec::set_u32(r, 4, (alpha as i32 as u32) << 24 | c & 0xff_ffff);
+    let v = rec::v3(r, 0x2c);
+    let p = add(rec::pos(r), v);
+    rec::set_v3(r, 0x10, p);
+    rec::set_ff(r, 0x34, v[2] - rec::ff(r, 0x38));
+    if rec::ff(r, 0x1c) != 0.0 { rec::set_ff(r, 0x1c, 2.0); }
+    if p.iter().any(|&x| !(2.0..=1021.0).contains(&x)) || dec_life(r) { sys.kill_part(i); }
+}
+
 /// `0x33b5e0(size, pos, vel, rgba, life, rot, attach)`: a glint (type 0x3c) at `pos` moving `vel` a tick, size
 /// `size`·210000, its frame `*def[0x35]`, additive, near 1 / far 32, for `life & 0xff` ticks; `attach`: it moves from
 /// Ratchet's place (`hero`) as he moves.
@@ -760,6 +822,7 @@ pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f
             0x61 => update_burst(sys, i),
             0x3b => update_sparkle(sys, i, hero),
             0x3c => update_glint(sys, i, hero),
+            TWINKLE => update_twinkle(sys, i),
             ORB => update_orb(sys, i, mobys),
             TRAIL => update_trail(sys, i),
             BILLOW => update_billow(sys, i, cam, rng),

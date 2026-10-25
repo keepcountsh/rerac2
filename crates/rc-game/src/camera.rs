@@ -88,8 +88,8 @@ impl Shakes {
                 let gone = (s.max - s.timer) as f32;
                 let ease = (gone * 0.016_666_668 * 6.0).min(1.0);
                 s.value = s.amp * wrap(gone * 0.016_666_668 * k - k * 10.0).sin() * t * t * t * ease;
-                let q = crate::moby::shards::axis_quat(s.value, rows[0]);
-                *rows = rows.map(|r| crate::moby::shards::rotate(q, r));
+                let q = crate::quat::axis_quat(s.value, rows[0]);
+                *rows = rows.map(|r| crate::quat::rotate(q, r));
             }
         }
     }

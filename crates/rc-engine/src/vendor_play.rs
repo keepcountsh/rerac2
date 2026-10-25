@@ -188,10 +188,11 @@ impl VendorPlay {
         // Its animation steps with the draw (`0x312ed8`'s list).
         p.host.advance(&p.world.mobys[id]);
         p.world.rebuild(id, &*p.host);
-        // `0x2eeee0(1/1024, c, moby)`: centred on its bounding sphere.
+        // `0x2eeee0(1/1024, c, moby)`: centred on its bounding sphere across (x and y only: its height stays the
+        // table's).
         let x = &mut p.world.mobys[id];
-        let c = [x.bsphere[0] / 1024.0, x.bsphere[1] / 1024.0, x.bsphere[2] / 1024.0];
-        x.pos = [x.pos[0] + (x.pos[0] - c[0]), x.pos[1] + (x.pos[1] - c[1]), x.pos[2] + (x.pos[2] - c[2])];
+        let c = [x.bsphere[0] / 1024.0, x.bsphere[1] / 1024.0];
+        x.pos = [x.pos[0] + (x.pos[0] - c[0]), x.pos[1] + (x.pos[1] - c[1]), x.pos[2]];
         p.world.rebuild(id, &*p.host);
     }
 

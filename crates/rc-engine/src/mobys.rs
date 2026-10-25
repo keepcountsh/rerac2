@@ -63,6 +63,9 @@ pub struct Mobys {
     /// Every class's joint lists (class header `+0x1c`, [`rc_formats::moby::joint_list`]'s chains): what the
     /// joint queries take as their joint (`0x3175f8(m, 1, [list], out)`: the last joint of list `list`).
     pub chains: Chains,
+    /// Every class's joint lists' target joints (the second byte list's first, `0x308238`): the joint a manipulator
+    /// on list `l` turns (rc_game::moby::Moby::manips).
+    pub targets: HashMap<i16, Vec<u8>>,
     /// The level's grind paths (the gameplay's section 31).
     pub rails: Vec<rc_game::paths::GrindPath>,
     /// The level's volumes and paths.
@@ -566,7 +569,7 @@ impl Mobys {
             let seqs = moby_anim::parse_sequences(b, &c).ok()?;
             Some(Arc::new(rc_game::hero::anim::HoldClass { anim: MobyAnimClass::new(&c, seqs), map }))
         });
-        let chains: Chains = m
+        let lists: HashMap<i16, Vec<(Vec<u8>, Vec<u8>)>> = m
             .classes
             .iter()
             .filter_map(|c| {
@@ -574,13 +577,15 @@ impl Mobys {
                 let h = &c.class.header;
                 if h.joints <= 0 { return None; }
                 let n = i32::from_le_bytes(b.get(h.joints as usize..h.joints as usize + 4)?.try_into().ok()?).clamp(0, 0x100) as usize;
-                Some((c.o_class as i16, (0..n).map(|l| rc_formats::moby::joint_list(b, h, l).map(|x| x.0).unwrap_or_default()).collect()))
+                Some((c.o_class as i16, (0..n).map(|l| rc_formats::moby::joint_list(b, h, l).unwrap_or_default()).collect()))
             })
             .collect();
+        let targets = lists.iter().map(|(&c, l)| (c, l.iter().map(|(_, b)| rc_formats::moby_anim::list_target(b).unwrap_or(0xff)).collect())).collect();
+        let chains: Chains = lists.into_iter().map(|(c, l)| (c, l.into_iter().map(|(a, _)| a).collect())).collect();
         let coll = Arc::new(blobs.collision.into_iter().map(|(c, b)| (c as i16, b)).collect());
         let snap = Some(take_snapshot(&world, &coll, host));
         let rails = g2::grind_paths(&lv.gameplay).map_err(|e| eprintln!("mobys: grind paths: {e}")).unwrap_or_default();
-        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, rails, level: {
+        Mobys { world, coll, cache: Arc::new(Mutex::new(PoseCache::default())), hero_moby, snap, created: HashMap::new(), skinned: HashMap::new(), canopy: None, canopy_frame: None, loop_slots: HashMap::new(), hero_chains, hero_targets, hero_seconds, hold, chains, targets, rails, level: {
             let mut l = rc_game::level::LevelData::load(&lv.gameplay);
             l.items = crate::play::menu_tables(&crate::level_load::extracted_root(), crate::level_load::level_index()).items;
             l
@@ -733,7 +738,14 @@ impl CreatedDraw {
             let look = moby_render::SlotLook { model, alpha: m.alpha, fading: false, mode: m.mode, glow: m.glow, shine, e, late: false, piece: m.piece, bangles: m.bangles };
             self.extra.show_slot(commands, level, slot, Some((class, look)), meshes, images, materials, buffers);
             shown.push(slot);
-            if let Some(f) = mobys.skinned.get(&id).cloned().or_else(|| lv.anim.get(c.class).map(|ac| moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref()))) {
+            // Its manipulators (rc_game::moby::Moby::manips) on their lists' target joints.
+            let mods: Vec<moby_anim::JointModifier> = m
+                .manips
+                .iter()
+                .filter_map(|&(l, quat)| Some(moby_anim::JointModifier { quat, ..moby_anim::JointModifier::compose(*mobys.targets.get(&m.o_class)?.get(l as usize).filter(|&&j| j != 0xff)?) }))
+                .collect();
+            let pose = |ac: &MobyAnimClass| if mods.is_empty() { moby_anim::evaluate_with_snapshot(ac, &c.state, c.snapshot.as_ref()) } else { moby_anim::evaluate_posed(ac, &c.state, c.snapshot.as_ref(), &[], &mods) };
+            if let Some(f) = mobys.skinned.get(&id).cloned().or_else(|| lv.anim.get(c.class).map(pose)) {
                 let at = (slot * SLOT_JOINTS) as usize * 64;
                 for (k, b) in f.iter().take(SLOT_JOINTS as usize).flat_map(|r| r.iter().flatten().flat_map(|v| v.to_le_bytes())).enumerate() {
                     if let Some(p) = palette.get_mut(at + k) { *p = b; }

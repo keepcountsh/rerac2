@@ -4,11 +4,14 @@
 //! / 20 / 5 / 1, at most `limit` bolt mobys with flag 8, the rest into the bank `0x1a7a1c`) and the bolt's creation
 //! `0x383380` (classes 13..19; one more than 64 from the camera goes to the bank instead).
 //!
+//! Every bolt, placed (its state 0) or made here, gets the same look ([`dress`]): half its class's size, the metal
+//! pass from 20 units (`+0x63` 0x14, the gold sheen), light set 0xd and the bolt ambient, its rows kept (mode 0x100).
+//!
 //! Not ported: the XP of the drop (`+0xb6`, `0x18d198`/`0x18d208` rate scaling), the challenge mode multiplier
-//! (`0x1a7a10`), the bolt magnet (`0x3831a8` from the spawn, flag 2), the bolt's light (`0x3132e0`).
+//! (`0x1a7a10`).
 
-use super::{Ctx, MobyWorld};
-use crate::hero::physics::{add, scale, V3};
+use super::{Ctx, Moby, MobyWorld};
+use crate::hero::physics::{add, cross, scale, set_len, sub, V3};
 
 /// `0x1a89c8` (first table, bit 3 clear) and `0x1a89d0` (bit 3 set): the percentage of the bolt value by break count.
 pub const BOLT_PERCENT: [[u8; 8]; 2] = [[100, 50, 40, 30, 25, 20, 15, 10], [100; 8]];
@@ -16,6 +19,22 @@ pub const BOLT_PERCENT: [[u8; 8]; 2] = [[100, 50, 40, 30, 25, 20, 15, 10], [100;
 /// The bolt classes by value (`0x383380`).
 pub fn bolt_class(value: i32) -> i16 {
     match value { 5 => 0xe, 20 => 0xf, 50 => 0x10, 100 => 0x11, 500 => 0x12, 1000 => 0x13, _ => 0xd }
+}
+
+/// `$gp − 0x448 + 4·k` (L00 `0x1aeba8..`): the size factor of every bolt class, 0.5.
+pub const BOLT_SCALE: f32 = 0.5;
+/// `$gp − 0x418` (L00 `0x1aebd8`, the same bytes on every level): the bolts' ambient (`0x3241d8`).
+pub const BOLT_AMBIENT: [u8; 3] = [0x10, 0x10, 0x18];
+
+/// The bolt look (`0x381e60` state 0 and `0x383380`): mode 0x100, shine 0x14, the scale class × 0.5, the ambient
+/// ([`BOLT_AMBIENT`] through `0x3241d8`) and light set 0xd with it kept (`0x313330` / `0x3132e0(m, 0, 0xd, 0, 0)` /
+/// `0x313300`).
+pub fn dress(m: &mut Moby, class_scale: f32) {
+    m.mode |= super::mode::KEEP_ROWS;
+    m.shine = 0x14;
+    m.scale = class_scale * BOLT_SCALE;
+    m.ambient = BOLT_AMBIENT;
+    m.light = 0xd;
 }
 
 /// The value of a bolt class (`0x382c18`).
@@ -105,9 +124,10 @@ pub fn spawn(w: &mut MobyWorld, src: usize, height: f32, min: i32, max: i32, fla
 }
 
 /// `0x383380(source, pos, vel, flags, value, …)`: the bolt moby of `value`'s class, flying (state 1) from `pos` at
-/// `vel`, update and draw distance 0x40, scale class × the value's factor; one farther than 64 from the camera goes
-/// to the bank instead.
-pub fn create_bolt(w: &mut MobyWorld, src: usize, pos: V3, vel: V3, _flags: u32, value: i32, ctx: &mut Ctx) -> Option<usize> {
+/// `vel`, drawn, update and draw distance 0x40, [`dress`]ed; its tumble a turn of 0..720°/s about `(source − pos) ×
+/// vel` (`0x2eef88(out, vel, d)` = d × vel, `0x31fe98`); with flag 2 it flies to Ratchet at once (the magnet:
+/// `0x3831a8` with a random lean of ±30° when flag 0x10). One farther than 64 from the camera goes to the bank instead.
+pub fn create_bolt(w: &mut MobyWorld, src: usize, pos: V3, vel: V3, flags: u32, value: i32, ctx: &mut Ctx) -> Option<usize> {
     let cam = ctx.host.camera_pos();
     let d = ((pos[0] - cam[0]).powi(2) + (pos[1] - cam[1]).powi(2) + (pos[2] - cam[2]).powi(2)).sqrt();
     if 64.0 <= d {
@@ -116,6 +136,7 @@ pub fn create_bolt(w: &mut MobyWorld, src: usize, pos: V3, vel: V3, _flags: u32,
     }
     let class = bolt_class(value);
     let class_scale = w.class(class)?.scale;
+    let from = w.mobys[src].pos;
     // The top owner of the source (`+0xb8` chain).
     let mut parent = src;
     while let Some(p) = w.mobys.get(parent).and_then(|s| s.parent) { if p == parent { break; } parent = p; }
@@ -124,20 +145,25 @@ pub fn create_bolt(w: &mut MobyWorld, src: usize, pos: V3, vel: V3, _flags: u32,
     let spin = g.rng.randi(2) != 0;
     let a = g.rng.rand_angle();
     let b = g.rng.rand_angle();
+    let turn = g.rng.randf(0.0, 720.0) * 0.000_290_888_25;
     let m = &mut w.mobys[id];
-    // `$gp − 0x448 + 4·k`: every denomination's factor is 0.5.
-    m.scale = class_scale * 0.5;
-    m.mode |= super::mode::KEEP_ROWS;
+    dress(m, class_scale);
     m.state = 1;
     m.drawn = 1;
     m.update_dist = 0x40;
     m.draw_dist = 0x40;
     m.parent = Some(parent);
+    m.rows = super::attach::rows_of(m.rot);
     m.pos = pos;
     m.set_pv_v(0x20, vel);
     if spin { m.set_pv_b(0x55, m.pv_b(0x55) | 1); }
     m.set_pv_f(0x50, a);
     m.set_pv_f(0x58, b);
     m.set_pv_f(0x68, pos[2]);
+    m.set_pv_q(0x30, crate::quat::axis_angle(turn, set_len(cross(sub(from, pos), vel), 1.0)));
+    if flags & 2 != 0 {
+        let lean = if flags & 0x10 != 0 { ctx.game.rng.randf(-30.0, 30.0) * 0.017_453_294 } else { 0.0 };
+        super::classes::bolt::attract(w, id, lean, 0.0, ctx);
+    }
     Some(id)
 }

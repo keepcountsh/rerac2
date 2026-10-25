@@ -28,6 +28,7 @@
 
 use super::{mode, Ctx, MobyWorld};
 use crate::hero::physics::{add, dot, len, scale, set_len, sub, V3};
+use crate::quat::{axis_quat, mul as qmul, rotate, Q};
 
 fn cross(a: V3, b: V3) -> V3 { [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]] }
 
@@ -47,33 +48,6 @@ pub(crate) const COUNT: usize = 0x5c;
 const MODE: usize = 0x5d;
 const SOUND: usize = 0x5e;
 const BLOCK: usize = 0x80;
-
-type Q = [f32; 4];
-
-fn quat(m: &super::Moby, o: usize) -> Q { [m.pv_f(o), m.pv_f(o + 4), m.pv_f(o + 8), m.pv_f(o + 12)] }
-fn set_quat(m: &mut super::Moby, o: usize, q: Q) { for (k, v) in q.iter().enumerate() { m.set_pv_f(o + 4 * k, *v); } }
-
-/// `0x321bb8(s, v)`: the quaternion of axis `v` with sin(half angle) `s`.
-pub(crate) fn axis_quat(s: f32, v: V3) -> Q {
-    let a = set_len(v, s);
-    [a[0], a[1], a[2], (1.0 - s * s).max(0.0).sqrt()]
-}
-
-/// `0x2efa98`: `a · b`.
-fn qmul(a: Q, b: Q) -> Q {
-    let (av, bv) = ([a[0], a[1], a[2]], [b[0], b[1], b[2]]);
-    let c = cross(av, bv);
-    let v: V3 = std::array::from_fn(|k| a[3] * bv[k] + b[3] * av[k] + c[k]);
-    [v[0], v[1], v[2], a[3] * b[3] - dot(av, bv)]
-}
-
-/// A row turned by quaternion `q` as `0x2efc20` / `0x2efa00` turn the rows: `0x2efc20` builds the rotation matrix
-/// R(q), and `0x2efa00` multiplies each row on the left (`row · R`), which is Rᵀ — the rotation by `q`'s conjugate.
-pub(crate) fn rotate(q: Q, v: V3) -> V3 {
-    let u = [-q[0], -q[1], -q[2]];
-    let t = scale(cross(u, v), 2.0);
-    add(add(v, scale(t, q[3])), cross(u, t))
-}
 
 /// `0x2ef318`: a frame vector through the rows.
 fn through(rows: &[V3; 3], v: V3) -> V3 { std::array::from_fn(|k| v[0] * rows[0][k] + v[1] * rows[1][k] + v[2] * rows[2][k]) }
@@ -121,9 +95,7 @@ pub fn spawn_shard(w: &mut MobyWorld, ctx: &mut Ctx, o_class: i16, src: Option<u
     // Its spin: sin(spin / 2 a tick) about a random axis (`0x31bbc0`: its length drawn too, from sin..sin).
     let half = (spin * 0.000_145_444_12).sin();
     let rng = &mut ctx.game.rng;
-    rng.randf(half, half);
-    let (az, el) = (rng.rand_angle(), rng.rand_angle());
-    let axis = [az.cos() * el.sin() * half, az.sin() * el.sin() * half, el.cos() * half];
+    let axis = rng.rand_vec(half, half);
     let id = w.create(o_class);
     let m = &mut w.mobys[id];
     (m.pos, m.rot, m.scale) = (pos, rot, sc);
@@ -134,7 +106,7 @@ pub fn spawn_shard(w: &mut MobyWorld, ctx: &mut Ctx, o_class: i16, src: Option<u
     (m.drawn, m.draw_dist, m.update_dist) = (1, 0x1ff, 0xff);
     m.pvars.resize(BLOCK.max(m.pvars.len()), 0);
     m.set_pv_v(VEL, vel);
-    set_quat(m, SPIN, [axis[0], axis[1], axis[2], (1.0 - half * half).max(0.0).sqrt()]);
+    m.set_pv_q(SPIN, [axis[0], axis[1], axis[2], (1.0 - half * half).max(0.0).sqrt()]);
     m.set_pv_f(LOSS, 0.45);
     m.set_pv_f(LEAST, 0.033_333_335);
     m.set_pv_f(0x40, 0.5);
@@ -205,8 +177,8 @@ fn body(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, pts: &[V3]) -> bool {
     let m = &mut w.mobys[id];
     let vel = m.pv_v(VEL);
     let turn = cross(vel, n);
-    let spin = add_turn(quat(m, SPIN), turn);
-    set_quat(m, SPIN, spin);
+    let spin = add_turn(m.pv_q(SPIN), turn);
+    m.set_pv_q(SPIN, spin);
     let (loss, least) = (m.pv_f(LOSS), m.pv_f(LEAST));
     let (moving, vel) = bounce(loss, least, vel, n, [0.0, 0.0, 1.0]);
     m.set_pv_v(VEL, vel);
@@ -230,7 +202,7 @@ fn fly(w: &mut MobyWorld, id: usize) {
     m.pos = add(m.pos, vel);
     let pivot = m.pv_v(PIVOT);
     let before = through(&m.rows, pivot);
-    let q = quat(m, SPIN);
+    let q = m.pv_q(SPIN);
     m.rows = m.rows.map(|r| rotate(q, r));
     let after = through(&m.rows, pivot);
     m.pos = sub(m.pos, sub(after, before));
@@ -250,9 +222,9 @@ fn pivot(w: &mut MobyWorld, id: usize, pts: &[V3]) {
     let before = through(&m.rows, at);
     let arm = set_len(through(&m.rows, sub(at, m.pv_v(PIVOT))), 1.0);
     let torque = set_len(cross([0.0, 0.0, 1.0], arm), m.pv_f(WEIGHT));
-    let mut spin = add_turn(quat(m, SPIN), torque);
+    let mut spin = add_turn(m.pv_q(SPIN), torque);
     if let Some(h) = hinge { spin = hinge_spin(spin, h); }
-    set_quat(m, SPIN, spin);
+    m.set_pv_q(SPIN, spin);
     m.rows = m.rows.map(|r| rotate(spin, r));
     let after = through(&m.rows, at);
     m.pos = sub(m.pos, sub(after, before));
@@ -321,8 +293,8 @@ fn add_contact(w: &mut MobyWorld, id: usize, k: u8, pts: &[V3]) {
         let (a, b) = (m.pvars[CONTACTS] as usize, m.pvars[CONTACTS + 1] as usize);
         if let (Some(&pa), Some(&pb)) = (pts.get(a), pts.get(b)) {
             let d = through(&m.rows, sub(pa, pb));
-            let s = hinge_spin(quat(m, SPIN), d);
-            set_quat(m, SPIN, s);
+            let s = hinge_spin(m.pv_q(SPIN), d);
+            m.set_pv_q(SPIN, s);
         }
     }
 }

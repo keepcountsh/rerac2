@@ -169,6 +169,8 @@ pub struct GameState {
     /// (the hologram's manipulator angles).
     pub vendor_open: Option<usize>,
     pub vendor_phase: [f32; 3],
+    /// The vendors' draw (`0x381568`): the beam's texture scroll `gp−0x110` and the rising glow's phase `gp−0x10c`.
+    pub vendor_beam: [f32; 2],
     /// The action prompt's lease (crate::prompt).
     pub prompt: crate::prompt::Prompt,
     /// `0x1a7a20`: the armour worn (0 the Commando Suit, 1..4 Tetrafiber to Carbonox: the ARMOR.WAD row); `0x139645`:
@@ -198,7 +200,7 @@ impl Default for GameState {
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, boss_bar: None, water_base: 0.0, water_z: 0.0, water_scroll: [[0.0; 2]; 2], water_cam: [0.0; 3], missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), shakes: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
             mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x100], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], planets: vec![0; 0x1c], travel: Default::default(), ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), underwater: false, fog: Default::default(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, bolt_help_done: false, space_bolts: 0, space_bolts_shown: 0, rider_hits: 0, rider_hint: false, play_time: 0, visited: vec![0; 0x1c],
-            stock: [0xff; crate::vendor::STOCK_SLOTS], challenge: false, rac1_weapons: 0, vendor_open: None, vendor_phase: [0.0; 3], prompt: Default::default(),
+            stock: [0xff; crate::vendor::STOCK_SLOTS], challenge: false, rac1_weapons: 0, vendor_open: None, vendor_phase: [0.0; 3], vendor_beam: [0.0; 2], prompt: Default::default(),
             armor: 0, armor_offer: 0, mods_available: [0; 0x38], mods_bought: [0; 0x38], platinum_spent: 0, platinum_found: 0,
         }
     }

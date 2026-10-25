@@ -30,6 +30,7 @@ pub mod paths;
 pub mod point_lights;
 pub mod prompt;
 pub mod ps2v;
+pub mod quat;
 pub mod quick_select;
 pub mod rng;
 pub mod save;

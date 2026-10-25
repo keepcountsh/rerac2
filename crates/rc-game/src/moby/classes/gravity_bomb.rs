@@ -157,7 +157,7 @@ fn look_aim(ctx: &Ctx) -> (V3, f32) {
     let half = dot(fwd, across) * 0.5;
     let (s, c) = rc_formats::moby_light::vu0_sin_cos(half.to_bits());
     let a = scale(axis, f32::from_bits(s));
-    let row = crate::moby::shards::rotate([a[0], a[1], a[2], f32::from_bits(c)], [1.0, 0.0, 0.0]);
+    let row = crate::quat::rotate([a[0], a[1], a[2], f32::from_bits(c)], [1.0, 0.0, 0.0]);
     let way: V3 = std::array::from_fn(|k| row[0] * cam[0][k] + row[1] * cam[1][k] + row[2] * cam[2][k]);
     let height = -dot(ctx.hero.pos, DOWN);
     let fwd = unit(cam[0]);

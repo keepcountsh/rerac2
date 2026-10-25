@@ -60,10 +60,9 @@ pub fn spawn(w: &mut MobyWorld, ctx: &mut Ctx, pos: V3, item: usize, amount: Opt
     let rng = &mut ctx.game.rng;
     let yaw = rng.rand_angle();
     // `0x31bbc0(1/30, 1/15)`, then `0x326328`: the rise replaces its up component.
-    let l = rng.randf(0.033_333_335, 0.066_666_67);
-    let (a, b) = (rng.rand_angle(), rng.rand_angle());
+    let v = rng.rand_vec(0.033_333_335, 0.066_666_67);
     let up = rng.randf(4.0, 8.0) * 0.016_666_668;
-    let vel = [a.cos() * b.sin() * l, a.sin() * b.sin() * l, up];
+    let vel = [v[0], v[1], up];
     let spin = rng.randf(180.0, 360.0);
     let gravity = rng.randf(10.0, 15.0);
     let hero = ctx.hero_moby;
@@ -187,8 +186,8 @@ fn fly_in(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) -> bool {
         let pin = [0.0, 0.0, 0.3];
         let through = |r: &[V3; 3], v: V3| -> V3 { std::array::from_fn(|k| v[0] * r[0][k] + v[1] * r[1][k] + v[2] * r[2][k]) };
         let before = through(&m.rows, pin);
-        let q = shards::axis_quat(0.087_155_74, axis);
-        m.rows = m.rows.map(|r| shards::rotate(q, r));
+        let q = crate::quat::axis_quat(0.087_155_74, axis);
+        m.rows = crate::quat::turn_rows(&m.rows, q);
         let after = through(&m.rows, pin);
         m.pos = sub(m.pos, sub(after, before));
     }

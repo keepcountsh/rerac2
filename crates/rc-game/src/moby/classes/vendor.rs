@@ -5,7 +5,7 @@
 //! armour, 3 the Gadgetron weapons, 4 the ship), `+0x98` ≠ 0: only in the challenge mode. Globals: the glow phase
 //! `gp−0x100` and the manipulator angles `gp−0x108` / `gp−0x104` (crate::game::GameState::vendor_phase).
 //!
-//! Every tick: the phase += 0.05, past 3.14 back to −3.14; the glow word `+0x78` = `((int)(sin φ · 12) + 0x60) ·
+//! Every tick: the phase += 0.05, past 3.14 back to −3.14; the glow word `+0x78` = `((int)(sin φ · 24) + 0x60) ·
 //! 0x20100 | 0x80000000` (the ship vendor, kind 2: `· 0x101`), the hologram's `0x80f0f0b0` (kind 2: `0x80008080`).
 //! The Gadgetron kind hides itself and its hologram (mode bit 0, `+0x31` 0, `+0x98` 0). Then by state:
 //! * **0** (init): a challenge-only vendor outside it deletes itself (`0x307440`). Else state 1, `+0x00` = `+0x04`
@@ -23,13 +23,13 @@
 //! * **3** (the menu open; `0x374628` sets 1 again): nothing.
 //! * **4** (opening): `+0x90` −= 0.1 while above 0; at 0 the hologram hidden and `0x32c5f0(5, 1, vendor)` asks for
 //!   game mode 5 ([`crate::game::GameState::vendor_open`]), state 3. Else the tail.
-//! * **Tail**: the draw callback `0x381568` registered (`0x2dd008`: the beam and glow points), the manipulators
-//!   turned about z by the angles (`0x2e4e68(rec, angle, 2)`), the angles += 0.01 / −= 0.01 (`0x2e5168`), the
-//!   hologram's scale = `+0x90` · its class scale · 2.5, its matrix built.
+//! * **Tail**: the draw callback `0x381568` registered (`0x2dd008`, [`draw`]: the light under the hologram), the
+//!   hologram's two manipulators (`+0x10` / `+0x50`, on its joint lists 0 and 1: the logo and the turning ring of
+//!   text) turned about z by the angles (`0x2e4e68(angle, rec, 2)`), then the angles += 0.01 / −= 0.01 (`0x2e5168`),
+//!   the hologram's scale = `+0x90` · its class scale · 2.5, its matrix built.
 //!
-//! Not ported: the draw callback (the beam: an engine draw), the manipulators (the hologram's two spinning joints:
-//! the port's moby animation has no class manipulators), the classes' load (`0x372618`: the port has every
-//! class), the mod / armour / ship kinds' menus (the prompt shows, △ says so; crate::vendor).
+//! Not ported: the classes' load (`0x372618`: the port has every class), the mod / armour / ship kinds' menus (the
+//! prompt shows, △ says so; crate::vendor).
 
 use crate::moby::{mode, Ctx, MobyWorld};
 use crate::vendor::{Kind, HOLOGRAM_CLASS};
@@ -70,7 +70,7 @@ pub fn update(world: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if PHASE_WRAP < ph[0] { ph[0] = -PHASE_WRAP; }
     let kind = world.mobys[id].pv_i(KIND);
     let (mul, holo) = if kind == 2 { (0x101u32, 0x8080u32) } else { (0x20100, 0x80f0_f0b0) };
-    let k = ((ph[0].sin() * 12.0) as i32 + 0x60) as u32;
+    let k = ((ph[0].sin() * 24.0) as i32 + 0x60) as u32;
     world.mobys[id].glow = k.wrapping_mul(mul) | 0x8000_0000;
     let c = child(world, id);
     if let Some(c) = c { world.mobys[c].glow = holo | 0x8000_0000; }
@@ -183,11 +183,15 @@ pub fn update(world: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 
 /// The tail: the angles advanced, the hologram scaled by `+0x90` · 2.5 of its class.
 fn tail(world: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    world.register_draw(id);
     let ph = &mut ctx.game.vendor_phase;
+    let z_turn = |a: f32| crate::quat::axis_angle(a, [0.0, 0.0, 1.0]);
+    let manips = vec![(0, z_turn(ph[1])), (1, z_turn(ph[2]))];
     ph[1] = crate::hero::physics::add_rot(ph[1], 0.01);
     ph[2] = crate::hero::physics::add_rot(ph[2], -0.01);
     let s = world.mobys[id].pv_f(SCALE);
     if let Some(c) = child(world, id) {
+        world.mobys[c].manips = manips;
         let cs = world.class(HOLOGRAM_CLASS).map_or(1.0, |c| c.scale);
         world.mobys[c].scale = s * cs * 2.5;
         // The moby loop's `0x313420` on it (out of the port's run list with no update of its own).
@@ -199,4 +203,45 @@ fn tail(world: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// `0x374628`'s write: the menu over, state 1.
 pub fn on_exit(world: &mut MobyWorld, id: usize) {
     if let Some(m) = world.mobys.get_mut(id).filter(|m| m.o_class == crate::vendor::CLASS) { m.state = 1; }
+}
+
+/// `0x381568`'s beam: the 3 × 3 points of a fan in the (y, z) plane (`0x2900b0`), two wide at the hologram (z 2.6)
+/// narrowing to the projector (z 1.1), its texels (`0x290140`: s, t across the grid) and colours (`0x290188`: alpha
+/// 0x10 at the top, 0x70 below; the ship vendor's `+0x24`), its four quads (`$gp−0x150`: the grid's cells).
+const BEAM: [[f32; 2]; 9] = [[-1.0, 2.6], [0.0, 2.6], [1.0, 2.6], [-0.3, 1.4], [0.0, 1.6], [0.3, 1.4], [-0.05, 1.1], [0.0, 1.1], [0.05, 1.1]];
+const BEAM_ST: [[f32; 2]; 9] = [[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [0.0, 0.5], [0.5, 0.5], [1.0, 0.5], [0.0, 1.0], [0.5, 1.0], [1.0, 1.0]];
+const BEAM_QUADS: [[usize; 4]; 4] = [[0, 1, 3, 4], [1, 2, 4, 5], [3, 4, 6, 7], [4, 5, 7, 8]];
+const BEAM_RGBA: [[u32; 2]; 2] = [[0x1080_0000, 0x7080_0000], [0x1000_8080, 0x7000_8080]];
+
+/// `0x381568` (the vendor's draw callback, crate::fx): its light, in the camera's yaw (the camera's angles' z,
+/// `0x1b94d8`; at the vendor's place, 1 lower, x and y scaled by the hologram's scale `+0x90`):
+/// * the beam (FX 0x18, ALPHA 0x44): [`BEAM`]'s four quads, the texels' t scrolled by `gp−0x110` (+0.01 a frame,
+///   past 1 less 1);
+/// * the rising glow (FX 0x1b, ALPHA 0x44): with p = `gp−0x10c` (+0.01 a frame, past 1 back to 0), a square
+///   ±1.2·p·scale tilted 0.2 from z 1.1 + 1.4p, white at alpha (1 − p)·128, ST the unit square.
+pub fn draw(w: &MobyWorld, id: usize, game: &mut crate::game::GameState, cam_rows: [crate::hero::physics::V3; 3], out: &mut Vec<crate::fx::FxQuad>) {
+    use crate::fx::FxQuad;
+    let m = &w.mobys[id];
+    let (scale, ship) = (m.pv_f(SCALE), m.pv_i(KIND) == 2);
+    let yaw = cam_rows[0][1].atan2(cam_rows[0][0]);
+    let (sy, cy) = yaw.sin_cos();
+    // `v · R(yaw)`: (x, y) turned by the yaw.
+    let place = |x: f32, y: f32, z: f32, k: f32| [m.pos[0] + (x * cy - y * sy) * k, m.pos[1] + (x * sy + y * cy) * k, m.pos[2] + z - 1.0];
+    let b = &mut game.vendor_beam;
+    b[0] += 0.01;
+    if 1.0 < b[0] { b[0] -= 1.0; }
+    let rgba = BEAM_RGBA[ship as usize];
+    for q in BEAM_QUADS {
+        let corners = q.map(|i| place(0.0, BEAM[i][0], BEAM[i][1], scale));
+        let st = q.map(|i| [BEAM_ST[i][0], BEAM_ST[i][1] + b[0]]);
+        out.push(FxQuad { fx: 0x18, additive: false, corners, st, rgba: q.map(|i| rgba[(i >= 3) as usize]) });
+    }
+    b[1] += 0.01;
+    if 1.0 < b[1] { b[1] = 0.0; }
+    let p = b[1];
+    let (z0, r) = (p * 1.4 + 1.1, p * scale * 1.2);
+    let z1 = z0 - 0.2;
+    let corners = [place(-r, -r, z0, 1.0), place(r, -r, z1, 1.0), place(-r, r, z0, 1.0), place(r, r, z1, 1.0)];
+    let c = (((1.0 - p) * 128.0) as u32) << 24 | 0x80_8080;
+    out.push(FxQuad { fx: 0x1b, additive: false, corners, st: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], rgba: [c; 4] });
 }

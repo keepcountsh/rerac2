@@ -177,6 +177,9 @@ pub struct Moby {
     /// The port's: another moby moves or hides this one (a carrier, a group shown or hidden), so the engine keeps
     /// its draw following it even without an update of its own.
     pub drive: bool,
+    /// Its class manipulators (`0x308238`: a record on joint list `list`, its rotation `quat` (x, y, z, w) composed
+    /// over the target joint's key): the engine applies them when it poses the moby.
+    pub manips: Vec<(u8, [f32; 4])>,
     /// `+0x38`: the light word (byte 0 the directional light set, byte 1 the second, byte 2 their cross-fade) and
     /// `+0x3c` the ambient (r, g, b; 0x80 = 1), as MobyProc lights the moby.
     pub light: u32,
@@ -309,7 +312,7 @@ impl Moby {
             index, bsphere: [0.0; 4], pos: [0.0; 3], state: 0, group: -1, slot: 0, alpha: 0x80, scale: 0.0, update_dist: 0,
             drawn: 0, draw_dist: 0, mode: 0, update: None, pvars: Vec::new(), has_collision: false, coll_disable: 0,
             grid_rect: GRID_NONE, o_class, rebuilds: 0, mission: 0, sub_index: 0, uid: 0, rows: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, serial: 0, freed_at: 0,
+            rot: [0.0; 3], instance: None, hit_slot: -1, parent: None, pvar_index: -1, bolts: 0, xp: 0, timer: 0, drops: 0, prev_state: 0, sub_state: 0, state_ticks: 0, once: 0, drive: false, manips: Vec::new(), serial: 0, freed_at: 0,
             // `0x311418`: `+0x38` = 0x40404000000000.
             light: 0, ambient: [0x40; 3], glow: 0, piece: None, bangles: 0, shine: 0,
         };
@@ -354,6 +357,9 @@ impl Moby {
         self.pvars[off] = v;
     }
     pub fn set_pv_v(&mut self, off: usize, v: V3) { for (k, x) in v.iter().enumerate() { self.set_pv_f(off + 4 * k, *x); } }
+    /// A quaternion in the pvars (crate::quat).
+    pub fn pv_q(&self, off: usize) -> crate::quat::Q { [self.pv_f(off), self.pv_f(off + 4), self.pv_f(off + 8), self.pv_f(off + 12)] }
+    pub fn set_pv_q(&mut self, off: usize, q: crate::quat::Q) { for (k, x) in q.iter().enumerate() { self.set_pv_f(off + 4 * k, *x); } }
     /// A moby link in the pvars (a runtime moby index; 0 / negative: none, as the game's null pointer).
     pub fn pv_link(&self, off: usize) -> Option<usize> { usize::try_from(self.pv_i(off)).ok().filter(|&i| i != 0) }
 

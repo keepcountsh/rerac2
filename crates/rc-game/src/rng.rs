@@ -43,6 +43,13 @@ impl Rng {
     /// `0x31bb00`: an angle in [−π, π): `((rand >> 16) & 0xfff) − 0x800` steps of π / 2048.
     pub fn rand_angle(&mut self) -> f32 { (((self.rand() >> 16) & 0xfff) as i32 - 0x800) as f32 * 0.001_533_980_8 }
 
+    /// `0x31bbc0(a, b)`: a vector of random length `randf(a, b)` a random way (two angles: about z, then from up).
+    pub fn rand_vec(&mut self, a: f32, b: f32) -> [f32; 3] {
+        let l = self.randf(a, b);
+        let (az, el) = (self.rand_angle(), self.rand_angle());
+        [az.cos() * el.sin() * l, az.sin() * el.sin() * l, el.cos() * l]
+    }
+
     /// `0x31b9e0(a, b)`: an integer in a..=b (`r % (b − a + 1) + a`).
     pub fn rand_range(&mut self, a: i32, b: i32) -> i32 { self.randi(b - a + 1) + a }
 
