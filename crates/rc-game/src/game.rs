@@ -146,6 +146,10 @@ pub struct GameState {
     /// `0x1a7a04` itself and its panel's ticks left (`0x40f3e0`, the ship's `+0x30`).
     pub space_bolts: i32,
     pub space_bolts_shown: i32,
+    /// Oozla's path riders 0x061c (crate::moby::classes::oozla::update_061c): the hits they took this level (L01
+    /// `gp+0x834`, cleared by each one's set-up) and the hint after the fourth given (`0x1a7a75`; not saved here).
+    pub rider_hits: i32,
+    pub rider_hint: bool,
     /// `0x1a7b70`: the vendor's stock (crate::vendor: 32 slots, 0xff free, the item | 0x40 when owned as it went
     /// in); `0x1a7a12`: the challenge mode; `0x1a7a28`: the R&C1 save's weapons found (bits 0..4), for Barlow's
     /// Gadgetron vendor.
@@ -185,7 +189,7 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, pickup_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, boss_bar: None, water_base: 0.0, water_z: 0.0, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), shakes: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x100], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], planets: vec![0; 0x1c], travel: Default::default(), ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, bolt_help_done: false, space_bolts: 0, space_bolts_shown: 0, play_time: 0, visited: vec![0; 0x1c],
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x100], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], planets: vec![0; 0x1c], travel: Default::default(), ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, bolt_help_done: false, space_bolts: 0, space_bolts_shown: 0, rider_hits: 0, rider_hint: false, play_time: 0, visited: vec![0; 0x1c],
             stock: [0xff; crate::vendor::STOCK_SLOTS], challenge: false, rac1_weapons: 0, vendor_open: None, vendor_phase: [0.0; 3], prompt: Default::default(),
             armor: 0, armor_offer: 0, mods_available: [0; 0x38], mods_bought: [0; 0x38], platinum_spent: 0, platinum_found: 0,
         }

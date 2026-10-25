@@ -428,14 +428,18 @@ const SCREEN_U: [f32; 4] = [-0.5, -0.5, 0.5, 0.5];
 const SCREEN_V: [f32; 4] = [0.5, -0.5, 0.5, -0.5];
 
 impl Scenes {
-    /// `0x2fd3d8` (Aranos only, `0x1a79f8` = 0): in the level's scene record 0 from tick 0xdc to 0x172, the screen of
-    /// Ratchet's ship (the actor of class 0x0d54) shows the scene's actor 1 as seen from a view of its own: `0x2e6350`
-    /// hides it from the frame and draws it alone into a 256×256 image (cleared to black, every texel's alpha then set
-    /// to 0x80 by `0x2f16f8`, so the screen is opaque) with that view and the frame's projection, then draws the image
-    /// on the screen's corners — the ship's frame through its matrix, then 0.15 toward the camera `camera`.
+    /// The screen of Ratchet's ship (the actor of class 0x0d54) showing the scene's actor 1 as seen from a view of its
+    /// own: `0x2fd3d8` (Aranos, `0x1a79f8` = 0) in the level's scene record 0 from tick 0xdc to 0x172, and `0x368098`
+    /// (the story scenes' frame `0x3661d8`) in the story scene 0xa9 (record 0, Fizzwidget on the screen) from tick
+    /// 0x32 on; the same view (`0x27e580` / `0x28b2f0`) and corners (`gp−0x5c10` / `gp−0x2a30`). `0x2e6350` hides the
+    /// actor from the frame and draws it alone into a 256×256 image (cleared to black, every texel's alpha then set to
+    /// 0x80 by `0x2f16f8`, so the screen is opaque) with that view and the frame's projection, then draws the image on
+    /// the screen's corners — the ship's frame through its matrix, then 0.15 toward the camera `camera`.
     pub fn ship_screen(&self, level: i32, world: &crate::moby::MobyWorld, camera: V3) -> Option<ShipScreen> {
-        let p = self.player.as_ref().filter(|_| level == 0 && self.mode == SCENE)?;
-        if rc_formats::disc::scene::record_of(p.id) != 0 || !(0xdc..=0x172).contains(&p.tick) { return None; }
+        let p = self.player.as_ref().filter(|_| self.mode == SCENE)?;
+        if rc_formats::disc::scene::record_of(p.id) != 0 { return None; }
+        let on = if rc_formats::disc::scene::is_shared(p.id) { (0x32..10000).contains(&p.tick) } else { level == 0 && (0xdc..=0x172).contains(&p.tick) };
+        if !on { return None; }
         let actor = p.actors.get(1).map(|a| a.0).filter(|&a| a < world.mobys.len())?;
         let mut corners = [[0.0; 3]; 4];
         if let Some(ship) = p.actors.iter().filter_map(|a| world.mobys.get(a.0)).find(|m| m.o_class == 0xd54) {

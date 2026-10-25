@@ -18,6 +18,27 @@ fn set_len(a: V3, l: f32) -> V3 {
     if m == 0.0 { a } else { scale(a, l / m) }
 }
 
+/// `0x343fb8(t, path, looped, &pos, &angles, flags)` (L01 `0x33a340`): the pose at `t` along the points (between
+/// points ⌊t⌋ and ⌊t⌋ + 1; an open path holds its last segment up to its end, a looped one wraps): the place, the
+/// direction's pitch (−atan2(|dxy|, dz)) and yaw, the direction blended from this segment's into the next's (an open
+/// path's last: its own), and the points' w blended (the roll the callers that use it take).
+pub fn pose(points: &[[f32; 4]], t: f32, looped: bool) -> (V3, f32, f32, f32) {
+    let n = points.len() as i32;
+    let mut i = t as i32;
+    let end = !looped && n - 2 <= i;
+    if end { i = n - 2; }
+    let mut f = t - i as f32;
+    if end && 1.0 < f { f = 1.0; }
+    let at = |k: i32| points[k.rem_euclid(n.max(1)) as usize];
+    let (a, b) = (at(i), at(i + 1));
+    let pos = add(p3(&a), scale(sub(p3(&b), p3(&a)), f));
+    let d0 = sub(p3(&b), p3(&a));
+    let dir = if end { d0 } else { add(d0, scale(sub(sub(p3(&at(i + 2)), p3(&b)), d0), f)) };
+    let pitch = -crate::hero::physics::atan2(len2(dir), dir[2]);
+    let yaw = crate::hero::physics::atan2(dir[0], dir[1]);
+    (pos, pitch, yaw, a[3] * (1.0 - f) + b[3] * f)
+}
+
 /// `0x342b50(dist, path, &out, &seg, &t, looped)`: `dist` (signed) along the path from `(seg, t)`; `out` the point
 /// reached. Returns whether it ran off an end (an open path's last point; a loop's wrap).
 pub fn advance(points: &[[f32; 4]], dist: f32, seg: &mut usize, t: &mut f32, looped: bool) -> (V3, bool) {

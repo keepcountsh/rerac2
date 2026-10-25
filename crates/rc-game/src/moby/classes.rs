@@ -116,6 +116,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0a9e | 0x0a9f => Some(oozla::update_sent),
         0x0a95 => Some(oozla::update_0a95),
         0x0ace => Some(oozla::update_0ace),
+        0x061c => Some(oozla::update_061c),
         0x0a7b => Some(oozla::update_0a7b),
         0x0825 => Some(dynamo::update),
         0x00bc => Some(tractor::update),

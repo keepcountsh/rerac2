@@ -28,11 +28,12 @@ const STRIP: u32 = 0x28ad70;
 pub const TEXTURE: usize = 0x15;
 
 impl CanopyMesh {
-    /// The tables through `read(vaddr, len)` (the level overlay's data).
-    pub fn read(read: impl Fn(u32, usize) -> Option<Vec<u8>>) -> Option<CanopyMesh> {
+    /// The tables through `read(vaddr, len)` (the level overlay's data), their addresses Aranos's through `at` (each
+    /// level links them elsewhere: rc_formats::level_overlay::Relocation).
+    pub fn read(at: impl Fn(u32) -> Option<u32>, read: impl Fn(u32, usize) -> Option<Vec<u8>>) -> Option<CanopyMesh> {
         let f = |b: &[u8], i: usize| f32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap());
-        let v4 = |a: u32| read(a, VERTS * 16).map(|b| (0..VERTS).map(|k| std::array::from_fn(|c| f(&b, 4 * k + c))).collect::<Vec<[f32; 4]>>());
-        let s = read(STRIP, STRIPS * 16)?;
+        let v4 = |a: u32| read(at(a)?, VERTS * 16).map(|b| (0..VERTS).map(|k| std::array::from_fn(|c| f(&b, 4 * k + c))).collect::<Vec<[f32; 4]>>());
+        let s = read(at(STRIP)?, STRIPS * 16)?;
         let strips = (0..STRIPS).map(|k| std::array::from_fn(|c| i16::from_le_bytes([s[16 * k + 4 * c], s[16 * k + 4 * c + 1]]) as u16)).collect::<Vec<_>>();
         if strips.iter().flatten().any(|&i| i as usize >= VERTS) { return None; }
         Some(CanopyMesh { pos: v4(POS)?, nrm: v4(NRM)?, strips })

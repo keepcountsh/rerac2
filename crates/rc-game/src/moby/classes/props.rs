@@ -758,7 +758,7 @@ fn ai_link(w: &MobyWorld, id: usize, off: usize) -> Option<usize> {
     crate::moby::ai::link(&w.mobys[id], off).filter(|&s| w.mobys.get(s).is_some_and(|m| m.state < 0x80))
 }
 
-/// `0x360d28(ship)`: the old parts deleted (`0x360cd0`), the new ones made.
+/// `0x360d28(ship)`: the old parts deleted (`0x360cd0`), the new ones made (their callers place them).
 pub(crate) fn ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
     for p in std::mem::take(&mut ctx.game.ship_parts) {
         if w.mobys.get(p).is_some_and(|m| m.state < 0x80) { w.delete(p); }
@@ -775,38 +775,73 @@ pub(crate) fn ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
         ctx.game.ship_parts.push(p);
     }
     w.mobys[ship].mode |= 0x20;
-    place_ship_parts(w, ship, ctx);
 }
 
-/// `0x384d28(ship)`: each part shown, at the ship with the rows of its joint 0 (in a scene, for the arrival's ship,
-/// at its joint 1 less (4.192, 0, 1.355) through them); with the ship's collision in play. A scene's own ship actor
-/// takes them at itself (`actor`: the original's frames show them so).
-pub fn place_ship_parts_on(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx, actor: bool) {
-    let (rows, _) = ctx.host.joint_matrix(&w.mobys[ship], 0).unwrap_or((w.mobys[ship].rows, w.mobys[ship].pos));
-    let rows = rows.map(|r| set_len(r, 1.0));
+/// The rows of the ship's joint list `j` (unit length), else its own.
+fn ship_rows(w: &MobyWorld, ship: usize, ctx: &Ctx, j: usize) -> [crate::hero::physics::V3; 3] {
+    let (rows, _) = ctx.host.joint_matrix(&w.mobys[ship], j).unwrap_or((w.mobys[ship].rows, w.mobys[ship].pos));
+    rows.map(|r| set_len(r, 1.0))
+}
+
+/// A part at `pos` with `rows` (the mirrored ones' second row turned).
+fn put_part(w: &mut MobyWorld, p: usize, pos: crate::hero::physics::V3, rows: [crate::hero::physics::V3; 3]) {
+    let pm = &mut w.mobys[p];
+    pm.pos = pos;
+    pm.rows = rows;
+    if pm.mode & crate::moby::mode::MIRROR != 0 { pm.rows[1] = scale(pm.rows[1], -1.0); }
+}
+
+/// `p + rows·o`.
+fn through(p: crate::hero::physics::V3, rows: &[crate::hero::physics::V3; 3], o: [f32; 3]) -> crate::hero::physics::V3 {
+    add(p, add(add(scale(rows[0], o[0]), scale(rows[1], o[1])), scale(rows[2], o[2])))
+}
+
+/// `0x384d28(ship)` (the arrival's own ship, class 0x1330's): each part shown, at the ship with the rows of its joint
+/// list 0; in a scene at its joint 1 less (4.192, 0, 1.355) through them; with the ship's collision in play.
+pub(crate) fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
+    let rows = ship_rows(w, ship, ctx, 0);
     let mut pos = w.mobys[ship].pos;
     let in_scene = ctx.game.scenes.mode == crate::scene::SCENE;
-    if in_scene && !actor {
-        if let Some(j) = ctx.host.joint(&w.mobys[ship], 1) {
-            let o = [-4.192_877, 0.0, -1.355];
-            pos = add(j, add(add(scale(rows[0], o[0]), scale(rows[1], o[1])), scale(rows[2], o[2])));
-        }
+    if in_scene {
+        if let Some(j) = ctx.host.joint(&w.mobys[ship], 1) { pos = through(j, &rows, [-4.192_877, 0.0, -1.355]); }
     }
     let ship_coll = w.mobys[ship].has_collision;
-    for &p in &ctx.game.ship_parts {
+    for p in ctx.game.ship_parts.clone() {
         let Some(class) = w.mobys.get(p).map(|m| m.o_class) else { continue };
         let coll = !in_scene && ship_coll && w.class(class).is_some_and(|c| c.has_collision);
         let pm = &mut w.mobys[p];
         pm.mode = (pm.mode & 0xffbe) | crate::moby::mode::TARGET;
-        pm.pos = pos;
-        pm.rows = rows;
-        if pm.mode & crate::moby::mode::MIRROR != 0 { pm.rows[1] = scale(pm.rows[1], -1.0); }
         pm.has_collision = coll;
+        put_part(w, p, pos, rows);
         w.rebuild(p, &*ctx.host);
     }
 }
 
-pub(crate) fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) { place_ship_parts_on(w, ship, ctx, false) }
+/// `0x361050`'s parts, on the parked ship and on every scene's ship actor (`0x2fd818`, the take-off and landing
+/// `0x364260`, the flight `0x363360`): made when there are none (`0x360d28`); each at the ship with the rows of its
+/// joint list 1, the hull (list 0 is the canopy, which opens: `0x367b68` draws the glass on it); in a scene on level 5
+/// at its joint 1 moved by (−0.3372, −0.5364, −1.7949) through them. Hidden with the ship (mode bit 0: `| 0x41`, no
+/// collision), else shown (`& 0xffbe`) with the class's collision, none outside play.
+pub fn ride_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
+    if ctx.game.ship_parts.is_empty() { ship_parts(w, ship, ctx); }
+    let rows = ship_rows(w, ship, ctx, 1);
+    let mut pos = w.mobys[ship].pos;
+    let in_scene = ctx.game.scenes.mode == crate::scene::SCENE;
+    if in_scene && ctx.game.level == 5 {
+        if let Some(j) = ctx.host.joint(&w.mobys[ship], 1) { pos = through(j, &rows, [-0.337_2, -0.536_4, -1.794_89]); }
+    }
+    let hidden = w.mobys[ship].mode & 1 != 0;
+    let play = ctx.game.scenes.mode == crate::scene::PLAY;
+    for p in ctx.game.ship_parts.clone() {
+        let Some(class) = w.mobys.get(p).map(|m| m.o_class) else { continue };
+        let coll = !hidden && play && w.class(class).is_some_and(|c| c.has_collision);
+        let pm = &mut w.mobys[p];
+        pm.mode = if hidden { pm.mode | 0x41 } else { pm.mode & 0xffbe };
+        pm.has_collision = coll;
+        put_part(w, p, pos, rows);
+        w.rebuild(p, &*ctx.host);
+    }
+}
 
 /// Shows or hides the members of a group (more than one alive): hidden is mode |= 0x43 without collision, shown
 /// mode &= !0x43 with the class's collision.

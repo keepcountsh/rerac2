@@ -268,6 +268,12 @@ pub fn carry_hero(ctx: &mut Ctx, id: usize, old: V3, old_yaw: f32, new: V3, yaw:
     h.carry_yaw = crate::hero::physics::add_rot(h.carry_yaw, dy);
 }
 
+/// `0x31ce20(0.5, p, 0)`: the ground under `p` (a line from 0.5 above it straight down to 0.01, flags 2).
+pub fn ground_under(ctx: &Ctx, p: V3) -> Option<f32> {
+    let c = ctx.coll?;
+    crate::collision::coll_line(c, [p[0], p[1], p[2] + 0.5], [p[0], p[1], 0.01], crate::collision::QueryFlags(2)).map(|o| o.point[2])
+}
+
 /// `0x2eeab0` / `0x2eeae0`: a countdown — 1 down (not below 0); true when it was 0 already or just reached it.
 pub fn countdown(x: &mut i32) -> bool {
     if *x == 0 { return true; }

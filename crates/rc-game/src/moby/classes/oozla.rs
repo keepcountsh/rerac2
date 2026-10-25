@@ -12,6 +12,8 @@
 //! * 0x0936 / 0x08fa / 0x0a00 (`0x3b3310`): the platforms those targets move ([`update_dynamo_platform`]).
 //! * 0x0a95 (`0x3d01f8`): the Dynamo to pick up ([`update_0a95`]).
 //! * 0x0a7b (`0x3cb158`): the conveyor platforms the Dynamo slides out ([`update_0a7b`]).
+//! * 0x061c (`0x3a6fb8`): the path riders on the swamp, knocked off and sinking when hit ([`update_061c`]).
+//! * 0x0ace (`0x3d42b0`): the Tractor Beam's seller ([`update_0ace`]).
 //!
 //! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
 //! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
@@ -1393,7 +1395,7 @@ pub fn update_0a1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 }
 /// 0x0ace (`0x3d42b0`): the Tractor Beam's seller at the end of the slide tube. The price is item 0x2e's record's
 /// (`0x263820 + 0xe0·0x139596`, 1000 bolts). By state:
-/// * **0**: the Tractor Beam had (`0x1a7b2e`) deletes it (`0x307440`); else 1, or with scene 0x24 seen (`0x13978c`)
+/// * **0**: the Tractor Beam had (`0x1a7b2e`) deletes it (`0x307440`); else 1, or with scene 0x27 seen (`0x13978c`)
 ///   3 when the bolts are under the price, else 4; its grid cells (`0x313ae0`) and its prop 0xd7e made (`0x3070d8`:
 ///   its update and draw distances, drawn).
 /// * **1**: Ratchet in the cuboid `+0x120` queues the talk scene 0x27 (`0x2ea1f0` → `0x2f4ee8`) and starts it (`0x2ea338`
@@ -1430,7 +1432,7 @@ pub fn update_0ace(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     match w.mobys[id].state {
         0 => {
             if had { return w.delete(id); }
-            let next = if ctx.game.scenes_seen.get(0x24).copied().unwrap_or(false) { if bolts < price { 3 } else { 4 } } else { 1 };
+            let next = if ctx.game.scenes_seen.get(0x27).copied().unwrap_or(false) { if bolts < price { 3 } else { 4 } } else { 1 };
             w.mobys[id].set_state(next, -1);
             w.rebuild(id, &*ctx.host);
             if w.class(PROP_CLASS).is_some() {
@@ -1504,4 +1506,108 @@ fn can_talk(w: &MobyWorld, id: usize, ctx: &Ctx, r: f32, n: i32) -> bool {
     if ctx.game.scenes.mode != crate::scene::PLAY { return false; }
     if r + r < crate::hero::physics::dist(w.mobys[id].pos, h.pos) { return false; }
     n <= w.frame
+}
+
+/// 0x061c (`0x3a6fb8`, 22 placed): a rider on a path of the swamp (pvars: `+0x50` the path, `+0x54` its height a tick,
+/// `+0x58` where it starts (a share of the points), `+0x5c` where it is, `+0x60` / `+0x68` its velocity when knocked off,
+/// `+0x70` the path loops, `+0x74` its step a tick, `+0x78` its sinking ticks). By state:
+/// * **0**: no path (−1) deletes it; else the hits counted (`gp+0x834`) cleared, the step 6 a second (`gp+0x82c`)
+///   over the first segment's length, the path looped when that and the length from the first point to the last differ
+///   by under 0.1 (as the game compares them), the start `+0x58` · the points; 1, updated at any distance, its scale
+///   × 2 (`gp+0x830`).
+/// * **1**: its pose on the path (crate::paths::pose: the place, the pitch halved, the yaw), raised by `+0x54`, the
+///   step on (wrapping past the points); with its sequence having wrapped (`+0x60 & 2`) sequence 0 rising, else 1 (a
+///   10-tick blend: the animation's trigger sounds go with them). A hit with the flags 0x10000 (`0x313d88`) knocks it
+///   off: 0.05 a tick along its facing (`gp+0x82c` / 120 through its rows), 0.05 down; the fourth hit of the level on
+///   Oozla shows the message 0x1233 once (`0x1a7a75`); 2.
+/// * **2**: its first tick plays class sound 0 (`0x320328` = L00 `0x32a7c8`, `0x356978`); it flies (the velocity falling 0.003 a
+///   tick, slowing to 0.98 across, its pitch easing to π), its animation at half speed; within 0.5 of the ground
+///   under it (`0x312c20` = L00 `0x31ce20`) it sinks for 30 ticks: 3.
+/// * **3**: its first tick plays class sound 1; it sinks at its fall's speed; then it is gone.
+///
+/// Not ported: the splash (`0x317148`: the billows, the splash drops, the light), the break's debris and drops
+/// (`0x3a7428`) and the drop `0x31d020(0, rider, 1)`, the half animation speed of state 2, the call `0x356ad8(1, 0, 0)`
+/// with the hint, and the hint flag's save.
+pub fn update_061c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    const STEP: f32 = 6.0;
+    const SCALE: f32 = 2.0;
+    let path_of = |ctx: &Ctx, i: i32| usize::try_from(i).ok().and_then(|i| ctx.level.paths.get(i)).filter(|p| 2 <= p.len()).cloned();
+    let state = w.mobys[id].state;
+    match state {
+        0 | 1 => {
+            let Some(points) = path_of(ctx, w.mobys[id].pv_i(0x50)) else {
+                if state == 0 { return w.delete(id); }
+                return;
+            };
+            let n = points.len();
+            if state == 0 {
+                ctx.game.rider_hits = 0;
+                let p3 = |k: usize| [points[k][0], points[k][1], points[k][2]];
+                let first = crate::hero::physics::dist(p3(0), p3(1));
+                let whole = crate::hero::physics::dist(p3(0), p3(n - 1));
+                let class_scale = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
+                let m = &mut w.mobys[id];
+                m.set_pv_f(0x74, STEP * 0.016_666_668 / first);
+                m.set_pv_i(0x70, ((first - whole).abs() < 0.1) as i32);
+                m.set_pv_f(0x5c, m.pv_f(0x58) * n as f32);
+                m.set_state(1, -1);
+                m.update_dist = 0xff;
+                m.scale = class_scale * SCALE;
+            }
+            let m = &mut w.mobys[id];
+            let z0 = m.pos[2];
+            let (pos, pitch, yaw, _) = crate::paths::pose(&points, m.pv_f(0x5c), m.pv_i(0x70) != 0);
+            m.pos = pos;
+            m.rot[1] = pitch * 0.5;
+            m.rot[2] = yaw;
+            m.pos[2] += m.pv_f(0x54);
+            let mut t = m.pv_f(0x5c) + m.pv_f(0x74);
+            if (n as f32) < t { t -= n as f32; }
+            m.set_pv_f(0x5c, t);
+            if let Some(a) = ctx.host.anim(&w.mobys[id]) {
+                if a.flags & 2 != 0 {
+                    let rising = z0 < w.mobys[id].pos[2];
+                    if rising && a.seq_b != 0 { ctx.host.set_anim(&w.mobys[id], 0, 0, 10); }
+                    if !rising && a.seq_b != 1 { ctx.host.set_anim(&w.mobys[id], 1, 0, 10); }
+                }
+            }
+            // `0x313d88(rider, 0x10000, 0)`: a hit without those flags is dropped.
+            let Some(h) = w.hit_message(id) else { return };
+            if h.tmpl.flags & 0x0001_0000 == 0 { return w.clear_hit(id); }
+            let m = &mut w.mobys[id];
+            let push = [STEP * 0.008_333_334, m.pv_f(0x64), m.pv_f(0x68)];
+            let v: V3 = std::array::from_fn(|k| push[0] * m.rows[0][k] + push[1] * m.rows[1][k] + push[2] * m.rows[2][k]);
+            m.set_pv_v(0x60, [v[0], v[1], -0.05]);
+            ctx.game.rider_hits += 1;
+            if 3 < ctx.game.rider_hits && ctx.game.level == 1 && !ctx.game.rider_hint {
+                ctx.game.rider_hint = true;
+                ctx.game.messages.push(crate::msgbox::Request::Text { text: 0x1233, ticks: None });
+            }
+            w.mobys[id].set_state(2, -1);
+        }
+        2 => {
+            if w.mobys[id].first() { ctx.host.play_sound(&w.mobys[id], 0, 0); }
+            let m = &mut w.mobys[id];
+            let v = m.pv_v(0x60);
+            m.pos = add(m.pos, v);
+            m.set_pv_v(0x60, [v[0] * 0.98, v[1] * 0.98, v[2] - 0.003]);
+            m.rot[0] = add_rot(-PI, (m.rot[0] + PI) * 0.95);
+            let pos = m.pos;
+            if crate::moby::ground_under(ctx, pos).is_some_and(|g| (g - pos[2]).abs() < 0.5) {
+                let m = &mut w.mobys[id];
+                m.set_pv_i(0x78, 0x1e);
+                m.set_state(3, -1);
+            }
+        }
+        3 => {
+            if w.mobys[id].first() { ctx.host.play_sound(&w.mobys[id], 1, 0); }
+            let m = &mut w.mobys[id];
+            m.pos[2] += m.pv_f(0x68);
+            let mut t = m.pv_i(0x78);
+            let out = crate::moby::countdown(&mut t);
+            m.set_pv_i(0x78, t);
+            if out { w.delete(id); }
+        }
+        _ => {}
+    }
 }

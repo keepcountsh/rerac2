@@ -168,6 +168,8 @@ pub(crate) struct Play {
     pub(crate) camera: FollowCamera,
     /// The space fights' flight while the ship's camera is current (rc_game::ship).
     ship: Option<rc_game::ship::Flight>,
+    /// A story chain plays in the flight (`0x3671b8`).
+    chain: bool,
     /// The level's mobys (crate::mobys).
     pub(crate) mobys: Option<crate::mobys::Mobys>,
     /// The game-wide state (bolts, health limit).
@@ -188,6 +190,8 @@ pub(crate) struct Play {
     /// This tick's draw-callback quads (rc_game::fx), drawn by [`draw_shots`].
     fx_quads: Vec<rc_game::fx::FxQuad>,
     scene_wad: Option<(Vec<u8>, rc_formats::disc::scene::SceneWad)>,
+    /// `G/SPACE.WAD` and the story scenes' table between the levels (rc_formats::disc::scene::is_shared).
+    shared_scenes: Option<(Vec<u8>, rc_formats::disc::scene::SceneWad)>,
     /// The class sequence slots a scene's actors took (class, slot) and what the slots held before.
     scene_slots: Vec<(usize, usize, Option<rc_formats::moby_anim::MobySequence>)>,
     /// The movie playing (mode 1) and its picture for the next draw.
@@ -312,12 +316,7 @@ fn tick(
             p.game.checkpoint = Some((at, rot));
         }
         let mut m = m;
-        // The tables' addresses are Aranos's overlay's.
-        m.canopy = (crate::level_load::level_index() == 0)
-            .then(|| crate::level_wad::overlay(&crate::level_load::extracted_root(), 0).ok())
-            .flatten()
-            .and_then(|ov| rc_game::canopy::CanopyMesh::read(|a, n| crate::level_wad::overlay_read(&ov, a, n)))
-            .map(rc_game::canopy::Canopy::new);
+        m.canopy = canopy_mesh(&crate::level_load::extracted_root(), crate::level_load::level_index()).map(rc_game::canopy::Canopy::new);
         // The nanotech glow's tables (Aranos's overlay's addresses, rc_game::moby::classes::nanotech).
         m.world.nanotech.tables = (crate::level_load::level_index() == 0)
             .then(|| crate::level_wad::overlay(&crate::level_load::extracted_root(), 0).ok())
@@ -387,13 +386,25 @@ fn tick(
             println!("play: leaving level {} for level {to}", p.game.level);
             change.start_load(to as u32);
             p.leaving = Some(to);
+            // `0x367400`, every level change: the flight's flag cleared, the story chain picked (`gp−0x2d80`), the
+            // level left marked, and the flight over the load (rc_game::travel).
+            let g = &mut p.game;
+            g.travel.flight_ran = false;
+            g.travel.dest = to;
+            g.travel.story = rc_game::travel::story_pick(g, to, g.travel.story);
+            rc_game::travel::level_left(g);
+            if g.travel.story != 0 { println!("play: the story chain {:#x} on the way to level {to}", g.travel.story); }
+            // `0x360b90` / `0x32ee80`: every sound and stream stopped (the level's loops with them).
+            if let Some(out) = audio.as_deref_mut() { out.system().movie_stop(); }
+            flight_start(p, &mut level.0, &mut commands);
         }
     }
     if p.leaving.is_some() {
-        // The flight between the planets (rc_game::travel) over the load, after a trip by the ship.
-        if p.game.travel.by_ship && p.flight.is_none() && p.game.travel.flight.is_none() { flight_start(p, &mut level.0, &mut commands); }
+        // The flight between the planets (rc_game::travel) over the load, with its sound step (a movie of the story
+        // chain mixes its own, movie_tick).
+        if p.game.scenes.mode != rc_game::scene::MOVIE { scene_audio_frame(p, audio.as_deref_mut()); }
         if p.flight.is_some() {
-            if !flight_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut(), parts.as_deref_mut().map(|s| &mut s.sys), change.loaded()) {
+            if !flight_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut(), parts.as_deref_mut().map(|s| &mut s.sys), audio.as_deref_mut(), change.loaded()) {
                 p.ticks += 1;
                 return;
             }
@@ -440,18 +451,7 @@ fn tick(
     match p.game.scenes.mode {
         rc_game::scene::SCENE => {
             scene_tick(p, &mut level.0, &mut commands, occl.as_deref_mut(), anim.as_deref_mut(), parts.as_deref_mut().map(|s| &mut s.sys));
-            // The scene's audio frame (the world runs in a scene: `0x3716f8`), heard from the scene camera.
-            if let Some(out) = audio.as_deref_mut() {
-                let l = p.scene_listener.unwrap_or_else(|| listener(&p.camera));
-                let input = rc_game::audio::FrameInput { listener: l, hero_pos: p.hero.pos };
-                let owner = |id: u32| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id as usize)).filter(|m| m.state < 0x80).map(|m| m.pos);
-                out.external = true;
-                let (sys, buf) = out.parts();
-                let mut rng = sys.rng;
-                sys.scene_frame_with(true, &input, p.ticks as u32 + 1, &mut rng, &owner, buf);
-                sys.rng = rng;
-                out.push_frame();
-            }
+            scene_audio_frame(p, audio.as_deref_mut());
             p.ticks += 1;
             return;
         }
@@ -943,6 +943,21 @@ fn death_reset(p: &mut Play, lv: &crate::level_load::LoadedLevel) {
     p.game.show_health = Some(0x168);
 }
 
+/// The scene's audio frame (the world runs in a scene: `0x3716f8`; the level change's flight and story chain, mode 6):
+/// the EE sound step heard from the scene camera, then the frame's samples.
+fn scene_audio_frame(p: &Play, audio: Option<&mut crate::audio_out::AudioOut>) {
+    let Some(out) = audio else { return };
+    let l = p.scene_listener.unwrap_or_else(|| listener(&p.camera));
+    let input = rc_game::audio::FrameInput { listener: l, hero_pos: p.hero.pos };
+    let owner = |id: u32| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id as usize)).filter(|m| m.state < 0x80).map(|m| m.pos);
+    out.external = true;
+    let (sys, buf) = out.parts();
+    let mut rng = sys.rng;
+    sys.scene_frame_with(true, &input, p.ticks as u32 + 1, &mut rng, &owner, buf);
+    sys.rng = rng;
+    out.push_frame();
+}
+
 /// `0x32c858`'s changes (rc_game::scene): a scene's end and start, a movie's start.
 fn mode_changes(p: &mut Play, lv: &mut crate::level_load::LoadedLevel) {
     for c in p.game.scenes.switch(p.hero.hp) {
@@ -980,7 +995,6 @@ fn flight_start(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands:
         Ok(x) => x,
         Err(e) => {
             eprintln!("travel: the flight's lump not read ({e:#}): no flight");
-            p.game.travel.by_ship = false;
             return;
         }
     };
@@ -1017,9 +1031,25 @@ fn flight_variant(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, v: usiz
 /// `0x364260` sub 2 → `0x363360`: a tick of the flight: the variant's scene, the sky's drift and turn, the ship
 /// actor's scale in the arrival's last 40 ticks, the planet picture and the caption, and at a variant's end the next
 /// (or none: true, the flight is over). The old level's world runs under it as the original's does.
-fn flight_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &mut Commands, occl: Option<&mut MobyOcclusion>, anim: Option<&mut MobyAnim>, parts: Option<&mut rc_game::particles::Particles>, loaded: bool) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn flight_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &mut Commands, occl: Option<&mut MobyOcclusion>, anim: Option<&mut MobyAnim>, parts: Option<&mut rc_game::particles::Particles>, audio: Option<&mut crate::audio_out::AudioOut>, loaded: bool) -> bool {
     use rc_game::travel::FLIGHT_FRAME;
     if !p.game.travel.flight.as_ref().is_some_and(|f| !f.done) { return true; }
+    // The story chain (`0x3671b8`) plays through the scenes' modes (rc_game::scene: the queue, its skip), then the
+    // flight goes on.
+    if p.chain {
+        mode_changes(p, lv);
+        match p.game.scenes.mode {
+            rc_game::scene::SCENE => scene_tick(p, lv, commands, occl, anim, parts),
+            rc_game::scene::MOVIE => movie_tick(p, audio),
+            _ => {}
+        }
+        let s = &p.game.scenes;
+        if s.mode != rc_game::scene::PLAY || s.pending != rc_game::scene::NONE || s.player.is_some() || p.movie.is_some() { return false; }
+        p.chain = false;
+        p.game.travel.frame = Some(FLIGHT_FRAME);
+        return flight_variant_next(p, lv, loaded);
+    }
     if p.game.scenes.player.is_none() {
         // The variant's scene did not start (no actors to make, say): on to the next.
         return flight_next(p, lv, loaded);
@@ -1031,7 +1061,9 @@ fn flight_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: 
     // The sky's shells: their angles with the variant's turn, the drift (crate::sky_render).
     let pose: Vec<(Quat, [f32; 3])> = (0..8).map(|k| (crate::sky_render::euler_rotation(fl.shell_angles(k)), fl.sky_translation)).collect();
     commands.insert_resource(crate::sky_render::FlightSkyPose(pose));
-    // The actors (and the ship's parts) shrink into the planet in the arrival's last 40 ticks.
+    // The actors (and the ship's parts) shrink into the planet in the arrival's last 40 ticks; then, the ship there
+    // without the trip kind's own moby (kind 0), the flight ran (`0x152c2c` = 1): the landing on arrival.
+    if scale < 1.0 && fl.kind == 0 { p.game.travel.flight_ran = true; }
     if scale < 1.0 {
         if let (Some(mobys), Some(pl)) = (p.mobys.as_mut(), p.game.scenes.player.as_ref()) {
             let ids: Vec<usize> = pl.actors.iter().map(|a| a.0).filter(|&a| a != usize::MAX).chain(p.game.ship_parts.iter().copied()).collect();
@@ -1071,10 +1103,30 @@ fn flight_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: 
     false
 }
 
-/// A variant's end (`0x363360`): its actors go, then the next variant or the end of the flight.
+/// A variant's end (`0x363360`): its actors go; a story chain picked (`gp−0x2d80`) plays (`0x3671b8`: the ids it marks
+/// seen, then its scenes and movies queued and started, `0x2f4ee8` / `0x2f5030`) and is cleared; then the next variant
+/// or the end of the flight.
 fn flight_next(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, loaded: bool) -> bool {
     if p.game.scenes.player.is_some() { end_scene(p, lv); }
     p.game.scenes.mode = rc_game::scene::PLAY;
+    p.game.scenes.space = None;
+    let story = std::mem::take(&mut p.game.travel.story);
+    if story != 0 {
+        let (marks, plays) = rc_game::travel::story_chain(story);
+        for &id in marks { if let Some(s) = p.game.scenes_seen.get_mut(id as usize) { *s = true; } }
+        for &id in plays { p.game.scenes.queue.push(id); }
+        let hp = p.hero.hp.max(1);
+        if p.game.scenes.start_queue(hp) {
+            println!("travel: tick {}: the story chain {story:#x}: {plays:x?}", p.ticks);
+            p.chain = true;
+            return false;
+        }
+    }
+    flight_variant_next(p, lv, loaded)
+}
+
+/// The next variant, or the end of the flight.
+fn flight_variant_next(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, loaded: bool) -> bool {
     let Some(mut fl) = p.game.travel.flight.take() else { return true };
     let next = fl.next_variant(&mut p.game, loaded);
     let over = fl.done;
@@ -1167,7 +1219,7 @@ fn travel_arrival(p: &mut Play, lv: &crate::level_load::LoadedLevel) {
         travel_landing(p, lv, true);
     }
     // `0x367400` / `0x304420`: the flight's flag is for one arrival.
-    p.game.travel.by_ship = false;
+    p.game.travel.flight_ran = false;
 }
 
 /// `0x364260`'s end of a ship scene: after the take-off the pages (mode 3 kind 4); after the landing mode 6 is left
@@ -1266,11 +1318,10 @@ fn travel_frame(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands:
                 commands.insert_resource(PlayView { view: scene_view(&rc_game::scene_camera::SceneCamera { eye: pos, rows, tan_half_fov: g.cameras.tan, cut: false }), tan_half_fov: g.cameras.tan, far });
             }
             if out.leave {
-                // `0x1a8ed4 = 1`: the level's main loop ends and `0x367400` loads the destination behind the flight (not
-                // ported: the port's level switch is black); the autosave `0x30d658(0, dest)` of `0x362010` goes with it.
+                // `0x1a8ed4 = 1`: the level's main loop ends and `0x367400` loads the destination behind the flight; the
+                // autosave `0x30d658(0, dest)` of `0x362010` goes with it.
                 let dest = p.game.travel.dest;
                 println!("travel: tick {}: the fly-away ended: level {dest}", p.ticks);
-                p.game.travel.by_ship = true;
                 p.game.travel.phase = Phase::Idle;
                 p.game.travel.fly = None;
                 p.game.go_to_level(dest, true);
@@ -1284,7 +1335,9 @@ fn travel_frame(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands:
 /// Aranos, else Start with L1 L2 R1 R2 held), the chain's next or back. No sound yet.
 fn movie_tick(p: &mut Play, mut audio: Option<&mut crate::audio_out::AudioOut>) {
     let start = p.pad.pressed & rc_game::pad::button::START != 0;
-    let skip = start && (p.game.level <= 0 || p.pad.held & 0xf == 0xf);
+    // The level the game is in (`0x1a79f8`): during a level change already the destination (`0x367400`).
+    let level = if p.leaving.is_some() { p.game.travel.dest } else { p.game.level };
+    let skip = start && (level <= 0 || p.pad.held & 0xf == 0xf);
     let over = match p.movie.as_mut() {
         Some(m) => {
             if let Some(pic) = m.advance() { p.movie_picture = Some(pic); }
@@ -1312,23 +1365,38 @@ fn movie_tick(p: &mut Play, mut audio: Option<&mut crate::audio_out::AudioOut>) 
     }
 }
 
-/// Scene `id` of the level (its record in `G/SCENEn.WAD`).
-fn load_scene(p: &mut Play, id: i32) -> anyhow::Result<Option<rc_formats::scene::Scene>> {
+/// The scene file of scene `id` and its table: the level's `G/SCENEn.WAD`, or for the story scenes between the
+/// levels `G/SPACE.WAD` with the `SPACE` header's records (rc_formats::disc::space::story_scenes); loaded once each.
+fn scene_file(p: &mut Play, id: i32) -> anyhow::Result<&(Vec<u8>, rc_formats::disc::scene::SceneWad)> {
     use anyhow::Context;
-    if p.scene_wad.is_none() {
-        let path = crate::level_load::extracted_root().join(format!("G/SCENE{}.WAD", crate::level_load::level_index()));
-        let wad = std::fs::read(&path).with_context(|| format!("{}", path.display()))?;
-        let table = rc_formats::disc::scene::SceneWad::parse(&wad)?;
-        p.scene_wad = Some((wad, table));
+    let shared = rc_formats::disc::scene::is_shared(id);
+    let slot = if shared { &mut p.shared_scenes } else { &mut p.scene_wad };
+    if slot.is_none() {
+        let root = crate::level_load::extracted_root();
+        *slot = Some(if shared {
+            let hdr = crate::disc_source::read(&root, "RC2.HDR")?;
+            let table = rc_formats::disc::space::story_scenes(&rc_formats::disc::toc::Toc::parse(&hdr)?)?;
+            (crate::disc_source::read(&root, "G/SPACE.WAD")?, table)
+        } else {
+            let path = root.join(format!("G/SCENE{}.WAD", crate::level_load::level_index()));
+            let wad = std::fs::read(&path).with_context(|| format!("{}", path.display()))?;
+            let table = rc_formats::disc::scene::SceneWad::parse(&wad)?;
+            (wad, table)
+        });
     }
-    let (wad, table) = p.scene_wad.as_ref().expect("scene file");
+    Ok(slot.as_ref().expect("scene file"))
+}
+
+/// Scene `id` (its record in its scene file, [`scene_file`]).
+fn load_scene(p: &mut Play, id: i32) -> anyhow::Result<Option<rc_formats::scene::Scene>> {
+    let (wad, table) = scene_file(p, id)?;
     Ok(table.scene(wad, rc_formats::disc::scene::record_of(id) as usize)?)
 }
 
 /// A scene's speech: its record's English stream (`speech[0]`, sectors from `SCENEn.WAD`'s start), a `VAGp` file
 /// (its size from the header's big-endian data size).
 fn scene_speech(p: &Play, id: i32) -> Option<std::sync::Arc<[u8]>> {
-    let (wad, table) = p.scene_wad.as_ref()?;
+    let (wad, table) = if rc_formats::disc::scene::is_shared(id) { p.shared_scenes.as_ref()? } else { p.scene_wad.as_ref()? };
     let r = table.records.get(rc_formats::disc::scene::record_of(id) as usize)?;
     let at = *r.speech.first().filter(|&&s| s != 0)? as usize * 2048;
     let head = wad.get(at..at + 0x30)?;
@@ -1518,9 +1586,9 @@ fn scene_tick(p: &mut Play, lv: &mut crate::level_load::LoadedLevel, commands: &
             let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut(), view: None };
             rc_game::hero::items::head_pass(&mut mobys.world, &mut ctx);
             rc_game::hero::items::feet_pass(&mut mobys.world, &mut ctx);
-            // The ship's parts on the scene's ship, the one drawn, at itself (as the original's frames show them).
+            // The ship's parts on the scene's ship actor (`0x2fd818` / `0x364260` → `0x361050`).
             let ship = ctx.game.scenes.player.as_ref().and_then(|pl| pl.actors.iter().map(|a| a.0).find(|&a| mobys.world.mobys.get(a).is_some_and(|m| m.o_class == 0xd54)));
-            if let Some(s) = ship.filter(|_| !ctx.game.ship_parts.is_empty()) { rc_game::moby::classes::props::place_ship_parts_on(&mut mobys.world, s, &mut ctx, true); }
+            if let Some(s) = ship { rc_game::moby::classes::props::ride_ship_parts(&mut mobys.world, s, &mut ctx); }
         }
         let hl = if scene_hero { Vec::new() } else { mobys.hero_layers(&p.hero.layers) };
         let pose = crate::mobys::HeroPose { class: p.class, state: &state, snapshot: snapshot.as_ref(), pos, rows, scale: p.scale, mods: &mods, layers: &hl };
@@ -1680,6 +1748,16 @@ impl ItemPictures {
 }
 
 /// Level `index`'s pause tables, found from Aranos's (rc_formats::disc::menu_tables); none on a failure.
+/// The ship's canopy tables in the level's overlay (rc_game::canopy: Aranos's addresses, relocated to the level's).
+fn canopy_mesh(root: &std::path::Path, index: u32) -> Option<rc_game::canopy::CanopyMesh> {
+    use rc_formats::level_overlay::{LevelOverlay, Relocation};
+    let level = crate::level_wad::overlay(root, index).ok()?;
+    let aranos = if index == 0 { level.clone() } else { crate::level_wad::overlay(root, 0).ok()? };
+    let (t, r) = (LevelOverlay::parse(&level).ok()?, LevelOverlay::parse(&aranos).ok()?);
+    let rel = Relocation::new(&r, &t);
+    rc_game::canopy::CanopyMesh::read(|a| rel.data(a), |a, n| t.read(a, n).map(<[u8]>::to_vec))
+}
+
 pub(crate) fn menu_tables(root: &std::path::Path, index: u32) -> rc_formats::disc::menu_tables::MenuTables {
     let read = || -> anyhow::Result<_> {
         let level = crate::level_wad::overlay(root, index)?;
@@ -1952,8 +2030,11 @@ fn draw_hud(
         }
         quads.extend(p.flight_quads.iter().cloned());
     }
+    // The letterbox and the scene fade are the frame draw's (`0x2e82c0`, `0x1b1860`): a movie's player (`0x366de8`)
+    // draws its pictures alone, without them.
+    let movie = p.game.scenes.mode == rc_game::scene::MOVIE;
     // The letterbox (`0x2e82c0`: black bars of `0x1b186c` pixels at the top and the bottom).
-    let bars = p.game.scenes.bars as f32;
+    let bars = if movie { 0.0 } else { p.game.scenes.bars as f32 };
     if 0.0 < bars {
         let (w, h) = (rc_game::gui::SCREEN_W, rc_game::gui::SCREEN_H);
         for (y0, y1) in [(0.0, bars), (h - bars, h)] {
@@ -1965,7 +2046,7 @@ fn draw_hud(
         rc_game::gui::fill(&mut quads, [0, 0, 0, (0x80 - (DEATH_FADE - 1 - k) * 0x80 / DEATH_FADE) as u8]);
     }
     // The fade into and out of a scene (`0x1b1860`, 1 black).
-    let fade = p.game.scenes.fade.clamp(0.0, 1.0);
+    let fade = if movie { 0.0 } else { p.game.scenes.fade.clamp(0.0, 1.0) };
     if 0.0 < fade { rc_game::gui::fill(&mut quads, [0, 0, 0, (fade * 128.0) as u8]); }
     let mut d = crate::hud_render::Hud2d::default();
     for q in quads {
@@ -2071,8 +2152,11 @@ fn ship_screen(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut id: Local<Option<crate::world_screen::WorldScreenId>>,
     mut layered: Local<Vec<Entity>>,
+    generation: Res<crate::level_switch::LevelGeneration>,
 ) {
-    if screens.is_added() { (*id, *layered) = (None, Vec::new()); }
+    // A level change resets the screens (crate::level_switch::reset, a change of the resource, not an addition) and
+    // the actor's entities: the id and the moved entities go with them.
+    if screens.is_added() || generation.is_changed() { (*id, *layered) = (None, Vec::new()); }
     let screen = play.as_ref().zip(view.as_ref()).and_then(|(p, v)| {
         let mobys = p.mobys.as_ref()?;
         p.game.scenes.ship_screen(p.game.level, &mobys.world, v.view.pos_f32()).map(|s| (s, v.tan_half_fov))
@@ -2222,8 +2306,8 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     println!("play: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
-        hero, class, instance, scale, pad: PadState::default(), camera, ship: None, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
-        fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None, qs: Default::default(), qs_paused: false, vendor: Default::default(), space_scene: None, flight: None, flight_cam: None, flight_quads: Vec::new(),
+        hero, class, instance, scale, pad: PadState::default(), camera, ship: None, chain: false, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
+        fx_quads: Vec::new(), scene_wad: None, shared_scenes: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None, qs: Default::default(), qs_paused: false, vendor: Default::default(), space_scene: None, flight: None, flight_cam: None, flight_quads: Vec::new(),
         help: Default::default(), boxes: Default::default(), glyphs: None, texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),
     })

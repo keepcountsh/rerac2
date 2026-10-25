@@ -38,6 +38,18 @@ pub(crate) fn scene_part(toc: &Toc, lump: usize) -> Result<Part> {
 }
 
 /// Scene lump `lump` of `SPACE.WAD`, its chunks decompressed and parsed (NTSC).
+/// The story scenes between the levels (ids 0xa9..=0xb0, `crate::disc::scene::is_shared`): 8 records of the level
+/// scene tables' format (`{speech sectors[12], chunk sectors[71]}`) at `SPACE` header + 0x58 (`0x14f3b8`; the chunks'
+/// at + 0x88, `0x366150`'s `0x14f3e8`), their sectors from `SPACE.WAD`'s start.
+pub fn story_scenes(toc: &Toc) -> Result<crate::disc::scene::SceneWad> {
+    let h = toc.header(Global::Space)?;
+    crate::disc::scene::SceneWad::from_table(h.bytes(), STORY_ROWS, STORY_SCENES)
+}
+
+/// The story scenes' records in the `SPACE` header, and how many (they end where the hull rows start, + 0xab8).
+const STORY_ROWS: usize = 0x58;
+pub const STORY_SCENES: usize = 8;
+
 pub fn scene(toc: &Toc, wad: &[u8], lump: usize) -> Result<crate::scene::Scene> {
     let r = scene_part(toc, lump)?.bytes();
     if r.is_empty() { return crate::buf::invalid(format!("ship scene lump {lump}: no sectors")); }

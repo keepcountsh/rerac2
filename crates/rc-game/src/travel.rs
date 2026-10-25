@@ -248,12 +248,16 @@ pub struct Travel {
     pub phase: Phase,
     /// The scene's frame while a ship scene plays.
     pub frame: Option<ShipFrame>,
-    /// `0x152c2c`: the flight ran (the next level starts with the landing); `0x152c2a`: the level's start (the
+    /// `0x152c2c`: the flight ran to its arrival (cleared by every level change `0x367400`, set by the arrival
+    /// variant's end, [`Flight::tick`]): the next level starts with the landing; `0x152c2a`: the level's start (the
     /// landing there leaves Ratchet where the level put him).
-    pub by_ship: bool,
+    pub flight_ran: bool,
     pub level_start: bool,
     /// `0x1b1940`: the destination.
     pub dest: i32,
+    /// `gp−0x2d80`: the story chain the level change picked ([`story_pick`]), played at the flight's first variant's
+    /// end ([`story_chain`]) and cleared.
+    pub story: i32,
     pub menu: Menu,
     pub fly: Option<FlyAway>,
     /// The flight between the planets while the next level loads ([`Flight`]).
@@ -299,7 +303,7 @@ pub fn draw_ship_shadow(g: &GameState, view: &crate::particles::BSphereView, out
 
 impl Travel {
     /// What the level change carries (`entry`: `0x152c2a = 1`, the flight's flag kept for the arrival).
-    pub fn carried(old: Travel) -> Travel { Travel { by_ship: old.by_ship, level_start: true, ..Default::default() } }
+    pub fn carried(old: Travel) -> Travel { Travel { flight_ran: old.flight_ran, level_start: true, ..Default::default() } }
 
     /// The game stops for the ship mode's own phases (the pages, the fly-away).
     pub fn blocks_play(&self) -> bool { matches!(self.phase, Phase::Menu | Phase::FlyAway) }
@@ -313,7 +317,7 @@ impl Travel {
     /// `entry`'s landing test (module docs) for the level just entered.
     pub fn lands_on_arrival(&self, g: &GameState) -> bool {
         let level = g.level;
-        if !self.by_ship || space_level(level) || level == 0 || !on_map(level) { return false; }
+        if !self.flight_ran || space_level(level) || level == 0 || !on_map(level) { return false; }
         // Barlow with item 0x27 needs the flag `0x1395ca`, Dobbo (9) is out with `0x1395e5`, Todano (0xe) needs
         // its mission byte `0x19b3d2`: the port keeps none of the two flags (0 here).
         if level == 4 && g.items.get(0x27).is_some_and(|&b| b != 0) { return false; }
@@ -398,8 +402,10 @@ fn ground(ctx: &Ctx, p: V3) -> Option<f32> {
 /// placed (crate::moby::classes::props); the "stood on" lift (`+0xbc`, the probe `0x2de878` from Ratchet up 2) is
 /// not ported.
 fn ship_ground(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
-    if ctx.game.ship_parts.is_empty() { crate::moby::classes::props::ship_parts(w, id, ctx); }
-    if ctx.game.scenes.mode != crate::scene::PLAY { return; }
+    if ctx.game.scenes.mode != crate::scene::PLAY {
+        if ctx.game.ship_parts.is_empty() { crate::moby::classes::props::ship_parts(w, id, ctx); }
+        return;
+    }
     let pos = w.mobys[id].pos;
     let target = ground(ctx, pos).map_or(pos[2], |g| g + GROUND_LIFT);
     let (mut z, mut vel) = (pos[2], ctx.game.travel.z_vel);
@@ -409,7 +415,7 @@ fn ship_ground(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     // The arrival's own ship (0x1330) places the parts on itself while it flies by; the parked ship (at Aranos's
     // placeholder (20, 20, 20)) leaves them to it then [port].
     let flyby = w.mobys.iter().any(|m| m.o_class == 0x1330 && m.state < 0x80 && (1..=3).contains(&m.state));
-    if !flyby { crate::moby::classes::props::place_ship_parts(w, id, ctx); }
+    if !flyby { crate::moby::classes::props::ride_ship_parts(w, id, ctx); }
 }
 
 /// `0x361628`: the parked ship's update (module docs).
@@ -1133,6 +1139,49 @@ pub fn flight_kind(from: i32, dest: i32) -> usize {
     if dest == 0x1a || from == 0x1a { return 2; }
     if dest == 0xe { return 3; }
     0
+}
+
+/// `0x367400`'s story pick for a level change to `dest` (`gp−0x2d80`; `pending` its value so far): the first of
+/// Aranos (0), Oozla (1), Notak (5) and Smolg (8) visited (`0x1a7bf0`) and not the destination whose chain is not seen
+/// (0xa9, 0x17, 0xab, 0xad: the seen bit `0x139768 + (id & !3)`, `1 << (id & 31)`, crate::game::GameState::scenes_seen);
+/// else with the planets 10 or 11 unlocked (`0x1a7bd0`) and 0x1a not seen, 0x1a; else to Joba (0xd) with 0x1b not
+/// seen, 0x1b; else with level 0x10 visited, not the destination, and 0xaf not seen, 0xaf; else `pending`.
+pub fn story_pick(g: &GameState, dest: i32, pending: i32) -> i32 {
+    let visited = |l: usize| g.visited.get(l).is_some_and(|&b| b != 0);
+    let unlocked = |l: usize| g.planets.get(l).is_some_and(|&b| b != 0);
+    let seen = |id: usize| g.scenes_seen.get(id).copied().unwrap_or(false);
+    for (level, id) in [(0, 0xa9), (1, 0x17), (5, 0xab), (8, 0xad)] {
+        if visited(level) && dest != level as i32 && !seen(id) { return id as i32; }
+    }
+    if !(!unlocked(10) && !unlocked(11) || seen(0x1a)) { return 0x1a; }
+    if dest == 0xd && !seen(0x1b) { return 0x1b; }
+    if visited(0x10) && dest != 0x10 && !seen(0xaf) { return 0xaf; }
+    pending
+}
+
+/// `0x3671b8`: a story chain: the ids it marks seen first, then what it plays in order (scenes `0x366c68`, movies
+/// `0x366de8`; a skip ends it): after Aranos the scene 0xa9, the movie 1 and the scene 0xaa; after Notak 0xab, 0x18,
+/// 0xac; after Smolg 0xad, 0x19, 0xae; after level 0x10 0xaf, 0x1c, 0xb0; 0x17, 0x1a and 0x1b are a movie alone.
+pub fn story_chain(id: i32) -> (&'static [i32], &'static [i32]) {
+    match id {
+        0xa9 => (&[1, 0xa9, 0xaa], &[0xa9, 1, 0xaa]),
+        0xab => (&[0x18, 0xab, 0xac], &[0xab, 0x18, 0xac]),
+        0xad => (&[0x19, 0xad, 0xae], &[0xad, 0x19, 0xae]),
+        0xaf => (&[0x1c, 0xb0, 0xaf], &[0xaf, 0x1c, 0xb0]),
+        0x17 => (&[], &[0x17]),
+        0x1a => (&[], &[0x1a]),
+        0x1b => (&[], &[0x1b]),
+        _ => (&[], &[]),
+    }
+}
+
+/// `0x367400`'s mark of the level left (`0x1a79f8`): below 0x13, and not Aranos before the movie 1 is seen, its
+/// visited byte 2.
+pub fn level_left(g: &mut GameState) {
+    let l = g.level;
+    if (0..0x13).contains(&l) && (l != 0 || g.scenes_seen.get(1).copied().unwrap_or(false)) {
+        if let Some(v) = g.visited.get_mut(l as usize) { *v = 2; }
+    }
 }
 
 /// The flight (`0x365960` / `0x363360`: `0x152c64` the variant, `0x152c68` the count, the sky's drift and turn, the

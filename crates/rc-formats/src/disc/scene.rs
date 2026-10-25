@@ -28,6 +28,11 @@ pub(crate) const SCENE_BASES: [u8; 28] = [
 /// Whether `id` is an in-engine scene (`(id − 0x20) < 0x91`), else a movie.
 pub fn is_scene(id: i32) -> bool { ((id - 0x20) as u32) < 0x91 }
 
+/// Whether scene `id` is a story scene between the levels (the ids from the last base on, 0xa9..=0xb0): `0x366150`
+/// reads its records from the `SPACE` header (`0x14f3e8` = `RC2.HDR` `0x14b540` + 0x3ea8), its sectors from
+/// `SPACE.WAD`'s (`0x14f364`), not the level's table (crate::disc::space::story_scenes).
+pub fn is_shared(id: i32) -> bool { is_scene(id) && SCENE_BASES[27] as i32 <= id }
+
 /// `0x369fe8`: a scene's record in its level's table (the id less the largest base not above it), or a movie's row.
 pub fn record_of(id: i32) -> i32 {
     if is_scene(id) {
@@ -67,17 +72,23 @@ pub struct SceneWad {
 
 impl SceneWad {
     pub fn parse(wad: &[u8]) -> Result<SceneWad> {
+        let size = wad.get(0..4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+        if size < 8 + RECORDS * RECORD_SIZE { return invalid(format!("SCENE.WAD table: size {size:#x}")); }
+        SceneWad::from_table(wad, 8, RECORDS)
+    }
+
+    /// `count` records from `table` at `at` (the level files' table after its 8-byte head; the story scenes' in the
+    /// `SPACE` header, crate::disc::space::story_scenes).
+    pub fn from_table(table: &[u8], at: usize, count: usize) -> Result<SceneWad> {
         let w = |o: usize| -> Result<u32> {
-            match wad.get(o..o + 4) {
+            match table.get(o..o + 4) {
                 Some(b) => Ok(u32::from_le_bytes(b.try_into().unwrap())),
-                None => invalid(format!("SCENE.WAD table: {o:#x} past the end")),
+                None => invalid(format!("scene table: {o:#x} past the end")),
             }
         };
-        let size = w(0)? as usize;
-        if size < 8 + RECORDS * RECORD_SIZE { return invalid(format!("SCENE.WAD table: size {size:#x}")); }
-        let mut records = Vec::with_capacity(RECORDS);
-        for r in 0..RECORDS {
-            let base = 8 + r * RECORD_SIZE;
+        let mut records = Vec::with_capacity(count);
+        for r in 0..count {
+            let base = at + r * RECORD_SIZE;
             let speech: [u32; LANGUAGES] = std::array::from_fn(|i| w(base + 4 * i).unwrap_or(0));
             let mut chunks = Vec::new();
             for i in 0..CHUNK_SLOTS {
