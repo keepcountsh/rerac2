@@ -174,7 +174,10 @@ impl Hero {
             return self.set_state(anim, env, id, true);
         }
         // `0x2c8f38`: out of the water from below; the dive from the surface.
-        if self.group == 0x11 && wz + 0.4 < self.pos[2] { return self.set_state(anim, env, 6, true); }
+        if self.group == 0x11 && wz + 0.4 < self.pos[2] {
+            self.underwater_write = Some(false);
+            return self.set_state(anim, env, 6, true);
+        }
         if self.group != 0x12 { return false; }
         let a = [self.pos[0], self.pos[1], wz + 0.01];
         let b = [self.pos[0], self.pos[1], wz + 0.31];

@@ -291,6 +291,8 @@ pub struct Hero {
     pub damage: damage::DamageBlock,
     pub pending_damage: Option<i32>,
     pub show_health: Option<i32>,
+    /// This tick's write of the underwater flag `0x1b9000` (crate::fog; the engine applies it to the game state).
+    pub underwater_write: Option<bool>,
     /// The surface flags (`0x18b2b0..`, `0x2aca80`), the wall jump's wall (`0x2ac5f0`), the ahead probe
     /// (`0x2c3068`).
     pub surf: surface::SurfaceBlock,
@@ -409,7 +411,7 @@ impl Hero {
             quick_turn: 0, run_dir: [1.0, 0.0, 0.0], run_yaw: 0.0, anim_speed: 1.0, state: 0, substate: 0, group: 0,
             prev_state: 0, prev_group: 0, prev2_state: 0, prev2_group: 0, prev_timer: 0, cam_mode: 0, mode: 0, jump: JumpBlock { air_turn: 0.250_011_4, terminal: 0.833_333_3, ..JumpBlock::default() },
             pos_hist: [[0.0; 3]; HISTORY], pos_hist_idx: 0, pos_hist_count: 0, yaw_hist: [0.0; HISTORY], yaw_hist_idx: 0,
-            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], carry_yaw: 0.0, ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None,
+            yaw_hist_count: 0, melee: Default::default(), items: Default::default(), carry: [0.0; 3], carry_yaw: 0.0, ledge: Default::default(), anim_frame: 0.0, damage: Default::default(), pending_damage: None, show_health: None, underwater_write: None,
             surf: Default::default(), wall: Default::default(), ahead: Default::default(), frame: 0, ground_moby: None, ground_class: -1,
             bounce: [37.0, 13.0], glide_vz: 0.0, glide_sink: 0.0, hot_hops: 0, glide_lag: 0, ice_along: 0.0, ice_slope: 0.0, strafe: 0, strafe_yaw: 0.0, strafe_dir: [1.0, 0.0, 0.0], stick_sector: 2, strafe_back: false, strafe_flip: [0; 2], strafe_yaw_vel: 0.0,
             ground_yaw: 0.0, slide_yaw: 0.0, slide_bank: 0.0, slide_hold: 0, slide_vel: [0.0; 2], slide_speed: 0.0, stagger: 0, rot_vel: [0.0; 2], bonk_yaw: 0.0, push: [0.0; 3], swing: Default::default(), swing_cooldown: 0, gear: Default::default(), grind: Default::default(), water: Default::default(), no_menu: 0, rng: Default::default(), state_req: None, walk_to: Default::default(), fidget_rest: [0; 4], fidget_gap: 0, no_update: false, hits_out: Vec::new(), sounds: Vec::new(), loops: Vec::new(), loop_stops: Vec::new(), loops_off: false, posture: Default::default(), layers: Default::default(), aim_point: [0.0; 3], unported_seen: Vec::new(),
@@ -532,6 +534,8 @@ impl Hero {
         self.rot = rot;
         self.rows = euler_rows(rot);
         self.air_ticks = 1;
+        // Under water only when he swims under it (group 0x11).
+        self.underwater_write = Some(self.group == 0x11);
         self.gear.floating = false;
         self.vel = [0.0; 3];
         self.momentum = [0.0; 3];

@@ -51,11 +51,11 @@ pub struct GameCameraPlugin {
     pub fog: LevelFog,
 }
 
-/// The fog every renderer draws with this frame: the view-context copy `UpdateFog` makes (boot 0x1f2588,
-/// level01 0x218d70) of the level fog globals, or of the alternate set while underwater, and the
-/// particle far it sets. Starts as the level settings (level init calls `UpdateFog`); `crate::fog_state`
-/// rewrites it every frame (zones, underwater) and pushes it into every material's fog uniform, the tie
-/// fog values, the tfrag LOD constants (`SetTfragDists`) and the particle cull.
+/// The fog every renderer draws with this frame: the view-context copy `UpdateFog` makes (L00 `0x2e4af0`) of the
+/// level fog globals, or of the alternate set while under water, and the particle far it sets (rc_game::fog).
+/// Starts as the level settings; the game's tick rewrites it (crate::play's `game_fog`: the light regions' fog, under
+/// water), and it feeds every material's fog uniform, the tie fog values, the tfrag LOD constants (`SetTfragDists`)
+/// and the particle cull.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct GameFog {
     /// View-context fog (0x16d0d8..0x16d0f8).

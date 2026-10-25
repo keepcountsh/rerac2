@@ -86,6 +86,9 @@ impl Hero {
         }
         self.entry_sound(id);
         if self.group == 0x14 { self.items.no_use = 1; }
+        // Out of the water (`0x2adff8`, or on its surface) with the camera above it, or on the ground: not under
+        // water (`0x1b9000`, crate::fog).
+        if (!self.feet_kept() || self.group == 0x12) && (self.surf.water_z < env.cam_pos[2] || self.group == 0) { self.underwater_write = Some(false); }
         // `0x2a6708`: a new movement group stops his looping sounds.
         if self.group != self.prev_group { self.loops_off = true; }
         if self.group != self.prev_group { self.group_timer = 0; }

@@ -7,7 +7,7 @@
 //! Bevy's plugin (its only user); the passes here each keep their own pipeline ([`PassPipeline<T>`]). The pass types
 //! still implement Bevy's [`FullscreenMaterial`] (the shader and the ordering).
 //!
-//! Users: the Visibomb's missile view overlay (crate::visibomb_view), the underwater tint (crate::fog_state).
+//! Users: the Visibomb's missile view overlay (crate::visibomb_view), (R&C1's underwater tint; Going Commando's is a HUD fill, crate::play).
 
 use bevy::core_pipeline::fullscreen_material::FullscreenMaterial;
 use bevy::core_pipeline::FullscreenShader;

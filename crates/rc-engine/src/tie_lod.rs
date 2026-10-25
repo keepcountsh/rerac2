@@ -131,7 +131,7 @@ pub struct TieLodState {
     inputs: Vec<TieLodInput>,
     /// Per instance (gameplay order): the load-time occlusion word, runtime tie +0x18.
     occl: Vec<OcclBits>,
-    /// The fog `fog_value` uses; `crate::fog_state` keeps it equal to the frame's `GameFog`.
+    /// The fog `fog_value` uses; the game tick keeps it equal to the frame's `GameFog`.
     pub(crate) fog: LevelFog,
     force_lod0: bool,
     last_hist: [usize; 6],

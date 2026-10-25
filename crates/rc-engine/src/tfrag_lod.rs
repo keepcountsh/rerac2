@@ -100,7 +100,7 @@ impl TfragLodUniform {
     }
 }
 
-/// Every frame after `crate::fog_state`: the tfrag materials' LOD constants from the frame's fog
+/// Every frame after the game tick (crate::play's `game_fog`): the tfrag materials' LOD constants from the frame's fog
 /// ([`TfragLodUniform::set_fog`]), written only where they changed.
 fn update_lod_constants(
     fog: Res<crate::game_camera::GameFog>,

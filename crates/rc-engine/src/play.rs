@@ -43,7 +43,7 @@ impl Plugin for PlayPlugin {
             .init_resource::<CanopyDraw>()
             .init_resource::<ShotDraw>()
             .add_systems(PreUpdate, (input_map::sample_system, switch_camera).chain().after(bevy::input::InputSystems))
-            .add_systems(FixedUpdate, (tick, pause_tick).chain().after(crate::card::CardStep))
+            .add_systems(FixedUpdate, (game_fog, tick, pause_tick).chain().after(crate::card::CardStep))
             .add_systems(Update, (draw_created, draw_hud, move_instances, ship_screen.after(draw_created), crate::overlay_mobys::assign_layers.after(draw_created)))
             .add_systems(PostUpdate, draw_canopy.before(bevy::asset::AssetEventSystems))
             .add_systems(PostUpdate, draw_shots.before(bevy::asset::AssetEventSystems))
@@ -295,6 +295,11 @@ fn tick(
             game.enter_level(crate::level_load::level_index() as i32);
             p.hero.hp = game.max_health;
             p.game = game;
+            // The level start (`0x3012a0`): the level fog globals from the level settings; the camera's start clears the
+            // underwater flag (`0x2da248`).
+            let f = &level.0.fog;
+            p.game.fog = rc_game::fog::FogGlobals { colour: f.color, near_dist: f.near_dist, far_dist: f.far_dist, near_intensity: f.near_intensity, far_intensity: f.far_intensity };
+            p.game.underwater = false;
             commands.remove_resource::<Carry>();
             commands.insert_resource(PlayView { view: camera_view(&p.camera, p.camera.pos, p.camera.rows), tan_half_fov: play_camera::GAME_TAN_HALF_FOV, far: p.game.view_far * 1024.0 });
             commands.insert_resource(p);
@@ -670,6 +675,7 @@ fn tick(
     }
     p.hero.damage.took = false;
     if let Some(t) = p.hero.show_health.take() { p.game.show_health = Some(t); }
+    if let Some(u) = p.hero.underwater_write.take() { p.game.underwater = u; }
     // `0x2a6dd0`'s write-back: Ratchet's moby takes his position, angles and rows.
     if let Some(h) = mobys.hero_moby.and_then(|i| mobys.world.mobys.get_mut(i)) {
         (h.pos, h.rot, h.rows) = (p.hero.pos, p.hero.rot, p.hero.rows);
@@ -836,6 +842,14 @@ fn tick(
     // The script camera's hand-over with its pose kept (`0x2d8168` with the release flag 3 / 5, the init's `0x4247a0`).
     if let Some((pos, rows)) = cam.follow_pose { p.camera = FollowCamera::from_pose(&cam_input(&p.hero, Some(coll), [0.0; 2]), pos, rows); }
     p.game.scenes.bars_step();
+    // The camera update's end (`0x2d9f38`): the underwater test, then the light regions' fog at the camera
+    // (rc_game::fog). Outside play (`0x1a8f00 ≠ 0`) not under water; the camera's mode 6 is not modelled.
+    {
+        let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+        let off = p.game.scenes.mode != rc_game::scene::PLAY;
+        rc_game::fog::underwater_test_in(&mut p.game.underwater, p.camera.pos, off, coll, scene.as_ref());
+        rc_game::fog::region_fog(&mut p.game.fog, &mobys.level.light_regions, p.camera.pos);
+    }
     // △ opens the quick select's screen with Quick Select Pause off and shows the health (360 ticks) and bolt (180)
     // counters (the hero's transitions `0x2cb650`: not while an action prompt holds the lease, as a vendor's does),
     // then its frame (the GUI screens' pass) before the HUD's.
@@ -864,6 +878,8 @@ fn tick(
         let owner = |id: u32| world.mobys.get(id as usize).filter(|m| m.state < 0x80).map(|m| m.pos);
         out.external = true;
         let (sys, buf) = out.parts();
+        // The underwater flag as this tick's camera update left it (the sounds under water: rc_game::fog).
+        sys.underwater = p.game.underwater;
         let mut rng = sys.rng;
         sys.game_frame_with(&input, p.ticks as u32 + 1, &mut rng, &owner);
         sys.rng = rng;
@@ -2095,6 +2111,8 @@ fn draw_hud(
     if let Some(k) = p.death_fade {
         rc_game::gui::fill(&mut quads, [0, 0, 0, (0x80 - (DEATH_FADE - 1 - k) * 0x80 / DEATH_FADE) as u8]);
     }
+    // Under water the screen's tint (`0x2e6658`'s last pass: `0x1ad8a0..a3`, rc_game::fog), before the scene fade.
+    if p.game.underwater && !movie { rc_game::gui::fill(&mut quads, rc_game::fog::UnderwaterLook::default().tint); }
     // The fade into and out of a scene (`0x1b1860`, 1 black).
     let fade = if movie { 0.0 } else { p.game.scenes.fade.clamp(0.0, 1.0) };
     if 0.0 < fade { rc_game::gui::fill(&mut quads, [0, 0, 0, (fade * 128.0) as u8]); }
@@ -2338,6 +2356,16 @@ fn occlusion_mode(play: Option<Res<Play>>, level: Res<crate::Level>, frame: Opti
         _ => OcclusionMode::Freeze,
     };
     if f.mode != mode { f.mode = mode; }
+}
+
+/// `0x2e4af0` at the end of the previous frame's draw: the view's fog and the particles' far from the level fog
+/// globals, or under water the alternate set (rc_game::fog); the frame drawn after this tick uses it, a camera
+/// update behind as the game's.
+fn game_fog(play: Option<Res<Play>>, fog: Option<ResMut<crate::game_camera::GameFog>>) {
+    let (Some(p), Some(mut fog)) = (play, fog) else { return };
+    let (g, far) = rc_game::fog::update_fog(&p.game.fog, p.game.underwater, &rc_game::fog::UnderwaterLook::default());
+    let lf = crate::game_camera::LevelFog { color: g.colour, near_dist: g.near_dist, far_dist: g.far_dist, near_intensity: g.near_intensity, far_intensity: g.far_intensity };
+    if fog.fog != lf || fog.particle_far12 != far { *fog = crate::game_camera::GameFog::new(lf, far); }
 }
 
 /// The hero at Ratchet's instance (class 0).

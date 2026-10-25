@@ -273,7 +273,7 @@ impl Hero {
     }
 
     /// `0x2adff8`: the states that keep the feet as they are (the groups 0x11 / 0x12, 0x67, 0x7f, 0x72, 0x73).
-    fn feet_kept(&self) -> bool { matches!(self.group, 0x11 | 0x12) || matches!(self.state, 0x67 | 0x7f | 0x72 | 0x73) }
+    pub(crate) fn feet_kept(&self) -> bool { matches!(self.group, 0x11 | 0x12) || matches!(self.state, 0x67 | 0x7f | 0x72 | 0x73) }
 
     /// `0x2ac218`: the feet hidden under the worn feet; the feet pitch and roll with the ground under them and the
     /// legs reach for it: each leg turns `atan2(height, 0.2)·1.2` (the left −10°..45°, the right −45°..10°), the foot

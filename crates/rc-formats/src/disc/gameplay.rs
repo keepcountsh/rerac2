@@ -448,11 +448,17 @@ pub struct LightRegion {
     pub ambient: [[u8; 4]; 2],
     pub lights: [i32; 2],
     pub flags: u32,
+    /// `+0x54` / `+0x58`: the fog colour (bytes r, g, b) at either face of the box (flags bit 1).
+    pub fog_colour: [u32; 2],
+    /// `+0x5c..+0x7b`: the fog at either face, `{near distance, near density, far distance, far density}` (units;
+    /// density 0 = no fog).
+    pub fog: [[f32; 4]; 2],
 }
 
-/// The light regions: `s32 count`, 12 bytes, `count` spheres (16 bytes), then `count` records (0x80 bytes: the
-/// inverse matrix, the ambients `+0x40` / `+0x44`, the light sets `+0x48` / `+0x4c` (negative: 0xb), the flags
-/// `+0x50`, bit 0 = used).
+/// The light regions (R&C1's fog zones, the same records): `s32 count`, 12 bytes, `count` spheres (16 bytes), then
+/// `count` records (0x80 bytes: the inverse matrix, the ambients `+0x40` / `+0x44`, the light sets `+0x48` / `+0x4c`
+/// (negative: 0xb), the flags `+0x50` (bit 0 the lighting, bit 1 the fog), the fog colours `+0x54` / `+0x58` and the
+/// fog `+0x5c..+0x7b`).
 pub fn light_regions(gameplay: &[u8]) -> Result<Vec<LightRegion>> {
     let Some(s) = section(gameplay, "light_regions")? else { return Ok(Vec::new()) };
     let b = Buf(s);
@@ -469,7 +475,16 @@ pub fn light_regions(gameplay: &[u8]) -> Result<Vec<LightRegion>> {
             for (r, row) in to_box.iter_mut().enumerate() { for (c, v) in row.iter_mut().enumerate() { *v = f(ro + 16 * r + 4 * c)?; } }
             let rgba = |o: usize| -> Result<[u8; 4]> { Ok(b.u32(o)?.to_le_bytes()) };
             let set = |o: usize| -> Result<i32> { let v = b.i32(o)?; Ok(if v < 0 { 0xb } else { v }) };
-            Ok(LightRegion { sphere, to_box, ambient: [rgba(ro + 0x40)?, rgba(ro + 0x44)?], lights: [set(ro + 0x48)?, set(ro + 0x4c)?], flags: b.u32(ro + 0x50)? })
+            let side = |o: usize| -> Result<[f32; 4]> { Ok([f(o)?, f(o + 4)?, f(o + 8)?, f(o + 12)?]) };
+            Ok(LightRegion {
+                sphere,
+                to_box,
+                ambient: [rgba(ro + 0x40)?, rgba(ro + 0x44)?],
+                lights: [set(ro + 0x48)?, set(ro + 0x4c)?],
+                flags: b.u32(ro + 0x50)?,
+                fog_colour: [b.u32(ro + 0x54)?, b.u32(ro + 0x58)?],
+                fog: [side(ro + 0x5c)?, side(ro + 0x6c)?],
+            })
         })
         .collect()
 }

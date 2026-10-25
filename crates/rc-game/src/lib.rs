@@ -11,6 +11,7 @@ pub mod canopy;
 pub mod collision;
 pub mod front_end;
 pub mod exhaust;
+pub mod fog;
 pub mod fx;
 pub mod game;
 pub mod gui;
