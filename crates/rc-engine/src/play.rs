@@ -355,12 +355,6 @@ fn tick(
         println!("play: {} mobys, {} with collision, Ratchet's joint lists {}", m.world.mobys.len(), m.world.mobys.iter().filter(|m| m.has_collision).count(), m.hero_chains.len());
         // `0x2fd028(level)` (the level start `0x2fcf60`): the planet's weapons into the vendor's stock (rc_game::vendor).
         p.game.stock_for_level(crate::level_load::level_index() as i32, &m.level.items);
-        // `RC_BOLTS=<n>`: the bolts to start with (a dev switch, for the vendor).
-        if let Some(b) = std::env::var("RC_BOLTS").ok().filter(|_| fresh).and_then(|v| v.trim().parse::<u32>().ok()) { p.game.bolts = b; }
-        // `RC_PLANETS=1,2,3`: the planets unlocked (a dev switch, for the ship's galaxy map: rc_game::travel).
-        if let Some(list) = std::env::var("RC_PLANETS").ok().filter(|_| fresh) {
-            for l in list.split(',').filter_map(|x| x.trim().parse::<i32>().ok()) { p.game.unlock_planet(l); }
-        }
         p.mobys = Some(m);
         // `0x2da248`: the level cameras' slots (their pvar blocks are in the moby pvar table).
         use rc_formats::disc::gameplay as g2;
@@ -697,14 +691,7 @@ fn tick(
         let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
         let mut ctx = rc_game::moby::Ctx { host: &mut host, hero: &mut p.hero, game: &mut p.game, coll: Some(coll), scene: scene.as_ref(), hero_moby: mobys.hero_moby, hero_view, level: &mobys.level, parts: parts.as_deref_mut().map(|s| &mut s.sys), view: None };
         rc_game::hero::items::item_pass(&mut mobys.world, &mut ctx);
-        // The swim's effects (crate::hero::water's requests of this tick), into the particle pool. `RC_WATER_FX=ring,
-        // drop,spray,bubble` (a dev switch) keeps only the kinds named.
-        if !ctx.hero.water.fx.is_empty() {
-            if let Ok(keep) = std::env::var("RC_WATER_FX") {
-                use rc_game::hero::water::WaterFx as F;
-                ctx.hero.water.fx.retain(|f| keep.contains(match f { F::Ring { .. } => "ring", F::Drop { .. } => "drop", F::Spray { .. } => "spray", F::Bubble { .. } => "bubble" }));
-            }
-        }
+        // The swim's effects (crate::hero::water's requests of this tick), into the particle pool.
         rc_game::hero::water::fx_pass(&mobys.world, &mut ctx);
     }
     // The use stance's sequence for Ratchet (`0x2af5e0` / `0x2af848` call `0x2d2508` from the item pass).

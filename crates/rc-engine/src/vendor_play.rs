@@ -70,8 +70,7 @@ impl VendorPlay {
     /// `0x374038(vendor)`: the menu opened on moby `id` (its kind from its pvar `+0x94`).
     pub(crate) fn open(&mut self, p: &mut Parts, id: usize, widescreen: bool) {
         let Some(v) = p.world.mobys.get(id) else { return };
-        // `RC_VENDOR_KIND=<n>` (dev): the vendor's kind overridden (0 weapons, 1 mods, 2 armour, 3 Gadgetron).
-        let kind = std::env::var("RC_VENDOR_KIND").ok().and_then(|k| k.trim().parse().ok()).unwrap_or_else(|| v.pv_i(0x94));
+        let kind = v.pv_i(0x94);
         let mut outs = Vec::new();
         let menu = Vendor::open(kind, p.game, &p.level.items, widescreen, &mut outs);
         println!("play: vendor {id}: menu open (kind {kind}, {} entries {:?}, selection {})", menu.entries.len(), menu.entries.iter().map(|e| (e.item, e.ammo)).collect::<Vec<_>>(), menu.sel);
