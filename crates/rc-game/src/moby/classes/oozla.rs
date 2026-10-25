@@ -15,8 +15,13 @@
 //! * 0x061c (`0x3a6fb8`): the path riders on the swamp, knocked off and sinking when hit ([`update_061c`]).
 //! * 0x0ace (`0x3d42b0`): the Tractor Beam's seller ([`update_0ace`]).
 //!
-//! Not ported here: 0x0ab3 (`0x3d4098`, deleted once `0x1a7b2e` is set: a byte of the `0x1a7b00` table whose
-//! `0x1a7b13` is the Gravity Boots, so probably an item had), 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
+//! * 0x0fa0 (`0x412650`): a pulsing glow ([`update_0fa0`]).
+//! * 0x0ab3 (`0x3d4098`): gone once the Tractor Beam is had ([`update_0ab3`]).
+//! * 0x0b07 (`0x3d97c0`): the platforms up out of the water once the flower is dead ([`update_0b07`]).
+//! * 0x0b21 (`0x3dad40`): the lily pads of the low basin ([`update_0b21`]).
+//! * 0x02e1 (`0x395620`): the camera cutaways, as the flower's first sight ([`update_02e1`]).
+//!
+//! Not ported here: 0x0e89 (`0x406860`, the 0x0c58 mover, started also by
 //! `0x1a7b13` / `0x1a7b32`), 0x0ca0 (`0x3ee1d0`, the switch that pokes them: the use system, G-UI-001).
 
 use crate::hero::physics::{add, add_rot, approach, dist2, scale, set_len, sub, sub_rot, V3};
@@ -35,6 +40,102 @@ pub fn update_0f14(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
     if m.state == 0 {
         m.state = 1;
         m.update_dist = 0xff;
+    }
+}
+
+/// 0x0fa0 (`0x412650`): state 1; then (not on level 0x33, with pvars) its glow word pulses (`0x31cf58`: the phase
+/// `+0x68`[0xc] on by a step a tick, the colour mixed by its sine / 2 + ½): in a scene (`$gp−0x60b0` = 2) by 0.0553
+/// from 0x80aabed2, else by 0.0378 from 0x8096aaaa, to 0x80466464.
+pub fn update_0fa0(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let m = &mut w.mobys[id];
+    if m.state == 0 { return m.set_state(1, -1); }
+    if m.state != 1 || ctx.game.level == 0x33 || m.pvars.len() < 0x10 { return; }
+    let (step, from) = if ctx.game.scenes.mode == crate::scene::SCENE { (0.055_268_77, 0x80aa_bed2) } else { (0.037_815_47, 0x8096_aaaa) };
+    let phase = m.pv_f(0xc);
+    m.set_pv_f(0xc, add_rot(phase, step));
+    m.glow = crate::hud::lerp_rgba(phase.sin() * 0.5 + 0.5, from, 0x8046_6464);
+}
+
+/// 0x0ab3 (`0x3d4098`): `+0x68`[0x5c] |= 1; deleted once stirred (`+0xbc`) or the Tractor Beam is had (`0x1a7b2e`).
+pub fn update_0ab3(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::items::TRACTOR;
+    let m = &mut w.mobys[id];
+    if 0x60 <= m.pvars.len() { m.set_pv_i(0x5c, m.pv_i(0x5c) | 1); }
+    if m.timer != 0 || ctx.game.items.get(TRACTOR as usize).is_some_and(|&b| b != 0) { w.delete(id); }
+}
+
+/// 0x02e1 (`0x395620`, 3 placed): a camera cutaway, once (the uid's count). Its pvars: `[0x20]` the cuboid that sets it
+/// off (−1: only a poke, `+0xbc` = 1), `[0x24]` the camera's cuboid (its place and angles), `[0x28]` where Ratchet is
+/// put (−1: where he is), `[0x2c]` the ticks, `[0x30]` the mode, `[0x34]` its move's ticks, bytes `[0x38]` its mission
+/// done (and the checkpoint) at the end, `[0x39]` gone at the start once its mission (`+0xb0`) is done, `[0x3a]` only
+/// with Ratchet on the ground.
+/// * **0**: gone (as above, or with no camera), else 1, updated and drawn at any distance.
+/// * **1**: not played yet, set off: Ratchet held (state 0x6f, `0x2b9b38`) at `[0x28]`, the script camera
+///   (`0x42bd08`) at the camera's cuboid, springing there (mode 0), or with a mode moving there from the view over
+///   `[0x34]` ticks; the uid counted; 2.
+/// * **2**: for `[0x2c]` ticks while poked Ratchet stays held and the camera's targets are the cuboid's; then the
+///   camera let go (`0x42be78`: behind Ratchet, or with a mode blended), Ratchet idle (`0x2c1ca8(0)`), 3.
+/// * **3**: with `[0x38]` its mission done (`0x309060`) and the checkpoint at its place (`0x34fea8`); poked again, 1.
+///
+/// Not ported: level 0x13's own path, the flags `0x1b1fa8` (held while it plays) and `0x1b22a8` (`[0x3b]`).
+pub fn update_02e1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::script_camera::{MODE_MOVE, MODE_SPRING, RELEASE_BLEND, RELEASE_CUT_BEHIND};
+    let level = ctx.game.level.max(0) as usize;
+    let done = |g: &crate::game::GameState, mission: u8| mission != 0xff && g.missions.get(level * 0x10 + mission as usize).is_some_and(|b| b & 0x80 != 0);
+    let m = &w.mobys[id];
+    match m.state {
+        0 => {
+            if (m.pv_b(0x39) == 0 || !done(ctx.game, m.mission)) && m.pv_i(0x24) != -1 {
+                let m = &mut w.mobys[id];
+                (m.state, m.update_dist, m.draw_dist) = (1, 0xff, 0xff);
+                return;
+            }
+            w.delete(id);
+        }
+        1 => {
+            let uid = m.uid;
+            if ctx.game.uid_dead.get(uid.max(0) as usize).copied().unwrap_or(0) != 0 || ctx.game.uid_count(uid) != 0 { return; }
+            if !ctx.level.in_cuboid(m.pv_i(0x20), ctx.hero.pos) && m.timer != 1 { return; }
+            if m.pv_b(0x3a) != 0 && ctx.hero.grounded_ticks == 0 { return; }
+            if let Some((p, r)) = ctx.level.cuboid_place(m.pv_i(0x28)) { ctx.hero.teleport(p, r); }
+            ctx.hero.request_state(0x6f, true);
+            let Some((cp, cr)) = ctx.level.cuboid_place(m.pv_i(0x24)) else { return };
+            if m.pv_i(0x30) == 0 {
+                ctx.game.cameras.camera_script(cp, cr, MODE_SPRING, 0, false, ctx.hero);
+            } else {
+                let (vp, ve) = ctx.game.cameras.view_euler();
+                ctx.game.cameras.camera_script(vp, ve, MODE_MOVE, m.pv_i(0x34), false, ctx.hero);
+            }
+            ctx.game.bump_uid(uid);
+            let m = &mut w.mobys[id];
+            (m.state, m.timer) = (2, 1);
+            m.set_pv_v(0, cp);
+            m.set_pv_v(0x10, cr);
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            let mut t = m.pv_i(0x2c);
+            let out = crate::moby::countdown(&mut t);
+            m.set_pv_i(0x2c, t);
+            if !out && m.timer == 1 {
+                if ctx.hero.state != 0x6f { ctx.hero.request_state(0x6f, true); }
+                ctx.game.cameras.camera_script_targets(Some(m.pv_v(0)), Some(m.pv_v(0x10)));
+                return;
+            }
+            let kind = if m.pv_i(0x30) == 0 { RELEASE_CUT_BEHIND } else { RELEASE_BLEND };
+            (m.state, m.timer) = (3, 0);
+            ctx.game.cameras.camera_script2(kind, ctx.hero);
+            ctx.hero.request_state(0, true);
+        }
+        3 => {
+            if m.pv_b(0x38) != 0 && !done(ctx.game, m.mission) {
+                let (mission, pos, rot) = (m.mission, m.pos, m.rot);
+                ctx.game.mission_done(mission);
+                ctx.game.save_checkpoint(pos, rot);
+            }
+            if w.mobys[id].timer == 1 { w.mobys[id].state = 1; }
+        }
+        _ => {}
     }
 }
 
@@ -411,15 +512,27 @@ fn teleporter_show(w: &mut MobyWorld, id: usize, show: bool) {
     }
 }
 
+/// `0x399e80`'s texts by level (`$gp+0x568` on Oozla; the other levels' tables are in their own overlays, not read
+/// yet), indexed by the teleporter's `[4]`.
+fn teleporter_text(level: i32, k: i32) -> Option<u32> {
+    let table: &[u32] = match level { 1 => &[0x12e5, 0x12e6], _ => &[] };
+    usize::try_from(k).ok().and_then(|k| table.get(k)).copied()
+}
+
 /// 0x046f (`0x3994c0`, levels 1, 8, 9, 12, 17): a teleporter to its partner `+0x68`[0] (on Oozla to the Megacorp
 /// store and back). Hidden until Ratchet first enters its cuboid `[1]` (its uid counted in the save; kept for good),
-/// with its three pads (class 0x13b, made at the set-up). Standing on it (his ground moby, grounded) he gets its help
-/// text once (not ported: `0x399e80`, the level's text `$gp+0x568`[`[0x10]`], 0x12e5 on Oozla); △ (and a 1.5 sphere
+/// with its three pads (class 0x13b, made at the set-up; its group poked at the start). With `[0xf]` it is there only
+/// in the challenge mode; with `[2]` it works once that mission is done. Standing on it (his ground moby, grounded)
+/// he gets its prompt (`0x399e80`: [`teleporter_text`] by `[4]`, the lease's owner 4; just arrived, held without a
+/// text till he moves); △ (and a 1.5 sphere
 /// pushing 20 off it) walks him to its centre (`0x2d4440`, facing its yaw) while it powers up (`[8]` / `[9]` eased
 /// to 1: 12/3600, at most 32/60: `$gp+0x558..0x560`); once he is there (his state 0x64; or after 360 ticks) the beam
 /// `[0xd]` fades from 1.95 and he is put on the partner 0.2 up, facing its way (`0x2b9e68`); the partner powers down
-/// (4). Not ported: the beam's draw (`0x2dce00`), the help text, the cameras' snap (`0x304200`, `0x3245e8`,
-/// `0x42b9f0`), the item gate `[0xf]` (`0x1a7a12`), the mission gate `[2]`, `0x320328`'s pad flag.
+/// (4). Not ported: the beam's draw (`0x399f40` through `0x2dce00`, with Ratchet's shrink `0x18be40..` and the flash
+/// `0x1b1fa4`), on arrival the area switch `0x2f9bd8([0x13], …)` and the camera reset `0x42ec78` (by the partner's
+/// `[0x12]`; both −1 on Oozla), the partner's music (`0x3245e8([0x10], [0x11])`), Ratchet's pull to its centre while
+/// the beam is under 1.15 (`0x189f20`). It waits while its own prompt is up (`$gp−0x5ffc` = 4 with `[8]` past 0.25);
+/// powering down, its first tick shows the pads (mode 0x80 off).
 pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     use crate::hero::physics::ease;
     let uid = w.mobys[id].uid;
@@ -429,6 +542,18 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         ctx.game.count_uid(uid);
         teleporter_show(w, id, true);
         if w.mobys[id].state == 5 { w.mobys[id].set_state(1, -1); }
+    }
+    // The item gate `[0xf]`: only in the challenge mode (`0x1a7a12`), else no collision and hidden.
+    if w.mobys[id].pv_i(0x3c) != 0 {
+        let solid = w.class(w.mobys[id].o_class).is_some_and(|c| c.has_collision);
+        let m = &mut w.mobys[id];
+        if !ctx.game.challenge {
+            m.has_collision = false;
+            m.mode |= 0x41;
+            return;
+        }
+        m.has_collision = solid;
+        m.mode &= !0x41;
     }
     let m = &mut w.mobys[id];
     if (m.state_ticks as u16) < 0x7ffd { m.state_ticks += 1; }
@@ -461,13 +586,26 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 w.mobys[id].set_state(6, -1);
             }
         }
-        6 => w.mobys[id].set_state(1, -1),
+        6 => {
+            let g = w.mobys[id].group;
+            if g != -1 { w.poke_group(g as i32, 1); }
+            w.mobys[id].set_state(1, -1);
+        }
         1 => {
             let m = &w.mobys[id];
+            // The mission gate `[2]`: nothing till its mission is done.
+            let mission = m.pv_i(8);
+            let level = ctx.game.level.max(0) as usize;
+            if 0 <= mission && ctx.game.missions.get(level * 0x10 + mission as usize).is_none_or(|b| b & 0x80 == 0) { return; }
             if m.pv_i(0) == -1 || ctx.hero.ground_moby != Some(id) || ctx.hero.air_ticks != 0 { teleporter_pads(w, id, ctx); return; }
-            if m.pv_i(0x50) != 0 {
+            if m.pv_i(0x50) == 0 {
+                // `0x399e80`: its help, the prompt's lease (owner 4) with the level's text `[4]`.
+                if let Some(t) = teleporter_text(ctx.game.level, m.pv_i(0x10)) { ctx.game.prompt.request(4, t, 1); }
+            } else {
+                // Just arrived: the lease held without a text till Ratchet moves (`0x1a8ff4` = 4, the hold 2).
                 let idle = ctx.hero.state == 0;
                 w.mobys[id].set_pv_i(0x50, idle as i32);
+                ctx.game.prompt.force(4, 0, 2);
             }
             if ctx.hero.items.pressed & crate::pad::button::TRIANGLE != 0 {
                 ctx.host.play_sound(&w.mobys[id], 0, 0);
@@ -488,6 +626,8 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 ease_to(m, 1.0, 0x20, 0x28);
             } else if m.pv_f(0x24) < 1.0 {
                 ease_to(m, 1.0, 0x24, 0x2c);
+            } else if ctx.game.prompt.owner == 4 && 0.25 < m.pv_f(0x20) {
+                // Its prompt still up (`$gp−0x5ffc` = 4): it waits.
             } else if walk == 2 || (walk != 0 && 0x168 < m.state_ticks) {
                 if walk != 2 { ctx.hero.request_state(0, true); }
                 m.set_pv_f(0x34, 1.95);
@@ -521,6 +661,14 @@ pub fn update_046f(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             m.set_pv_f(0x34, 1.95);
         }
         4 | 8 => {
+            // `0x320328`: its first tick shows its pads again (mode 0x80 off).
+            if m.first() {
+                for k in 0..3 {
+                    let p = w.mobys[id].pv_i(0x14 + 4 * k);
+                    if let Some(pm) = usize::try_from(p).ok().and_then(|p| w.mobys.get_mut(p)) { pm.mode &= !0x80; }
+                }
+            }
+            let m = &mut w.mobys[id];
             if m.pv_f(0x34) < 1.95 {
                 let mut f = m.pv_f(0x34);
                 approach(1.95, 0.066_666_67, &mut f);
@@ -666,6 +814,274 @@ pub fn update_0a56(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             floater::step(w, id, ctx, BLOCK);
         }
         _ => {}
+    }
+}
+
+/// Ratchet grounded on moby `id`, and his offsets along its rows 0 and 1 (`0x2e4268`).
+fn stood_on(w: &MobyWorld, id: usize, ctx: &Ctx) -> Option<(f32, f32)> {
+    use crate::hero::physics::dot;
+    if ctx.hero.ground_moby != Some(id) || ctx.hero.air_ticks != 0 { return None; }
+    let m = &w.mobys[id];
+    let d = sub(ctx.hero.pos, m.pos);
+    Some((dot(d, m.rows[0]), dot(d, m.rows[1])))
+}
+
+/// 0x0b07 (`0x3d97c0`, 2 placed): the platforms that come up out of the swamp once the flower (0x0a8e, its moby
+/// `+0x68`[0x8c]) is dead. Its top (`[0x84]`) is the water (`0x3bc3b8`) + 0.2.
+/// * **0**: once there is water, its tilts (`[0x60]` / `[0x64]`) its pitch and roll, their speeds 0; no flower (−1)
+///   leaves it as it is (2); else it waits (1) 5 under the top, its pitch and roll ±90° at random.
+/// * **1**: till the flower is gone (state 0xfe / 0xfd), then 2.
+/// * **2**: with Ratchet grounded on it its tilts spring (`0x315168`: 0.03, 0.3, at most 0.1) to −0.025 × his offset
+///   across (pitch) and 0.025 × along (roll) and it holds its height; else it rises 1/60 of what is left a tick (and
+///   1/60 more while 2 under the top), its tilts spring back to 0 (0.01) once within 2, never above the top, its
+///   class sound 0 once on coming up within 0.3 of it. It rocks 1.15° (`0x31a3c0`: 25°/s and 31°/s, `[0x90]` /
+///   `[0x94]`), its tilts on top, and carries Ratchet (`0x318560`, the block `[0x20]`).
+///
+/// Not ported: Ratchet's point turned with the tilt (`0x317e68` into `0x189f20`).
+pub fn update_0b07(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::physics::turn_spring;
+    let top = ctx.game.water_z + 0.2;
+    let stood = stood_on(w, id, ctx);
+    let m = &mut w.mobys[id];
+    let (old, old_yaw) = (m.pos, m.rot[2]);
+    m.set_pv_f(0x84, top);
+    match m.state {
+        0 => {
+            if ctx.game.water_z <= 0.0 { return; }
+            m.set_pv_i(0x80, 1);
+            let rot = m.rot;
+            m.set_pv_f(0x60, rot[0]);
+            m.set_pv_f(0x64, rot[1]);
+            m.set_pv_f(0x70, 0.0);
+            m.set_pv_f(0x74, 0.0);
+            if m.pv_i(0x8c) == -1 { return m.state = 2; }
+            m.pos[2] = top - 5.0;
+            let rng = &mut ctx.game.rng;
+            m.rot[0] = rng.randf(-1.570_796_4, 1.570_796_4);
+            m.rot[1] = rng.randf(-1.570_796_4, 1.570_796_4);
+            m.state = 1;
+            return;
+        }
+        1 => {
+            let f = m.pv_i(0x8c);
+            let alive = usize::try_from(f).ok().and_then(|f| w.mobys.get(f)).is_some_and(|f| f.state != 0xfe && f.state != 0xfd);
+            if !alive { w.mobys[id].state = 2; }
+            return;
+        }
+        2 => {}
+        _ => return,
+    }
+    let (mut px, mut vx, mut py, mut vy) = (m.pv_f(0x60), m.pv_f(0x70), m.pv_f(0x64), m.pv_f(0x74));
+    if let Some((fwd, side)) = stood {
+        turn_spring(-0.025 * side, 0.03, 0.3, 0.1, &mut px, &mut vx, 0);
+        turn_spring(0.025 * fwd, 0.03, 0.3, 0.1, &mut py, &mut vy, 0);
+    } else {
+        let was = m.pos[2];
+        let mut z = was + (top - was) * 0.016_666_668;
+        if z < top - 2.0 {
+            z += 0.016_666_668;
+        } else {
+            turn_spring(0.0, 0.01, 0.3, 0.1, &mut px, &mut vx, 0);
+            turn_spring(0.0, 0.01, 0.3, 0.1, &mut py, &mut vy, 0);
+        }
+        m.pos[2] = z.min(top);
+        if was < top - 0.3 && top - 0.3 <= m.pos[2] && m.pv_i(0xa0) == 0 {
+            m.set_pv_i(0xa0, 1);
+            ctx.host.play_sound(&w.mobys[id], 0, 0);
+        }
+    }
+    let m = &mut w.mobys[id];
+    m.set_pv_f(0x60, px);
+    m.set_pv_f(0x70, vx);
+    m.set_pv_f(0x64, py);
+    m.set_pv_f(0x74, vy);
+    super::props::sway(m, 0.020_071_287, 0.007_272_205, 0.009_005_7, 0x90, 0x94);
+    m.rot[0] = add_rot(px, m.rot[0]);
+    m.rot[1] = add_rot(py, m.rot[1]);
+    let (pos, yaw) = (m.pos, m.rot[2]);
+    carry_hero(ctx, id, old, old_yaw, pos, yaw);
+}
+
+/// 0x0b21 (`0x3dad40`, 59 placed): the lily pads of the swamp's low basin, kept about its creature (Swamp Monster II, 0x0a54, its
+/// moby `+0x68`[0xc0]; `[0xc8]` + 1 once known) — not ported, so its pushes do not come. The water `0x3bc3b8`.
+/// * Any state but 0: nothing while its home (`[0xb0]`) is over 5 under the water; with the creature in its
+///   sub-state above 6 or its `[0x20]` at 0 it goes back home (its height at least home − 0.2), `[0xc4]` 0, state 1.
+/// * **0**: once there is water: no creature (−1) deletes it; else its angles at `[0x90]`, their speeds `[0xa0]` 0,
+///   its home its place; 1.
+/// * **1**: with Ratchet grounded on it its tilts spring (`0x315168`: 0.0002, 0.01, at most 0.00073) to −0.025 × his
+///   offset across and 0.025 × along; else back to 0 (0.00005) and, the creature alive and past sub-state 1, pushed
+///   from it or from the point 5 ahead of it (whichever is nearer) within 11 (full within 9, at most 3/60 a tick)
+///   and toward its ring round the cuboid `+0x2cc` names. Drawn home by 0.01 of the way (at most 1.5/60 a tick);
+///   apart from its group within 4.75 (full within 4, at most 3/60: the one farther from the creature moves, the
+///   other then kept 27..54 from that cuboid); itself kept 27..54 from it, at the water. It bobs 0.08 (`0x31a308`,
+///   0.5° a tick, `[0xd8]` / `[0xdc]`) and rocks 2.5° (`0x31a3c0`, `[0xd0]` / `[0xd4]`), its tilts on top. A hit
+///   (flags 1) from 0x0b24 or the creature, while the creature is not in state 1, 4 or 5, sinks it for 600 ticks
+///   (`0x3dac90`: `[0xc4]`, state 2).
+/// * **2**: it sinks 5 a second to 4 under the water; at the end 3. **3**: it rises 2 a second to the water; 1.
+///
+/// Every tick its place is kept within 10..1013 and (but sinking) it carries Ratchet (`0x318560`, the block `[0x50]`).
+///
+/// Not ported: Ratchet's point turned with the tilt (`0x317e68`).
+pub fn update_0b21(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::physics::{len, set_len, turn_spring};
+    const DEG: f32 = 0.000_290_888_25;
+    const SEC: f32 = 4.848_137_5e-6;
+    let water = ctx.game.water_z;
+    let stood = stood_on(w, id, ctx);
+    let (old, old_yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
+    let leader = w.mobys[id].pv_link(0xc8).map(|l| l - 1).filter(|&l| l < w.mobys.len());
+    let clamp_len = |v: V3, max: f32| if max < len(v) { set_len(v, max) } else { v };
+    if w.mobys[id].state != 0 {
+        let home = w.mobys[id].pv_v(0xb0);
+        if water > home[2] + 5.0 { return; }
+        if let Some(l) = leader {
+            let c = &w.mobys[l];
+            if 6 < c.sub_state || c.pv_f(0x20) == 0.0 {
+                let m = &mut w.mobys[id];
+                m.pos[0] = home[0];
+                m.pos[1] = home[1];
+                if m.pos[2] < home[2] - 0.2 { m.pos[2] = home[2]; }
+                m.set_pv_i(0xc4, 0);
+                return m.set_state(1, -1);
+            }
+        }
+    }
+    match w.mobys[id].state {
+        0 => {
+            if 0.0 < water {
+                let m = &mut w.mobys[id];
+                let c = m.pv_i(0xc0);
+                if c == -1 { return w.delete(id); }
+                m.set_pv_i(0xc8, c + 1);
+                let rot = m.rot;
+                m.set_pv_v(0x90, rot);
+                m.set_pv_v(0xa0, [0.0; 3]);
+                let pos = m.pos;
+                m.set_pv_v(0xb0, pos);
+                m.set_state(1, -1);
+            }
+        }
+        1 => {
+            let m = &w.mobys[id];
+            let (mut px, mut vx, mut py, mut vy) = (m.pv_f(0x90), m.pv_f(0xa0), m.pv_f(0x94), m.pv_f(0xa4));
+            let mut pos = m.pos;
+            // The creature's ring: its cuboid's centre (at this height) and the point 5 ahead of it.
+            let ring = leader.map(|l| {
+                let c = &w.mobys[l];
+                let centre = ctx.level.cuboid_place(c.pv_i(0x2cc)).map_or(c.pos, |(p, _)| [p[0], p[1], pos[2]]);
+                (l, centre, add(c.pos, scale(c.rows[0], 5.0)))
+            });
+            if let Some((fwd, side)) = stood {
+                turn_spring(-0.025 * side, 40.0 * SEC, 0.01, 2.5 * DEG, &mut px, &mut vx, 0);
+                turn_spring(0.025 * fwd, 40.0 * SEC, 0.01, 2.5 * DEG, &mut py, &mut vy, 0);
+            } else {
+                turn_spring(0.0, 10.0 * SEC, 0.01, 2.5 * DEG, &mut px, &mut vx, 0);
+                turn_spring(0.0, 10.0 * SEC, 0.01, 2.5 * DEG, &mut py, &mut vy, 0);
+                if let Some((l, centre, ahead)) = ring {
+                    let c = &w.mobys[l];
+                    if c.state != 0xfe && c.state != 0xfd && 1 < c.sub_state {
+                        let mut e = sub(pos, c.pos);
+                        let mut d = len(e);
+                        let a = dist2(pos, ahead);
+                        if a < d {
+                            e = sub(pos, ahead);
+                            d = a;
+                        }
+                        if d < 11.0 {
+                            let t = ((11.0 - d) / 2.0).clamp(0.0, 1.0);
+                            let e = clamp_len(set_len(e, (11.0 - d) * t), 3.0 / 60.0);
+                            let r = dist2(c.pos, centre);
+                            let o = sub(pos, centre);
+                            let l = len(o);
+                            let o = set_len(o, 3.0 * ((l - r) / (l - r).abs()) / 60.0 * t);
+                            pos = add(add(pos, o), e);
+                        }
+                    }
+                }
+            }
+            let home = w.mobys[id].pv_v(0xb0);
+            pos = add(pos, clamp_len(scale(sub(home, pos), 0.01), 1.5 / 60.0));
+            if let Some((l, centre, ahead)) = ring {
+                let lpos = w.mobys[l].pos;
+                let (dl, da) = (dist2(pos, lpos), dist2(pos, ahead));
+                let g = w.mobys[id].group;
+                let members: Vec<usize> = usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default();
+                for o in members {
+                    if o == id || w.mobys.get(o).is_none_or(|m| m.state >= 0x80) { continue; }
+                    let op = w.mobys[o].pos;
+                    let e = sub(pos, op);
+                    let d = len(e);
+                    if 4.75 <= d { continue; }
+                    let theirs = dist2(op, lpos).min(dist2(pos, ahead));
+                    let t = ((4.75 - d) / 0.75).clamp(0.0, 1.0);
+                    let e = clamp_len(set_len(e, (4.75 - d) * t), 3.0 / 60.0);
+                    if theirs <= da.min(dl) {
+                        pos = add(pos, e);
+                    } else {
+                        let mut np = sub(op, e);
+                        let r = sub(np, centre);
+                        let rl = len(r);
+                        if rl < 27.0 { np = add(centre, set_len(r, 27.0)); } else if 54.0 < rl { np = add(centre, set_len(r, 54.0)); }
+                        w.mobys[o].pos = np;
+                    }
+                }
+                let r = sub(pos, centre);
+                let rl = len(r);
+                if rl < 27.0 { pos = add(centre, set_len(r, 27.0)); } else if 54.0 < rl { pos = add(centre, set_len(r, 54.0)); }
+            }
+            pos[2] = water;
+            let m = &mut w.mobys[id];
+            m.pos = pos;
+            m.set_pv_f(0x90, px);
+            m.set_pv_f(0xa0, vx);
+            m.set_pv_f(0x94, py);
+            m.set_pv_f(0xa4, vy);
+            // `0x31a308(0.08, 0.5°, −1, m, [0xd8], [0xdc])`: the last bob taken off, the next put on.
+            m.pos[2] -= m.pv_f(0xdc);
+            let phase = add_rot(m.pv_f(0xd8), 0.008_726_646);
+            m.set_pv_f(0xd8, phase);
+            let bob = phase.sin() * 0.08;
+            m.set_pv_f(0xdc, bob);
+            m.pos[2] += bob;
+            super::props::sway(m, 0.043_633_23, 0.007_272_205, 0.009_005_7, 0xd0, 0xd4);
+            m.rot[0] = add_rot(px, m.rot[0]);
+            m.rot[1] = add_rot(py, m.rot[1]);
+            // `0x3dac90`.
+            if let Some(h) = w.hit_message(id).filter(|h| h.tmpl.flags & 1 != 0) {
+                let from = h.tmpl.source.and_then(|s| w.mobys.get(s)).is_some_and(|s| matches!(s.o_class, 0x0b24 | 0x0a54));
+                let free = leader.is_some_and(|l| !matches!(w.mobys[l].state, 1 | 4 | 5));
+                if from && free {
+                    w.mobys[id].set_pv_i(0xc4, 600);
+                    w.mobys[id].set_state(2, -1);
+                }
+            }
+            w.clear_hit(id);
+        }
+        2 => {
+            let m = &mut w.mobys[id];
+            if water - 4.0 < m.pos[2] { m.pos[2] -= 5.0 / 60.0; }
+            let mut t = m.pv_i(0xc4);
+            let out = crate::moby::countdown(&mut t);
+            m.set_pv_i(0xc4, t);
+            if out { m.set_state(3, -1); }
+        }
+        3 => {
+            let m = &mut w.mobys[id];
+            if m.pos[2] < water {
+                m.pos[2] += 2.0 / 60.0;
+                if water < m.pos[2] {
+                    m.pos[2] = water;
+                    m.set_state(1, -1);
+                }
+            }
+        }
+        _ => {}
+    }
+    let m = &mut w.mobys[id];
+    for v in &mut m.pos { *v = v.clamp(10.0, 1013.0); }
+    if m.state != 2 {
+        let (pos, yaw) = (m.pos, m.rot[2]);
+        carry_hero(ctx, id, old, old_yaw, pos, yaw);
     }
 }
 

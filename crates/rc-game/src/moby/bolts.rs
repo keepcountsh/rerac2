@@ -77,6 +77,18 @@ pub fn drop(w: &mut MobyWorld, id: usize, flags: u32, limit: i32, ctx: &mut Ctx)
     }
 }
 
+/// L01 `0x2a2930`: the bolts a level's breakables give (`0x31d020`), by level (past 25: 25's).
+const LEVEL_BOLTS: [i32; 26] = [15, 5, 15, 25, 50, 0, 20, 20, 10, 40, 0, 65, 25, 50, 55, 0, 50, 50, 85, 100, 150, 30, 30, 30, 30, 30];
+
+/// L01 `0x31d020(height, moby, k)`: k times the level's bolts less one (`0x3189e8`, the spawner: flags 3 within 7 of
+/// Ratchet, else 1).
+pub fn level_drop(w: &mut MobyWorld, id: usize, height: f32, k: i32, ctx: &mut Ctx) {
+    let d = crate::hero::physics::dist(w.mobys[id].pos, ctx.hero.pos);
+    let flags = if d < 7.0 { 3 } else { 1 };
+    let n = LEVEL_BOLTS[ctx.game.level.clamp(0, 25) as usize] * k - 1;
+    spawn(w, id, height, n, n, flags, 0, ctx);
+}
+
 /// `0x322af0(height, moby, min, max, flags, −1, limit)`.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(w: &mut MobyWorld, src: usize, height: f32, min: i32, max: i32, flags: u32, limit: i32, ctx: &mut Ctx) {

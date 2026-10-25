@@ -219,6 +219,26 @@ pub enum Draw {
     Icon { id: u16, frame: u16, pos: [f32; 2], size: [f32; 2], colour: u32 },
     /// Text in font 1 (`0x2ea068` / `0x2e9f68`; `0x2ea570` centred) at `pos`, aligned as `align`.
     Text { text: String, pos: [f32; 2], scale: f32, colour: u32, align: Align },
+    /// An untextured rectangle shaded left to right (`0x2deb90` → `0x2dead0`: a Gouraud strip, the first colour on
+    /// the left edge, the second on the right).
+    Bar { pos: [f32; 2], size: [f32; 2], colours: [u32; 2] },
+}
+
+/// The boss health bar (`0x2f2158`, the draw `0x2f20b8` registers while a fight refreshes it): the three frame sprites
+/// 0x8e / 0x8f / 0x90 at (250, 375) in their colours, the bar 190..(190 + 198 × `fraction`) by 374..388 shaded from
+/// 0x800050c0 to that mixed toward 0x80c04000 by the fraction, and with an icon `icon` > 0 the boss's picture (`0x2effc8`
+/// (0xeaa7, icon − 1)) 43 × 43 at (139, 352).
+///
+/// Not ported: the draw's depth word `0x1bda70` (0.62 while it draws), the PAL screen scale `0x1b2dc4` (1 here).
+pub fn boss_bar(fraction: f32, icon: i32, out: &mut Vec<Draw>) {
+    for (id, colour) in [(0x8e, 0x6044_2d00), (0x8f, 0x6024_1700), (0x90, 0x55f0_c070)] {
+        out.push(Draw::Sprite { id, pos: [250.0, 375.0], scale: [1.0, 1.0], frame: 0.0, colour });
+    }
+    let f = fraction.clamp(0.0, 1.0);
+    let right = lerp_rgba(f, 0x8000_50c0, 0x80c0_4000);
+    let width = (198.0 * f + 190.0) as i32 as f32 - 190.0;
+    out.push(Draw::Bar { pos: [190.0, 374.0], size: [width, 14.0], colours: [0x8000_50c0, right] });
+    if 0 < icon { out.push(Draw::Icon { id: 0xeaa7, frame: (icon - 1) as u16, pos: [139.0, 352.0], size: [43.0, 43.0], colour: 0x807f_7f7f }); }
 }
 
 /// Where a [`Draw::Text`]'s `pos` is on the line.
@@ -548,6 +568,19 @@ pub fn quads(draws: &[Draw], sprites: &HashMap<u32, Sprite>, glyphs: &[Glyph; 25
                 let [x, y] = *pos;
                 let [w, h] = *size;
                 out.push(Quad { pos: [[x, y], [x + w, y], [x, y + h], [x + w, y + h]], uv: [[0.0, 0.0], [tw, 0.0], [0.0, th], [tw, th]], rgba: rgba(*colour), tex });
+            }
+            Draw::Bar { pos, size, colours } => {
+                // The strip's shading in 16 columns, each its share of the way from the left colour to the right.
+                const STEPS: usize = 16;
+                let [x, y] = *pos;
+                let [w, h] = *size;
+                if w <= 0.0 { continue; }
+                for k in 0..STEPS {
+                    let (a, b) = (k as f32 / STEPS as f32, (k + 1) as f32 / STEPS as f32);
+                    let c = lerp_rgba((a + b) * 0.5, colours[0], colours[1]);
+                    let (x0, x1) = (x + w * a, x + w * b);
+                    out.push(Quad { pos: [[x0, y], [x1, y], [x0, y + h], [x1, y + h]], uv: [[0.0; 2]; 4], rgba: rgba(c), tex: Tex::None });
+                }
             }
             Draw::Text { text, pos, scale, colour, align } => {
                 if colour >> 24 == 0 { continue; }

@@ -30,7 +30,7 @@
 //! the arms; dead (7): its bolts, the moby `+0xcc` deleted. Its arms are `+0xa0` / `+0xa4`.
 //!
 //! Not ported: the splashes and ripples (`0x3cd130`, `0x339b60`), the swing's dust ring and the camera shake
-//! (`0x1b94e0`), the shadow, the music (`0x3245e8`: the tracks `+0xd0..+0xdc`), the boss bar's draw, `0x1b2f40`,
+//! (`0x1b94e0`), the shadow, the music (`0x3245e8`: the tracks `+0xd0..+0xdc`), `0x1b2f40`,
 //! the water clip `+0x70` / `+0x74` of the moby.
 
 use crate::hero::physics::{add, add_rot, atan2, dist2, len, rot_dist, scale, set_len, sub, sub_rot, V3};
@@ -682,6 +682,7 @@ fn core_checks(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if matches!(m.sub_state, 5 | 6) {
         let most = m.pv_s(0x24).max(1) as f32;
         ctx.game.boss_bar = Some(((m.pv_f(HP) / most).clamp(0.0, 1.0), 5));
+        ctx.game.boss_icon = 1;
     }
 }
 

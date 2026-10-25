@@ -21,10 +21,12 @@ pub mod oozla;
 pub mod light;
 pub mod nanotech;
 pub mod pickup;
+pub mod platinum;
 pub mod props;
 pub mod space;
 pub mod spitter;
 pub mod shot;
+pub mod smash;
 pub mod spawn_point;
 pub mod tie_lights;
 pub mod maktar;
@@ -118,6 +120,21 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0ace => Some(oozla::update_0ace),
         0x061c => Some(oozla::update_061c),
         0x0a7b => Some(oozla::update_0a7b),
+        0x0f02 | 0x0f08 | 0x0f2e | 0x0f33 => Some(smash::update),
+        0x0f32 => Some(smash::update_0f32),
+        0x0af7 => Some(smash::update_0af7),
+        0x10ef => Some(smash::update_10ef),
+        0x10fa => Some(smash::update_10fa),
+        0x12dc => Some(smash::update_12dc),
+        0x0a26 => Some(smash::update_0a26),
+        0x0a27 | 0x0a28 => Some(smash::update_plant_piece),
+        0x0a29 => Some(smash::update_0a29),
+        0x0fa0 => Some(oozla::update_0fa0),
+        0x0ab3 => Some(oozla::update_0ab3),
+        0x0b07 => Some(oozla::update_0b07),
+        0x0b21 => Some(oozla::update_0b21),
+        0x02e1 => Some(oozla::update_02e1),
+        platinum::CLASS => Some(platinum::update),
         0x0825 => Some(dynamo::update),
         0x00bc => Some(tractor::update),
         0x0acb | 0x0acc => Some(tractor::update_box),

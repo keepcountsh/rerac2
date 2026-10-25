@@ -165,6 +165,8 @@ mod at {
     pub const MODS_AVAILABLE: u32 = 0x1a7ac0;
     pub const MODS_BOUGHT: u32 = 0x1a7a88;
     pub const PLATINUM_SPENT: u32 = 0x139648;
+    /// The platinum bolts found, 4 bytes a level.
+    pub const PLATINUM: u32 = 0x19b278;
     /// The planets unlocked (`0x322730`), one byte per level (crate::travel).
     pub const PLANETS: u32 = 0x1a7bd0;
     pub const PLANETS_LEN: usize = 0x1c;
@@ -212,6 +214,7 @@ impl GameState {
         if let Some(b) = s.bytes_mut(G, at::MODS_AVAILABLE, 0x38) { b.copy_from_slice(&self.mods_available); }
         if let Some(b) = s.bytes_mut(G, at::MODS_BOUGHT, 0x38) { b.copy_from_slice(&self.mods_bought); }
         s.set_u8(G, at::PLATINUM_SPENT, self.platinum_spent);
+        if let Some(b) = s.bytes_mut(G, at::PLATINUM, self.platinum.len()) { b.copy_from_slice(&self.platinum); }
         for (n, &seen) in self.scenes_seen.iter().enumerate() {
             let (w, bit) = scene_bit(n);
             let v = s.i32(G, w) as u32;
@@ -274,6 +277,7 @@ impl GameState {
         if let Some(b) = s.bytes(G, at::MODS_AVAILABLE, 0x38) { self.mods_available.copy_from_slice(b); }
         if let Some(b) = s.bytes(G, at::MODS_BOUGHT, 0x38) { self.mods_bought.copy_from_slice(b); }
         self.platinum_spent = s.u8(G, at::PLATINUM_SPENT);
+        if let Some(b) = s.bytes(G, at::PLATINUM, self.platinum.len()) { self.platinum.copy_from_slice(b); }
         for n in 0..self.scenes_seen.len() {
             let (w, bit) = scene_bit(n);
             self.scenes_seen[n] = s.i32(G, w) as u32 & bit != 0;

@@ -1884,6 +1884,8 @@ fn draw_hud(
                 let menu = menu.chain(tables.grids.iter().flatten().filter(|c| c.icon != 0).map(|c| (c.icon, c.frame))).chain([(0xea9a, 0), (0xe99a, 10), (0xe99e, 0), (0xe99e, 1), (0xe99e, 2), (0xeaa2, 0), (0xe99d, 1)]);
                 // The space fights' HUD icons (rc_game::ship::HUD_ICONS).
                 let menu = menu.chain((0..16).map(|f| (rc_game::ship::HUD_ICONS, f)));
+                // The boss bar's pictures (rc_game::hud::boss_bar, icon 0xeaa7 by boss).
+                let menu = menu.chain((0..8).map(|f| (0xeaa7, f)));
                 for (id, f) in menu {
                     if !h.has_icon(id) || icons.contains_key(&(id, f)) { continue; }
                     if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {
@@ -2051,6 +2053,8 @@ fn draw_hud(
         }
         // In the space fights the ship's HUD stands for Ratchet's (rc_game::ship::Flight::status).
         let mut draws = if p.ship.is_some() { Vec::new() } else { p.hud.draw(p.game.bolts) };
+        // The boss bar while a fight refreshes it (`0x2f2158`).
+        if let (None, Some((f, _))) = (&p.ship, p.game.boss_bar) { rc_game::hud::boss_bar(f, p.game.boss_icon, &mut draws); }
         // The quick select's ring and texts (rc_game::quick_select).
         if let Some(m) = p.mobys.as_ref() {
             let slots = rc_game::quick_select::slots(&p.game, &m.level.items);
