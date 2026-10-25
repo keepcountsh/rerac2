@@ -206,7 +206,7 @@ impl LevelOverlay {
     }
 
     /// `n` bytes at `addr` (None past the loaded sections).
-    pub(crate) fn read(&self, addr: u32, n: usize) -> Option<&[u8]> { read_overlay(&self.sections, addr, n) }
+    pub fn read(&self, addr: u32, n: usize) -> Option<&[u8]> { read_overlay(&self.sections, addr, n) }
     pub fn u32(&self, addr: u32) -> Option<u32> { self.read(addr, 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())) }
 
     fn text_end(&self) -> u32 { self.text_start + 4 * self.text.len() as u32 }

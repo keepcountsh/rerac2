@@ -15,15 +15,21 @@
 //!
 //! The muzzle flash (`0x3a8ce0`, [`muzzle_flash`]) and a point-blank hit's smoke and sparks (`0x3e46d8`) are particles.
 //!
+//! The flash's point light (`+0x24`, crate::point_lights): taken on a shot when it has none (`0x2fda20(4, 0, its
+//! place, 0)`: radius 4, intensity 0, black); then at the end of every tick (`0x3a8b68`), while the flash ticks
+//! (`+0x28`) run and the item is not on its way out (`0x18b064` ≠ 3), it is rewritten 2 ahead of Ratchet and 2 up
+//! (`(2, 0, 2)` through his rows `0x18a550` — `0x2af8d8`'s copy of his moby's — from his feet `0x189ea0`), radius 4,
+//! red `+0x28 / 10` with half as much green and blue (the intensity stays the take's 0); else it is freed (`0x2fdc48`).
+//!
 //! The markers (`0x2db498`): the lock's green reticle and, in the look stance's twin, the crosshair.
 //!
-//! Not ported: the flash light (`0x2fda20`, `+0x24`), the pad rumble (`0x2d6d60`), the
-//! stats (`0x18c8dc..`), the first-person aim (`0x18b320`).
+//! Not ported: the pad rumble (`0x2d6d60`), the stats (`0x18c8dc..`), the first-person aim (`0x18b320`).
 
 use crate::hero::items::{row, LANCER};
 use crate::hero::physics::{add, len, scale, sub, V3};
 use crate::moby::hits::HitTemplate;
 use crate::moby::{aim, countdown, Ctx, MobyWorld};
+use crate::point_lights::PointLight;
 
 /// `$gp+0x37fc` for the Lancer: the shots' range; the lock delay `$gp+0x684` and hold `$gp+0x680`.
 pub const RANGE: f32 = 20.0;
@@ -166,6 +172,19 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         }
         _ => {}
     }
+    // `0x3a8b68`: the flash's light (module doc), rewritten while the flash runs, else freed.
+    let slot = w.mobys[id].pv_i(0x24);
+    if slot != -1 {
+        let fl = w.mobys[id].pv_i(0x28);
+        if ctx.hero.items.ready != 3 && 0 < fl {
+            let p: V3 = std::array::from_fn(|k| hero_pos[k] + 2.0 * hero_rows[0][k] + 2.0 * hero_rows[2][k]);
+            let f = fl as f32 / 10.0;
+            w.point_lights.set(slot as usize, PointLight { color: [f, f * 0.5, f * 0.5], intensity: 0.0, pos: p, radius: 4.0 });
+        } else {
+            w.point_lights.free(slot as usize);
+            w.mobys[id].set_pv_i(0x24, -1);
+        }
+    }
 }
 
 /// `0x2eeb40(+0x0c)`: the cooldown down a frame (1/60 s); true when out.
@@ -205,6 +224,12 @@ fn fire(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, muzzle: V3, damage: f32, sp
         w.mobys[id].set_pv_s(0x10, 1);
     }
     if ctx.host.anim(&w.mobys[id]).is_some_and(|a| a.seq_b != 2) { ctx.host.set_anim(&w.mobys[id], 2, 0, 0); }
+    // `0x2fda20(4, 0, its place, 0)`: the flash's light, when it has none (the tick's tail colours and places it).
+    if w.mobys[id].pv_i(0x24) == -1 {
+        let l = PointLight { color: [0.0; 3], intensity: 0.0, pos: w.mobys[id].pos, radius: 4.0 };
+        let s = w.point_lights.alloc(l).map_or(-1, |s| s as i32);
+        w.mobys[id].set_pv_i(0x24, s);
+    }
     w.mobys[id].set_pv_i(0x28, 10);
     ctx.host.play_sound(&w.mobys[id], 0, 0);
     let target = w.mobys[id].pv_link(0);

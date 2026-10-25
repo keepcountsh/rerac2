@@ -383,6 +383,8 @@ pub trait MobyHost {
     fn set_anim(&mut self, _m: &Moby, _seq: u8, _frame: u8, _blend: u8) {}
     /// The camera's position (`0x1b8d40`).
     fn camera_pos(&self) -> V3 { [0.0; 3] }
+    /// The camera's matrix (`0x1b8f70`): rows forward, left, up.
+    fn camera_rows(&self) -> [V3; 3] { [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] }
     /// `+0x48`: the playback speed.
     fn set_anim_speed(&mut self, _m: &Moby, _speed: f32) {}
     /// `0x311880`: the moby's place in its sequence in the frames' time units (`+0x44` the blend between two keys of one
@@ -464,6 +466,11 @@ pub struct MobyWorld {
     pub nanotech: classes::nanotech::Globals,
     /// The Gravity Bomb's blast effect (classes::gravity_bomb).
     pub gravity_bomb: classes::gravity_bomb::Effect,
+    /// The frame's blob shadows (`0x1be840`, crate::shadows), asked for by the updates and drawn with crate::fx's quads.
+    pub shadows: crate::shadows::Shadows,
+    /// The point lights (`0x1c6ec0`), owned by the explosion lights (classes::light); the engine lights the world and
+    /// the mobys with them.
+    pub point_lights: crate::point_lights::PointLights,
 }
 
 /// The instance data the static spawn reads besides the records (gameplay sections 20, 22..25).
@@ -650,6 +657,7 @@ impl MobyWorld {
             self.load_pass(ctx);
         }
         self.draws.clear();
+        self.shadows.clear();
         for id in self.run_list(cam) {
             if self.mobys[id].state >= 0x80 { continue; }
             if self.mobys[id].mode & mode::NO_ADVANCE == 0 { ctx.host.advance(&self.mobys[id]); }
@@ -720,6 +728,15 @@ impl MobyWorld {
     pub fn coll_line(&self, ctx: &Ctx, a: V3, b: V3, flags: u32, ignore: Option<usize>) -> Option<crate::collision::CollOutput> {
         let live = |i: usize| self.mobys.get(i).is_some_and(|m| m.state < 0x80 && m.has_collision);
         crate::collision::coll_line_live(ctx.coll?, ctx.scene, a, b, crate::collision::QueryFlags(flags), ignore, &live)
+    }
+
+    /// `0x31c970(group, v)` (L01 `0x3127b8`): every member of the group (the list `0x1fa8a0[group]`) gets its timer byte
+    /// `+0xbc` = `v`; no group (−1 or unknown) does nothing.
+    pub fn poke_group(&mut self, group: i32, v: u8) {
+        let Some(members) = usize::try_from(group).ok().and_then(|g| self.groups.get(g)) else { return };
+        for &i in members {
+            if let Some(m) = self.mobys.get_mut(i) { m.timer = v; }
+        }
     }
 
     /// `0x313dc0`: rows from the Euler angles (unless mode 0x100; mode 0x8000 mirrors the second row), the bounding

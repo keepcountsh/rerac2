@@ -34,13 +34,15 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-REN-003 | **The first draw-callback list** `0x2e7718` (0x40 entries `0x1be040` / `0x1be140`, run by `0x2e7768` before the particles `0x3311e0`). The port has the second list (`0x2e7920`, crate::fx); each user's callback is its own code. On Aranos only the arrival ship's draw (`0x362b40`, done by the engine) and class 0xd0's ribbon (`0x39ac30`, not placed) use it (2026-10-22: Aranos's 0x0ce9 / 0x0340 were a census keying collision; they use the second list) | 152 units on the other levels (the registrar `H:582266980bbdcff0`, L01 `0x2dce00`) | partly: 72 / 485 | census; rc-game/src/fx.rs | yes |
 | G-REN-004 | **Effect quads**: the beam strip `0x2edd50`, trails `0x323c90` (the wrench's `+0x70`, the bites' `0x3dbde8` / `0x3dbe88` / `0x3dc100`), 0x0b0a's emerge flash `0x3d8920` → `0x2ee190` (FX 0x3b), 0x0b0b's wire `0x3db790`, the group branch of `0x3dc220` | wrench, 0x0b0a, 0x0b0b, 4 units | 4 / 400 (2 / 21) | fx.rs:13; wrench.rs:15; enemies.rs:340, 842 | yes |
 | G-REN-005 | **Moby colour take-over and flash**: `0x31fa50` / `0x3241d8`, the hit flash `0x3201e8` | shards (shards.rs:26), enemies, 11 units | 11 / 336 (5 / 25) | shards.rs:26; enemies.rs:20 | yes |
-| G-REN-006 | **Lighting**: point lights (`0x2fda20`: the Lancer's flash), the enemies' lighting `0x31a8e4`, the moby lights and colours `0x3132e0` (bolts), tie and moby lighting (milestone D) | Lancer, enemies, bolts, 3 units | 3 / 56 (3 / 56) | lancer.rs:20; enemies.rs:20; bolts.rs:7; moby.rs:29; bringup.md §2 D | yes |
+| G-REN-006 | **Lighting**: point lights — done: the bank `0x1c6ec0` (`0x2fda20` / `0x2fdb60` / `0x2fdc48`, rc-game/src/point_lights.rs), the light moby 0x27f (classes/light.rs: the Gravity Bomb), the Lancer's flash light (lancer.rs, `0x3a8b68`), the blasts' flash ball 0x70 (`0x38e5a8` / `0x38e768`, classes/flash.rs — a mesh, not a point light) and their camera shake (blast.rs); left: the enemies' lighting `0x31a8e4`, the moby lights and colours `0x3132e0` (bolts), tie and moby lighting (milestone D) | enemies, bolts, 3 units | 3 / 56 (3 / 56) | enemies.rs:20; bolts.rs:7; moby.rs:29; bringup.md §2 D | yes |
 | G-REN-007 | **Ship and space**: the ship's engine glow and draw callback, the parked ship, the hull mesh (`0x2fef68`, `SPACE.WAD` `+0xab8`) | Aranos's ship 0x0d54 | — | props.rs:526; bringup.md §6 | yes |
 | G-REN-008 | **Occlusion offset point** (`occlusion_rad_offset`, set by a camera mode in `0x2f2af0`) | — | — | bringup.md §6 | minor |
 | G-REN-009 | **Water surfaces and the sea**: the strips' scroll, wobble and bob, the ripple patch, the sea | the levels with water (to map) | — | R&C2's code not mapped yet; R&C1's port: `water.rs`, `water_render.rs`, `sea_render.rs` (porting_from_rac1.md) | yes |
 | G-REN-010 | **Fog zones and the underwater view**: the environment transitions, the underwater test, the fog selection | the levels with fog zones or water (to map); the audio's underwater flag | — | R&C2's code not mapped yet; R&C1's port: `fog_zones.rs`, `fog_state.rs` (porting_from_rac1.md) | yes |
 | G-REN-011 | **Sky stars**: the star sprites of the sky dispatch | the levels with stars (to map) | — | R&C2's code not mapped yet; R&C1's port: `sky_stars.rs` (porting_from_rac1.md) | yes |
 | G-REN-012 | **After-images**: translucent copies of a moby where it was a few ticks ago | the users (to map) | — | R&C2's code not mapped yet; R&C1's port: `afterimage.rs`, `afterimage_render.rs` (porting_from_rac1.md) | yes |
+| G-REN-013 | **The explosion moby 0x986** (L25 `0x3cbfe8(at, 0, kind)`: at most 5 alive, the oldest recycled) | Wupash: the missiles' hits and the ship's death (the ground blast `0x4184c8` stands in) | — | rc-game/src/ship.rs (`update_mission`, the missile's hit) | yes |
+| G-REN-014 | **The Tractor Beam's rope** `0x38dd68` (20 points, springy and waving) | the Tractor Beam (a straight line with a slight wave stands in) | — | rc-game/src/moby/classes/tractor.rs:22 | yes |
 
 ## Particles (PRT)
 
@@ -48,6 +50,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 |---|---|---|---|---|---|
 | G-PRT-001 | **Particle types beyond 0x17 / 0x2c / 0x30 / 0x55 / 0x59** (0x30, R&C1's type 48, closed 2026-10-22: particles.rs `drift`): type 2 `0x3327e8`, 0x3c `0x33b5e0`, sparks (`0x38ce80`, `0x38cc88`, `0x33a058`, `0x336148`, `0x3dbc20`), dust `0x334528`, the bolt sparkle `0x33a6a0`, bubbles and splashes (`0x3378b0`, `0x2aac58`, `0x37d5a0`), smoke | wrench, grind, chute, zip line, crates, bolts, water, burns, 53 units | 53 / 1,757 (30 / 1,047) | particles.rs:15; wrench.rs:15; grind.rs:22, 398; misc.rs:15; crate_.rs:13; bolt.rs:7; water.rs:19; damage.rs:12; props.rs:329 | yes |
 | G-PRT-002 | The gravity boots' bend of particle positions `0x380e08` (`+0x1c` = 2) | — | — | particles.rs:15 | minor |
+| G-PRT-003 | **The laser end's sparks** `0x346ee8` | Wupash: the ship's lasers (`0x4134b0`; crate::particles::spark stands in) | — | rc-game/src/ship.rs (`laser_burst`) | yes |
 
 ## Cameras (CAM)
 
@@ -68,6 +71,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-CLS-005 | **The line test** `0x31c618` (through `0x2de878` / `0x2df8d8`); the see-through classes `0x381350` (list `0x2318d0`) | 7 units, aim | partly: 1 / 4 | census; aim.rs:10 | yes |
 | G-CLS-006 | **Ratchet / ship queries**: direction `0x326448`, distance `0x326820` (the ship mode `0x1a8ff4`, `0x1a9000`) | 20 units | partly: 3 / 27 | census | yes |
 | G-CLS-007 | **Attachments leftovers**: the carrier's joint frames (`0x3245b0`), the offset moby `+0x40`, the shrubs' sphere and scale, the ties' update `0x36c068` | carriers | — | attach.rs:8 | minor |
+| G-CLS-008 | **Talk records** `0x139a34 + 0x10·i` through the level's talk list (`0x1c5d20` from `0x28ead0[level]`; marked by `0x325980(0x3259d8(moby))`) | Oozla's Tractor Beam seller 0x0ace; the missions' conditions 4 / 5 (crate::travel::missions) | — | rc-game/src/moby/classes/oozla.rs (`update_0ace`); rc-game/src/travel/missions.rs | no |
 
 ## Levels (LVL)
 
@@ -104,12 +108,14 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-WPN-005 | **The shot's reaction** on a hit moby `0x4126b8` (`+0x98`) and the gravity boots' bend (`0x37f538` / `0x37f618`) | the Lancer's shot | — | shot.rs:20 | yes |
 | G-WPN-006 | **Targeting**: the target list, the aim searches, the throw's landing preview, the ground reticle and markers | the thrown and aimed items, the HUD | — | R&C2's code not mapped yet; R&C1's port: `targeting.rs`, `reticle_render.rs`, `marker_render.rs` (porting_from_rac1.md) | yes |
 | G-WPN-007 | **Inventory and equipment**: what Ratchet owns, each slot's equipped item, the rules that change them | the hand items, the vendor, the saves | — | R&C2's code not mapped yet; R&C1's port: `inventory.rs` (porting_from_rac1.md) | yes |
+| G-WPN-008 | **The Tractor Beam's target** `0x18a3e0` (its writer not found in L01; the port picks the nearest box of the target list ahead) | the Tractor Beam and its boxes | — | rc-game/src/moby/classes/tractor.rs:9 | yes |
 
 ## Enemies (ENM)
 
 | ID | System | Consumers | Census | Sources | Seen |
 |---|---|---|---|---|---|
-| G-ENM-001 | **AI leftovers**: the joint aims (`0x32db38`, `0x324208`, `0x327308`, records `+0x3d0` / `+0x450`), the dangerous floor `0x322058`, helpers and decoys as targets, the scene's hiding (`0x1a8f00` = 2) | 0x0b0a, 0x0b0b, every creature | — | ai.rs:30; enemies.rs:340, 842 | yes |
+| G-ENM-001 | **AI leftovers**: the joint aims (`0x32db38`, `0x324208`, `0x327308`, records `+0x3d0` / `+0x450`), the dangerous floor `0x322058`, helpers and decoys as targets, the scene's hiding (`0x1a8f00` = 2) | 0x0b0a, 0x0b0b, every creature; Oozla's Tractor Beam seller 0x0ace (its head and body turning to Ratchet, L01 `0x31a0e0`) | — | ai.rs:30; enemies.rs:340, 842 | yes |
+| G-ENM-002 | **The space fighters' shot pool** `0x2218c0` (0x80 bytes each, `0x375198` / `0x375410`; a 0xffa moby stands in) and the crosshair's draw `0x4383d8` (one sprite stands in) | Wupash | — | rc-game/src/ship.rs | yes |
 
 ## Audio (AUD)
 

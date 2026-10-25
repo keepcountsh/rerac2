@@ -32,8 +32,9 @@
 //! mobys `0x1b8e84` / `0x18b270` (nothing sets them on Aranos), the stick auto-centre (`$gp+0x2540` is 0 on the disc),
 //! the water settle (D+0x14e), the knock-down view (state 0x74, mode 11), the camera's own shift `0x1b8fc0`, the
 //! underwater test `0x2d9a58`; the other camera classes (first person `0x427bf8` needs Ratchet's camera mode 4 / 0x51,
-//! script 5, 6, the Swingshot's 7, 0x1b), the blends between cameras (`0x2d8168` / `0x2d8ab0` / `0x2d9488`), the
-//! shakes (`0x2d9528`: their users, the blast `0x320538` among them, are not ported) and the FOV blend `0x2d7b70`.
+//! script 5, 6, the Swingshot's 7, 0x1b), the blends between cameras (`0x2d8168` / `0x2d8ab0` / `0x2d9488`) and the
+//! FOV blend `0x2d7b70`. The shakes are [`Shakes`] (set by the Gravity Bomb's blast; the blast `0x320538` and the
+//! others that ask for one are not ported).
 
 use crate::hero::physics::{add, dot, len, scale, sub, V3};
 use crate::hero::Hero;
@@ -42,6 +43,63 @@ use crate::collision::mobys::MobyScene;
 use crate::collision::{coll_line_m, coll_sphere_m, QueryFlags};
 
 const HALF_PI: f32 = std::f32::consts::FRAC_PI_2;
+
+/// One camera shake (`{amplitude, value, timer, length}`): the asker sets the amplitude and the timer, and the length
+/// to 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shake {
+    pub amp: f32,
+    pub value: f32,
+    pub timer: i32,
+    pub max: i32,
+}
+
+/// The camera shakes (`0x1b8d60` / `0x1b8d70` / `0x1b8d80`): up and down, back and forth, and a roll.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shakes(pub [Shake; 3]);
+
+impl Shakes {
+    /// A shake asked for, as the askers write it (L00 `0x1b8d60 + 0x10·slot`, L25 `0x1b91a0 + …`): its size and
+    /// ticks set, its length cleared (the value kept); a new ask replaces the running one.
+    pub fn ask(&mut self, slot: usize, amp: f32, ticks: i32) {
+        let s = &mut self.0[slot];
+        (s.amp, s.timer, s.max) = (amp, ticks, 0);
+    }
+
+    /// `0x2d9f38`'s three `0x2d9528` calls after the camera's update, on the frame's eye and rows (forward, left, up)
+    /// — the camera itself keeps its own. While its timer runs (the length the largest it was, the timer one down,
+    /// t = timer / length): the eye moves `amp · cos(2·timer) · t²` along up (0) or forward (1); the rows roll about
+    /// forward by the quaternion of half-angle sine `amp · sin(elapsed · 2001° / 60 − 10 · 2001°) · t³` eased in over the
+    /// first 10 ticks (2). Not ported: the current camera of type 6 (`0x1b8d90 + 0x86`) stopping them.
+    pub fn apply(&mut self, eye: &mut V3, rows: &mut [V3; 3]) {
+        for (axis, s) in self.0.iter_mut().enumerate() {
+            if s.timer == 0 {
+                s.max = 0;
+                continue;
+            }
+            if s.max < s.timer { s.max = s.timer; }
+            crate::moby::countdown(&mut s.timer);
+            let t = s.timer as f32 / s.max as f32;
+            if axis < 2 {
+                s.value = s.amp * wrap(s.timer as f32 * 2.0).cos() * t * t;
+                *eye = add(*eye, crate::hero::physics::set_len(if axis == 0 { rows[2] } else { rows[0] }, s.value));
+            } else {
+                let k = 2001.0 * 0.017_453_294;
+                let gone = (s.max - s.timer) as f32;
+                let ease = (gone * 0.016_666_668 * 6.0).min(1.0);
+                s.value = s.amp * wrap(gone * 0.016_666_668 * k - k * 10.0).sin() * t * t * t * ease;
+                let q = crate::moby::shards::axis_quat(s.value, rows[0]);
+                *rows = rows.map(|r| crate::moby::shards::rotate(q, r));
+            }
+        }
+    }
+}
+
+/// `0x2efef0`: `a` wrapped to [−π, π) by its fraction of a turn.
+fn wrap(a: f32) -> f32 {
+    let f = a * 0.159_154_94 + 0.5;
+    ((f - f.floor()) - 0.5) * std::f32::consts::TAU
+}
 /// `$gp+0x2474` (40°) and `+0x2470` (1.75°): the stick pitch's range and step.
 const DEG40: f32 = 0.698_131_7;
 const DEG1_75: f32 = 0.030_543_262;
@@ -419,9 +477,11 @@ pub struct FollowCamera {
     hero_s: V3,
     hero_s_v: f32,
     yaw_hist: [f32; 5],
-    /// `0x1b17cc` / `0x1b17d0`: the line and sphere chain flags.
+    /// `0x1b17cc` / `0x1b17d0`: the line and sphere chain flags; `0x1b8e60`: the last liquid's surface bits the line
+    /// keeps passing through (0x100 lava, 0xb00 a pit, 0x300 quicksand, 0xd00 a deep liquid; cleared over water).
     line_flags: u32,
     sph_flags: u32,
+    liquid_bits: u32,
     /// The defaults the spring back returns to (`0x1bafc0`: the record as the reset left it, `0x2d7d80`).
     d0_dist: f32,
     d0_pivot_h: f32,
@@ -439,13 +499,31 @@ impl FollowCamera {
             line_flags: 0xb4, sph_flags: 0x94, end_flags: 0x14, ..Default::default()
         };
         c.pre_motion(inp);
-        c.init(inp);
+        c.init(inp, None);
         (c.d0_dist, c.d0_pivot_h, c.d0_look_h) = (c.dist, c.pivot_h, c.look_h);
         c
     }
 
-    /// `0x424908` (not switched in from another camera's pose).
-    fn init(&mut self, inp: &CamInput) {
+    /// [`FollowCamera::new`] switched in over a releasing camera whose pose carries over (`0x2d8168` with the old
+    /// camera's release flag 3 or 5: its rows and position copied into the slot, entered 2; the script camera's
+    /// release kinds 1 and 4, `crate::script_camera`): the init keeps `pos` and `rows`.
+    pub fn from_pose(inp: &CamInput, pos: V3, rows: [V3; 3]) -> FollowCamera {
+        let h = inp.hero;
+        let up = norm(h.rows[2], 1.0);
+        let mut c = FollowCamera {
+            up_s: up, up2: up, up2_prev: up, prev_hero: h.pos, hero_s: h.pos, yaw_hist: [h.rot[2]; 5],
+            line_flags: 0xb4, sph_flags: 0x94, end_flags: 0x14, ..Default::default()
+        };
+        c.pre_motion(inp);
+        c.init(inp, Some((pos, rows)));
+        (c.d0_dist, c.d0_pivot_h, c.d0_look_h) = (c.dist, c.pivot_h, c.look_h);
+        c
+    }
+
+    /// `0x424908`: the defaults, then the snap behind Ratchet (`0x421b38`, `0x424548(1)`), or with `pose` (the slot
+    /// entered 2) `0x4247a0`: the targets at Ratchet, the springs at rest, the pivot and the look point above him
+    /// along up, the offset from the kept position, the rows kept and blended from over 90 ticks (`$gp+0x24c8`).
+    fn init(&mut self, inp: &CamInput, pose: Option<(V3, [V3; 3])>) {
         let h = inp.hero;
         self.target = h.pos;
         self.look_h = 1.5;
@@ -470,8 +548,24 @@ impl FollowCamera {
         (self.red, self.fast_rec, self.end_class, self.blocked, self.no_chain) = (0.0, 0, 0, 0, 0);
         self.rec_t = 2000;
         (self.sph_scale, self.sph_count, self.sph_step) = (1.0, 8.0, 0.1);
-        self.target_reset(inp);
-        self.snap(inp);
+        match pose {
+            None => {
+                self.target_reset(inp);
+                self.snap(inp);
+            }
+            Some((pos, rows)) => {
+                let (s, hp) = (self.up2, h.pos);
+                (self.target, self.smooth) = (hp, hp);
+                self.vtarget = scale(s, dot(hp, s));
+                (self.vel_h, self.vel_v, self.look_s_vel) = ([0.0; 3], [0.0; 3], [0.0; 3]);
+                self.pivot = add(hp, scale(s, self.pivot_h));
+                self.look = add(hp, scale(s, self.look_h));
+                self.look_s = self.look;
+                (self.pos, self.rows, self.owner) = (pos, rows, None);
+                self.saved_fwd = rows[0];
+                (self.row_blend, self.row_blend_inv) = (90, 1.0 / 90.0);
+            }
+        }
         self.off = sub(self.pos, self.pivot);
         self.placed = self.off;
         self.desired = self.pos;
@@ -556,14 +650,27 @@ impl FollowCamera {
     /// The pitch from the forward row.
     pub fn pitch(&self) -> f32 { (-self.rows[0][2]).atan2((self.rows[0][0] * self.rows[0][0] + self.rows[0][1] * self.rows[0][1]).sqrt()) }
 
-    /// `0x2d9ba8`: the end sphere's flags 0x14 (0x34 in groups 0x11 / 0x12 or the wading walk 0x70), the sphere chain's
-    /// with 0x80, the line's 0xb4 (the water states' surface bits are not ported).
+    /// `0x2d9ba8`: the end sphere's flags `0x1b17d4` 0x14 and the sphere chain's `0x1b17d0` 0x94 — through the water
+    /// (0x34 / 0xb4) only in level 6's pool (x 485.7..570.7, y 250..334.5) in groups 0x11 / 0x12 or the wading walk
+    /// 0x70 (the camera above the water out of group 0x11 keeps 0x14; the water value written first is otherwise
+    /// overwritten); the line's `0x1b17cc` 0xb4 through the water, or through the liquid under him instead (lava
+    /// 0x1b4, a pit 0xbb4, quicksand 0x3b4, a deep liquid 0xdb4), kept (`0x1b8e60`) until he is over water again.
     fn pre_flags(&mut self, inp: &CamInput) {
         let h = inp.hero;
-        let f = if matches!(h.group, 0x11 | 0x12) || h.state == 0x70 { 0x34 } else { 0x14 };
-        self.end_flags = f;
-        self.sph_flags = f | 0x80;
-        self.line_flags = 0xb4;
+        let mut in_water = 0x14;
+        if matches!(h.group, 0x11 | 0x12) || h.state == 0x70 { in_water = 0x34; }
+        if h.group != 0x11 && h.surf.water_z < self.pos[2] { in_water = 0x14; }
+        let mut end = 0x14;
+        if inp.level == 6 && 485.7 < h.pos[0] && h.pos[0] < 570.7 && 250.0 < h.pos[1] {
+            end = in_water;
+            if h.pos[1] < 334.5 { end = 0x34; }
+        }
+        self.end_flags = end;
+        self.sph_flags = end | 0x80;
+        let s = &h.surf;
+        let bits = if s.hot { 0x100 } else if s.pit { 0xb00 } else if s.sand { 0x300 } else if s.deep { 0xd00 } else if s.water { 0 } else { self.liquid_bits };
+        self.line_flags = bits | 0xb4;
+        self.liquid_bits = bits;
     }
 
     /// `0x2d9760`: up = −gravity, its smoothed copy (0.015, 0.2; nudged off a flip below −0.98), the hero's horizontal

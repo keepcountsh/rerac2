@@ -2565,7 +2565,7 @@ fn help_items_of(t: HelpTopic, tables: &MenuTables, save: &SaveData) -> Vec<i32>
 
 /// `0x327c68`: the platinum bolts found, 4 a level (`0x19b278 + 4·level`, one byte each; level 2 another 4 at
 /// `0x19b2e0`), level 0x1a left out; at most 40.
-fn platinum_bolts(save: &SaveData) -> i32 {
+pub fn platinum_bolts(save: &SaveData) -> i32 {
     let found = |at: u32| (0..4).filter(|&k| save.u8(Scope::Global, at + k) != 0).count() as i32;
     (0..0x1c).filter(|&l| l != 0x1a).map(|l| found(0x19b278 + 4 * l) + if l == 2 { found(0x19b2e0) } else { 0 }).sum::<i32>().clamp(0, 40)
 }

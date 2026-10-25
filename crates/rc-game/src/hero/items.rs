@@ -160,6 +160,22 @@ pub struct ItemBlock {
 }
 
 impl ItemBlock {
+    /// `0x3227d8(item)` for a hand item (its record's slot kind `+0x0c` is 0): the hand item asked for (`0x18c0e8`),
+    /// taken by the next change; 0 asks for none (0x77), the item already held asks for nothing. Only the items the
+    /// hero can hold ([`ROWS`]); the head, feet and back slots (kinds 1..3) are not ported. True when asked.
+    pub fn ask(&mut self, held: i32, item: i32) -> bool {
+        let item = if item == 0 { 0x77 } else { item };
+        if item == held {
+            self.request = 0;
+            true
+        } else if item == 0x77 || row(item).is_some() {
+            self.request = item;
+            true
+        } else {
+            false
+        }
+    }
+
     /// `0x2d43e0(-1)`: the held item's ammo is not out (an item without ammo always can).
     pub fn has_ammo(&self, game: &crate::game::GameState) -> bool {
         match row(self.item) { Some(r) if r.ammo => game.ammo.get(self.item.max(0) as usize).is_some_and(|&a| a != 0), _ => true }

@@ -16,6 +16,10 @@
 //! | 0x3b | [`sparkle`] `0x33b468` | `0x33b588` ([`update_sparkle`]) | the nanotech healing ring's sparkles, riding Ratchet |
 //! | 0x3c | [`glint`] `0x33b5e0` | `0x33b710` ([`update_glint`]) | the nanotech heal's glints: drifting, fading out |
 //! | 0x3e | [`orb`] `0x33bb60` | `0x33bc70` ([`update_orb`]) | the nanotech orbs (kind 1, moved by their cluster) and their trail puffs (kinds 0, 2) |
+//! | 4 | [`trail`] `0x332c10` | `0x332d28` ([`update_trail`]) | the debris' smoke trails: growing, colour eased over the life |
+//! | 0xb | [`billow`] `0x333a70` | `0x333d00` ([`update_billow`]) | the Gravity Bomb's smoke: billowing, splitting, rising and fading |
+//! | 0xf | [`ember`] `0x3348c0` | `0x334a18` ([`update_ember`]) | the Gravity Bomb's sparks: falling, shrinking, trailing embers |
+//! | 0x22, 0x23, 0x2d, 0x2e | [`water`] | [`water`] | the water: bubbles, drops, rings and the bow spray (the hero's swim effects) |
 //!
 //! Any other type kills itself on its first update. The gravity direction (`0x18a0e0`) is (0, 0, −1): normal gravity.
 //! Not ported: the gravity-boots bend of the positions (`0x380e08`, `+0x1c` = 2).
@@ -23,8 +27,11 @@
 mod pool;
 pub mod type23;
 pub mod type48;
+pub mod water;
 pub use pool::*;
+pub use water::PartAux;
 
+use crate::hero::physics::{add, len, scale, set_len, sub};
 use crate::rng::Rng;
 
 /// `0x18a0e0`: the gravity direction.
@@ -491,10 +498,254 @@ pub fn update_glint(sys: &mut Particles, i: usize, hero: [f32; 3]) {
     rec::set_u32(r, 4, tween_color(((life - 1.0) / life).to_bits(), c & 0xff_ffff, c));
 }
 
+/// Type 4, a debris trail's puff (crate::moby::classes::debris).
+pub const TRAIL: u8 = 4;
+
+/// `0x332c10(pos, vel, c0, c1, life, base, grow, additive)`: a trail puff (type 4) at `pos` moving `vel` a tick, its
+/// colour from `c0` to `c1` and its size from `base` to `base + grow` (thousands) over `life` ticks; ALPHA 0x48
+/// (`additive`) or 0x44, near 4 / far 0xa, a random rotation turning a step a tick.
+#[allow(clippy::too_many_arguments)]
+pub fn trail(sys: &mut Particles, rng: &mut Rng, pos: [f32; 3], vel: [f32; 3], c0: u32, c1: u32, life: i32, base: i16, grow: i16, additive: bool) -> Option<usize> {
+    let i = sys.create_part(TRAIL)?;
+    let def = sys.def_first(TRAIL);
+    let rot = rng.rand() as u8;
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, pos);
+    rec::set_ff(r, 0x1c, 0.0);
+    rec::set_u32(r, 4, c0);
+    r[9] = 0xa4;
+    r[3] = if additive { 0x48 } else { 0x44 };
+    r[1] = 0;
+    r[2] = def;
+    r[8] = rot;
+    rec::set_ff(r, 0xc, 0.0);
+    rec::set_v3(r, 0x20, vel);
+    rec::set_ff(r, 0x2c, 0.0);
+    rec::set_i16(r, 0xa, life as i16);
+    rec::set_i16(r, 0x3a, base);
+    rec::set_u32(r, 0x3c, life as u32);
+    rec::set_u32(r, 0x30, c0);
+    rec::set_i16(r, 0x38, grow);
+    rec::set_u32(r, 0x34, c1);
+    Some(i)
+}
+
+/// `0x332d28`: size = (grow · ticks gone / life + base) · 1000; the velocity × 0.98, then the move; the turn; the colour
+/// `0x2f0000(life left / life, c1, c0)`; the life down (out: killed).
+pub fn update_trail(sys: &mut Particles, i: usize) {
+    let r = &mut sys.pool.recs[i];
+    let life0 = rec::u32(r, 0x3c) as i32;
+    if life0 == 0 {
+        sys.kill_part(i);
+        return;
+    }
+    let life = rec::i16(r, 0xa) as i32;
+    let size = rec::i16(r, 0x38) as i32 * (life0 - life) / life0 + rec::i16(r, 0x3a) as i32;
+    rec::set_ff(r, 0xc, size as f32 * 1000.0);
+    let v = rec::v3(r, 0x20).map(|x| x * 0.98);
+    rec::set_v3(r, 0x20, v);
+    let p = rec::v3(r, 0x10);
+    rec::set_v3(r, 0x10, std::array::from_fn(|k| p[k] + v[k]));
+    r[8] = r[8].wrapping_add(1);
+    rec::set_u32(r, 4, tween_color((life as f32 / life0 as f32).to_bits(), rec::u32(r, 0x34), rec::u32(r, 0x30)));
+    if dec_life(r) { sys.kill_part(i); }
+}
+
+/// Type 0xb, a billow: the Gravity Bomb's smoke.
+pub const BILLOW: u8 = 0xb;
+
+/// `0x333a70(size, speed, pos, vel, c0, c1, life, hold, gen, flags)`: a billow (type 0xb) at `pos` moving `vel` plus
+/// `speed` a random way, for `life` ticks (none with 0); ALPHA 0x44 one time in five, else 0x48; near 4 / far 0xa.
+/// (The frame-load throttles that drop some at a slow frame rate never fire here.)
+#[allow(clippy::too_many_arguments)]
+pub fn billow(sys: &mut Particles, rng: &mut Rng, size: f32, speed: f32, pos: [f32; 3], vel: [f32; 3], c0: u32, c1: u32, life: i32, hold: u8, gen: u8, flags: u8) -> Option<usize> {
+    if life == 0 { return None; }
+    let i = sys.create_part(BILLOW)?;
+    let def = sys.def_first(BILLOW);
+    let soft = rng.randi(100) < 0x14;
+    let rot = rng.rand() as u8;
+    let d = [rng.randf(-1.0, 1.0), rng.randf(-1.0, 1.0), rng.randf(-1.0, 1.0)];
+    let d = set_len(d, speed);
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, pos);
+    rec::set_ff(r, 0x1c, 0.0);
+    rec::set_u32(r, 4, c0);
+    r[9] = 0xa4;
+    r[1] = 0;
+    rec::set_ff(r, 0xc, 0.0);
+    r[3] = if soft { 0x44 } else { 0x48 };
+    r[8] = rot;
+    r[2] = def;
+    rec::set_v3(r, 0x20, std::array::from_fn(|k| vel[k] + d[k]));
+    rec::set_ff(r, 0x2c, speed * 0.75);
+    rec::set_i16(r, 0xa, life as i16);
+    r[0x39] = flags;
+    r[0x3b] = life as u8;
+    r[0x38] = hold;
+    rec::set_ff(r, 0x3c, size);
+    rec::set_u32(r, 0x30, c0);
+    rec::set_u32(r, 0x34, c1);
+    r[0x3a] = gen;
+    Some(i)
+}
+
+/// `0x333d00`: a billow's tick (flags `+0x39`: 1 fading, 2 the first burst, 4 rising, 8 a long fade).
+/// * Fading: it rises (1/1200 a tick more), moves and slows (× 0.98); its colour eases to the fade's over the first
+///   quarter of the fade, then an additive one is gone and a blended one's alpha goes down; the life down (out: killed).
+/// * Else it moves and slows (× 0.8, × 0.6 in the burst; rising: 0.0027 a tick up first); at 85% of its life a puff of
+///   the first two generations not rising splits off five more (life × 0.9..1.1, speed × 0.85..1.0); not rising, its
+///   size follows the curve through 0, `size` at its life's end (shrunk within 10 of the camera); the colour from `c0`
+///   to `c1` (the burst: from white at a sixteenth to `c0`). Its life out: the burst rises for three lives at 1.6..2
+///   × its speed; else it fades for 2..3 lives (×5 with flag 8), from `c1` to nothing (additive) or a dark grey.
+pub fn update_billow(sys: &mut Particles, i: usize, cam: [f32; 3], rng: &mut Rng) {
+    let r = &mut sys.pool.recs[i];
+    r[8] = r[8].wrapping_add(1);
+    let flags = r[0x39];
+    let l0 = r[0x3b] as f32;
+    let (p, mut v) = (rec::v3(r, 0x10), rec::v3(r, 0x20));
+    if flags & 1 != 0 {
+        let a = (l0 * 0.75) as i32 + 1;
+        let b = (l0 * 0.25) as i32;
+        v[2] += 0.000_833_333_35;
+        let p = add(p, v);
+        rec::set_v3(r, 0x10, p);
+        rec::set_v3(r, 0x20, scale(v, 0.98));
+        let life = rec::i16(r, 0xa) as i32;
+        if a < life {
+            rec::set_u32(r, 4, tween_color((((life - a) as f32) / (b + 1) as f32).to_bits(), rec::u32(r, 0x34), rec::u32(r, 0x30)));
+        } else if r[3] == 0x48 {
+            rec::set_i16(r, 0xa, 0);
+        } else {
+            let c = rec::u32(r, 4);
+            rec::set_u32(r, 4, c & 0xff_ffff | ((life * 15 / a) as u32) << 24);
+        }
+        if dec_life(r) { sys.kill_part(i); }
+        return;
+    }
+    let p = add(p, v);
+    rec::set_v3(r, 0x10, p);
+    if flags & 4 != 0 { v[2] += 0.002_722_222_4; }
+    v = scale(v, if flags & 2 != 0 { 0.6 } else { 0.8 });
+    rec::set_v3(r, 0x20, v);
+    if rec::i16(r, 0xa) == (l0 * 0.85) as i32 as i16 && r[0x3a] < 2 && flags & 4 == 0 {
+        let (size, speed, c0, c1, hold, gen) = (rec::ff(r, 0x3c), rec::ff(r, 0x2c), rec::u32(r, 0x30), rec::u32(r, 0x34), r[0x38], r[0x3a]);
+        for _ in 0..5 {
+            let k = rng.randf(0.9, 1.1);
+            let life = (l0 * k) as i32;
+            let s = rng.randf(0.85, 1.0);
+            billow(sys, rng, size, speed * s, p, v, c0, c1, life, hold, gen + 1, flags);
+        }
+    }
+    let r = &mut sys.pool.recs[i];
+    if flags & 4 == 0 {
+        let s = rec::ff(r, 0x3c);
+        let a8 = s * 8.0;
+        let b = (l0 * 8.0 - l0 * s * 3.0) / (s * a8 + a8);
+        let c = (l0 * 3.0 + b * a8) / (s * -8.0);
+        let lv = rec::i16(r, 0xa) as f32;
+        // `0x2eed78`: the VU0 square root (of the magnitude).
+        let d = (b * b - c * (l0 - lv) * 4.0).abs().sqrt();
+        let mut size = ((-b - d) / (c + c)).max((-b + d) / (c + c));
+        let dist = len(sub(p, cam));
+        if dist < 10.0 { size *= dist * 0.075 + 0.25; }
+        rec::set_ff(r, 0xc, size);
+    }
+    let life = rec::i16(r, 0xa) as f32;
+    let (a, b) = if flags & 2 == 0 { (rec::u32(r, 0x34), rec::u32(r, 0x30)) } else { (rec::u32(r, 0x30), 0x0fff_ffff) };
+    rec::set_u32(r, 4, tween_color((life / l0).to_bits(), a, b));
+    // `0x2eeb10(+0x38)`.
+    r[0x38] = r[0x38].saturating_sub(1);
+    if !dec_life(r) { return; }
+    if flags & 2 == 0 {
+        let c1 = rec::u32(r, 0x34);
+        rec::set_u32(r, 0x30, c1);
+        r[0x39] |= 1;
+        rec::set_u32(r, 0x34, if r[3] == 0x48 { 0 } else { 0x0f2f_3f3f });
+        let l = r[0x3b] as i32;
+        let mut n = rng.rand_range(l * 2, l * 3) as u8;
+        if r[0x39] & 8 != 0 { n = n.wrapping_mul(5); }
+        r[0x3b] = n;
+        rec::set_i16(r, 0xa, n as i16);
+    } else {
+        let l = (r[0x3b] as u16 * 3) as i16;
+        rec::set_i16(r, 0xa, l);
+        r[0x3b] = l as u8;
+        r[0x39] = r[0x39] & 0xfd | 4;
+        let k = rng.randf(1.6, 2.0);
+        let r = &mut sys.pool.recs[i];
+        rec::set_v3(r, 0x20, set_len(rec::v3(r, 0x20), rec::ff(r, 0x2c) * k));
+    }
+}
+
+/// Type 0xf, an ember: the Gravity Bomb's sparks.
+pub const EMBER: u8 = 0xf;
+
+/// `0x3348c0(size, pos, vel, c0, c1, life, trail, def, alpha, w)`: an ember (type 0xf) at `pos` moving `vel`, falling
+/// 0.004056 a tick, shrinking from `size` and going from `c0` to `c1` over `life` ticks (none with 0); `trail`: it
+/// leaves embers behind every other frame; its frame `def` (None: its type's first), ALPHA `alpha` (None: 0x48), near 4
+/// / far 0xa.
+#[allow(clippy::too_many_arguments)]
+pub fn ember(sys: &mut Particles, rng: &mut Rng, size: f32, pos: [f32; 3], vel: [f32; 3], c0: u32, c1: u32, life: i32, trail: i16, def: Option<u8>, alpha: Option<u8>, w: i32) -> Option<usize> {
+    if life == 0 { return None; }
+    let i = sys.create_part(EMBER)?;
+    let first = sys.def_first(EMBER);
+    let rot = rng.rand() as u8;
+    let r = &mut sys.pool.recs[i];
+    rec::set_v3(r, 0x10, pos);
+    rec::set_u32(r, 4, c0);
+    rec::set_ff(r, 0x1c, w as f32);
+    r[9] = 0xa4;
+    r[3] = alpha.unwrap_or(0x48);
+    r[1] = 0;
+    rec::set_ff(r, 0xc, size);
+    r[8] = rot;
+    r[2] = def.unwrap_or(first);
+    rec::set_i16(r, 0xa, life as i16);
+    rec::set_i16(r, 0x38, life as i16);
+    rec::set_ff(r, 0x3c, size);
+    rec::set_u32(r, 0x30, c0);
+    rec::set_u32(r, 0x34, c1);
+    rec::set_i16(r, 0x3a, trail);
+    rec::set_v3(r, 0x20, vel);
+    rec::set_u32(r, 0x2c, 0x3b84_e478);
+    Some(i)
+}
+
+/// `0x334a18`: the life down (out: killed); size and colour by the life left; the move, then the fall; with a trail on
+/// an odd frame (`frame`, `0x1b1948`) an ember behind it (its speed's 0.15..0.25 a random way added, × 0.75..0.95, 15..30
+/// ticks, its own size, colour, frame and ALPHA, no trail), else the velocity × 0.96.
+pub fn update_ember(sys: &mut Particles, i: usize, rng: &mut Rng, frame: i32) {
+    let r = &mut sys.pool.recs[i];
+    if dec_life(r) {
+        sys.kill_part(i);
+        return;
+    }
+    let (life, l0) = (rec::i16(r, 0xa) as f32, rec::i16(r, 0x38) as f32);
+    rec::set_ff(r, 0xc, life * rec::ff(r, 0x3c) / l0);
+    rec::set_u32(r, 4, tween_color((life / l0).to_bits(), rec::u32(r, 0x34), rec::u32(r, 0x30)));
+    let p = add(rec::v3(r, 0x10), rec::v3(r, 0x20));
+    rec::set_v3(r, 0x10, p);
+    let mut v = rec::v3(r, 0x20);
+    v[2] -= rec::ff(r, 0x2c);
+    if rec::ff(r, 0x1c) != 0.0 { rec::set_ff(r, 0x1c, 2.0); }
+    if rec::i16(r, 0x3a) == 0 || frame & 1 == 0 {
+        rec::set_v3(r, 0x20, scale(v, 0.96));
+        return;
+    }
+    rec::set_v3(r, 0x20, v);
+    let (size, c, c1, def, alpha, w) = (rec::ff(r, 0xc), rec::u32(r, 4), rec::u32(r, 0x34), r[2], r[3], rec::ff(r, 0x1c) as i32);
+    let d = [rng.randf(-1.0, 1.0), rng.randf(-1.0, 1.0), rng.randf(-1.0, 1.0)];
+    let k = len(v) * rng.randf(0.15, 0.25);
+    let t = add(set_len(d, k), v);
+    let t = scale(t, rng.randf(0.75, 0.95));
+    let life = rng.rand_range(15, 30);
+    ember(sys, rng, size, p, t, c, c1, life, 0, Some(def), Some(alpha), w);
+}
+
 /// `UpdateParts` `0x331150`: every live record up to the high water mark at entry, in pool order (the mobys and the
 /// camera for the glows that ride a moby, Ratchet's position `0x189ea0` for the records riding him; the game's random
-/// stream).
-pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f32; 3], hero: [f32; 3], rng: &mut Rng) {
+/// stream; `aux`: what the water types read, [`water::PartAux`]).
+pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f32; 3], hero: [f32; 3], rng: &mut Rng, aux: &PartAux) {
     let end = (sys.pool.hw + 1).max(0) as usize;
     for i in 0..end {
         let r = &sys.pool.recs[i];
@@ -510,6 +761,13 @@ pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f
             0x3b => update_sparkle(sys, i, hero),
             0x3c => update_glint(sys, i, hero),
             ORB => update_orb(sys, i, mobys),
+            TRAIL => update_trail(sys, i),
+            BILLOW => update_billow(sys, i, cam, rng),
+            EMBER => update_ember(sys, i, rng, mobys.frame),
+            water::BUBBLE => water::update_bubble(sys, i, rng, aux),
+            water::DROP => water::update_drop(sys, i, rng, aux),
+            water::RING => water::update_ring(sys, i, aux),
+            water::SPRAY => water::update_spray(sys, i, aux),
             _ => sys.kill_part(i),
         }
     }

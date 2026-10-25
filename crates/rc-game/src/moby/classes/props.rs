@@ -759,7 +759,7 @@ fn ai_link(w: &MobyWorld, id: usize, off: usize) -> Option<usize> {
 }
 
 /// `0x360d28(ship)`: the old parts deleted (`0x360cd0`), the new ones made.
-fn ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
+pub(crate) fn ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) {
     for p in std::mem::take(&mut ctx.game.ship_parts) {
         if w.mobys.get(p).is_some_and(|m| m.state < 0x80) { w.delete(p); }
     }
@@ -806,7 +806,7 @@ pub fn place_ship_parts_on(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx, actor:
     }
 }
 
-fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) { place_ship_parts_on(w, ship, ctx, false) }
+pub(crate) fn place_ship_parts(w: &mut MobyWorld, ship: usize, ctx: &mut Ctx) { place_ship_parts_on(w, ship, ctx, false) }
 
 /// Shows or hides the members of a group (more than one alive): hidden is mode |= 0x43 without collision, shown
 /// mode &= !0x43 with the class's collision.
@@ -1165,8 +1165,10 @@ fn pad_set(w: &mut MobyWorld, pad: Option<usize>, on: bool) {
 
 /// 0x0ac1 (`0x3ced30`, the big lift): as the lifts above (the ends `+0x68`[0x94] / [0x98], [0x80] the end it is at,
 /// its pad 0x0c16 0.25 above), but its pad only starts it at the other end (state 2, up), with a camera tweak of
-/// priority 5 (distance 2, pivot 1.5; `[0x9c]`, `[0xa4]` held) and, the first time (`0x1a790c` = 0), the scene camera
-/// at (246.86, 198.19) — not ported. More than 12 off it comes to Ratchet (the looped sound 0 at the first end, 1 at
+/// priority 5 (distance 2, pivot 1.5; `[0x9c]`, `[0xa4]` held) and (unless the debug toggle `0x1a790c` is on) the
+/// script camera's ride view: cut in where the view is, moved over 120 ticks to (246.85, 198.19, Ratchet + 1.5) looking
+/// along +y, its spot following his height every tick and released with its pose kept (`0x4289f0(1)`) once within 0.5
+/// of it in xy (crate::script_camera). More than 12 off it comes to Ratchet (the looped sound 0 at the first end, 1 at
 /// the other). Up (2) it eases (`0x31ed78`: 1/514, 1/600, at most 0.1) and turns back down (3) with Ratchet more than
 /// 3 below; down it drops 0.08 a tick, slowing (k 0.02, d 0.3) and held over Ratchet once he is in the cuboid [0xb0].
 /// It waits at the top while he is within 1.2, at the bottom within 1 (the sound 1, the tweak released).
@@ -1231,6 +1233,11 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 w.mobys[id].set_state(2, -1);
                 w.mobys[id].set_pv_i(0xac, 0);
                 pad_on(w, false);
+                // The ride's view (`0x1a790c` = 0: a debug toggle, always on the disc): the script camera cut in where
+                // the view is and moved over 120 ticks to its spot, looking along +y (crate::script_camera).
+                let (vp, ve) = ctx.game.cameras.view_euler();
+                ctx.game.cameras.camera_script(vp, ve, crate::script_camera::MODE_MOVE, 0x78, false, ctx.hero);
+                ctx.game.cameras.camera_script_targets(Some(lift_view(hp)), Some([0.0, 0.0, f32::from_bits(0x3fc90fdc)]));
                 loop_on(w, ctx, 0);
                 if let Some(slot) = ctx.game.cam_tweaks.request(5) {
                     let t = &mut ctx.game.cam_tweaks.slots[slot];
@@ -1316,8 +1323,18 @@ pub fn update_0ac1(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         w.mobys[p].pos = at;
         w.rebuild(p, &*ctx.host);
     }
+    // While the script camera is current its spot follows Ratchet's height; within 0.5 (in xy) of it the camera is
+    // released with its pose kept (`0x4289f0(1)`).
+    if ctx.game.cameras.script_current() {
+        let at = lift_view(hp);
+        ctx.game.cameras.camera_script_targets(Some(at), None);
+        if dist2(ctx.game.cameras.script.pos, at) < 0.5 { ctx.game.cameras.camera_script2(crate::script_camera::RELEASE_KEEP, ctx.hero); }
+    }
     w.changed = true;
 }
+
+/// The big lift's camera spot: (246.85, 198.19), 1.5 above Ratchet.
+fn lift_view(hero: crate::hero::physics::V3) -> crate::hero::physics::V3 { [f32::from_bits(0x4376d99a), f32::from_bits(0x434630a4), hero[2] + 1.5] }
 
 /// 0x0ddf (`0x3fefc0`, a view volume): while the camera (`0x1b8d40`) is in its cuboid `+0x68`[0x38] or its area
 /// [0x3c] (both −1: it is deleted), the ties of its 14 tie groups [0..0x34] are hidden (`+0x1e` |= 4); leaving
@@ -1375,8 +1392,9 @@ pub fn update_stub(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
 /// `0x29fc20[level]`: the scene lists of the level's scene triggers (0x0f6e's `+0x68`[8]); level 0's.
 const SCENES_L0: [&[i32]; 4] = [&[0x21], &[0x23], &[0x22], &[0x16]];
 
-/// 0x0f6e's reward (`0x40ffa0`, states 3 and 4): the item [9] (`0x322730`; equipping it, `0x325270`, is not ported),
-/// the mission done (`0x3132a8`), with [0xb] set (≥ 1; in the scenes' tick ≠ 0) and the word [0xc]'s top half the
+/// 0x0f6e's reward (`0x40ffa0`, states 3 and 4): the planet [9] unlocked (`0x322730`, `GameState::unlock_planet`;
+/// its "new planet" banner `0x325270` (`crate::travel::new_planet_banner`, not for 0x18)), the
+/// mission done (`0x3132a8`), with [0xb] set (≥ 1; in the scenes' tick ≠ 0) and the word [0xc]'s top half the
 /// checkpoint at the cuboid [4] (else where Ratchet is; in the scenes' tick where it is), then with [0xc]'s low byte
 /// ≠ −1 the level change to it (`0x2f50f8(level, 1)`: Aranos's last trigger sends Ratchet to Oozla, level 1). Not
 /// ported: the autosave `0x30d658` it asks for otherwise.
@@ -1384,7 +1402,10 @@ fn reward_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, in_scene_tick: bool)
     let m = &w.mobys[id];
     let item = m.pv_b(9) as i8 as i32;
     let g = &mut *ctx.game;
-    if item != -1 { g.give_item(item); }
+    if item != -1 {
+        g.unlock_planet(item);
+        if item != 0x18 { crate::travel::new_planet_banner(g, item); }
+    }
     if m.mission != 0xff && g.missions.get(g.level.max(0) as usize * 0x10 + m.mission as usize).is_some_and(|b| b & 0x80 == 0) { g.mission_done(m.mission); }
     let b = m.pv_b(0xb) as i8;
     let set = if in_scene_tick { b != 0 } else { 1 <= b };
@@ -1399,8 +1420,8 @@ fn reward_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, in_scene_tick: bool)
     if to != -1 { g.go_to_level(to as i32, true); }
 }
 
-/// 0x0f6e (`0x40ffa0`, a scene trigger with a reward): gone at the start when its item `+0x68`[9] is had or its
-/// mission (`+0xb0`) done. Set off ([0xa], once-flag 2 `0x32a838`, or the timer byte `+0xbc`) with Ratchet in its
+/// 0x0f6e (`0x40ffa0`, a scene trigger with a reward): gone at the start when its planet `+0x68`[9] is unlocked
+/// (`0x1a7bd0`) or its mission (`+0xb0`) done. Set off ([0xa], once-flag 2 `0x32a838`, or the timer byte `+0xbc`) with Ratchet in its
 /// cuboid [0] (and not in the ship, alive, the game not paused), it queues its scenes ([8] into `0x29fc20`; one not
 /// seen yet, or any with [0xd]; the first refused, it tries again) and starts them (crate::scene); after the scenes
 /// Ratchet is put at the cuboid [4] (`0x2b9e68`) and it gives its reward ([`reward_0f6e`]; on level 0 with an item,
@@ -1412,7 +1433,7 @@ pub fn update_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let done = |g: &crate::game::GameState, mission: u8| mission != 0xff && g.missions.get(g.level.max(0) as usize * 0x10 + mission as usize).is_some_and(|b| b & 0x80 != 0);
     match m.state {
         0 => {
-            if (item != -1 && g.items.get(item as usize).is_some_and(|&b| b != 0)) || done(g, m.mission) {
+            if (item != -1 && g.planets.get(item as usize).is_some_and(|&b| b != 0)) || done(g, m.mission) {
                 w.delete(id);
                 return;
             }

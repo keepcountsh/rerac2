@@ -138,10 +138,6 @@ pub struct Flight {
     hit_flash_new: bool,
     dust: [V3; 16],
     dust_left: [f32; 16],
-    /// The camera's shake: its size, ticks left and length.
-    shake: f32,
-    shake_ticks: i32,
-    shake_len: i32,
     /// The opening help shown; the closing one asked.
     pub opening_shown: bool,
     closing_asked: bool,
@@ -276,9 +272,6 @@ impl Flight {
             hit_flash_new: false,
             dust: [[0.0; 3]; 16],
             dust_left: [0.0; 16],
-            shake: 0.0,
-            shake_ticks: 0,
-            shake_len: 0,
             opening_shown: false,
             closing_asked: false,
             help: None,
@@ -317,7 +310,6 @@ impl Flight {
         self.engine_hum(w, host);
         self.take_hits(w);
         if let (true, Some(s)) = (self.hit_sound, self.ship) { host.play_sound_of(&w.mobys[s], SHIP_CLASS, 0xe, 0); }
-        self.shake_tick(w);
         if self.mode == 6 { return self.dying(w); }
         self.mission(w);
         if !self.cut() { return; }
@@ -904,8 +896,8 @@ fn update_enemy_shot(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         if crate::hero::physics::dist(head, w.mobys[s].pos) < w.mobys[id].pv_f(0x60) {
             let n = w.mobys[s].pv_i(HITS) + 1;
             w.mobys[s].set_pv_i(HITS, n);
-            // `0x375410`: the shake (0.05, 30 ticks).
-            shake(w, s, 0.05, 30);
+            // `0x375410`: the shake (0.05, 30 ticks: `0x1b91a0`, the camera's first shake, crate::camera::Shakes).
+            ctx.game.shakes.ask(0, 0.05, 30);
             return w.delete(id);
         }
     }
@@ -1404,7 +1396,8 @@ pub fn update_missile(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let p = w.mobys[t].pos;
             w.deliver_hit_any(t, &tmpl, [p[0], p[1], p[2], 1.0]);
         }
-        crate::moby::blast::burst(ctx, h.point, &crate::moby::blast::Blast { size: 0.3, bursts: [0x14, 0x0a, 0x0a], puffs: 0x0a, streaks: 0x10 });
+        // Stands in for `0x3cbfe8` (its own explosion moby, class 0x986; not ported: docs/plan/gaps.md G-REN-013).
+        crate::moby::blast::burst(w, ctx, h.point, &crate::moby::blast::Blast { size: 0.3, bursts: [0x14, 0x0a, 0x0a], puffs: 0x0a, streaks: 0x10, light: false, shake: false });
         ctx.host.play_sound_of(&w.mobys[id], SHIP_CLASS, 7, 0);
         return w.delete(id);
     }
@@ -1474,45 +1467,6 @@ pub const HUD_ICONS: u16 = 0xea97;
 impl Flight {
 }
 
-/// The ship moby's words the camera's shake is asked through (`0x1b91a0` its size, `0x1b91a8` its ticks).
-pub const SHAKE: usize = 0x30c;
-pub const SHAKE_TICKS: usize = 0x310;
-
-/// `0x1b91a0 / 0x1b91a8 = size, ticks`: a shake of the camera asked (the bigger one kept).
-pub fn shake(w: &mut MobyWorld, ship: usize, size: f32, ticks: i32) {
-    let m = &mut w.mobys[ship];
-    if m.pv_f(SHAKE) <= size {
-        m.set_pv_f(SHAKE, size);
-        m.set_pv_i(SHAKE_TICKS, ticks);
-    }
-}
-
-impl Flight {
-    /// The view: the camera shaken (the camera's shake `0x2d9528`: its size eased out over its ticks, here a
-    /// wobble of the place along the rows).
-    pub fn view_pos(&self) -> V3 {
-        if self.shake_ticks <= 0 || self.shake_len <= 0 { return self.pos; }
-        let t = self.shake_ticks as f32 / self.shake_len as f32;
-        let a = self.shake * t;
-        let f = self.frame as f32;
-        add(self.pos, add(scale(self.rows[1], (f * 2.3).sin() * a), scale(self.rows[2], (f * 3.1).cos() * a)))
-    }
-
-    /// The shakes asked this tick (the ship's words), counted down.
-    fn shake_tick(&mut self, w: &mut MobyWorld) {
-        if 0 < self.shake_ticks { self.shake_ticks -= 1; }
-        let Some(s) = self.ship else { return };
-        let size = w.mobys[s].pv_f(SHAKE);
-        if 0.0 < size {
-            let ticks = w.mobys[s].pv_i(SHAKE_TICKS);
-            if self.shake_ticks <= 0 || self.shake <= size {
-                (self.shake, self.shake_ticks, self.shake_len) = (size, ticks, ticks);
-            }
-            w.mobys[s].set_pv_f(SHAKE, 0.0);
-        }
-    }
-}
-
 /// The mission object's word the flight asks the ship's blast through (`0x434ad0` → `0x3cbfe8`, the place).
 pub const BOOM: usize = 0x110;
 
@@ -1522,7 +1476,8 @@ pub fn update_mission(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if w.mobys[id].pv_i(BOOM + 0xc) == 0 { return; }
     let at = w.mobys[id].pv_v(BOOM);
     w.mobys[id].set_pv_i(BOOM + 0xc, 0);
-    crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 1.0, bursts: [0x32, 0x1e, 0x1e], puffs: 0x1e, streaks: 0x28 });
+    // Stands in for `0x3cbfe8` (class 0x986; not ported: docs/plan/gaps.md G-REN-013).
+    crate::moby::blast::burst(w, ctx, at, &crate::moby::blast::Blast { size: 1.0, bursts: [0x32, 0x1e, 0x1e], puffs: 0x1e, streaks: 0x28, light: false, shake: false });
 }
 
 /// `0x4134b0(at, 20, colour, laser)`: the laser's end — 20 sparks (crate::particles::spark standing in for `0x346ee8`)

@@ -128,6 +128,32 @@ fn sprite(b: &Buf) -> Result<Sprite> {
 
 #[cfg(test)]
 mod tests {
+    /// The galaxy map's reticle sprite 0x8a (L00 `0x4321d0`): its frames and bone keys, from the extracted disc when
+    /// it is there (a look at the data: which frame turns the marker).
+    #[test]
+    fn sprite_8a_frames() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extracted");
+        let (Ok(hdr), Ok(hud)) = (std::fs::read(root.join("RC2.HDR")), std::fs::read(root.join("G/HUD.WAD"))) else { return };
+        let toc = crate::disc::toc::Toc::parse(&hdr).unwrap();
+        let block = toc.gui_block().unwrap();
+        let sprites = super::parse(&hud[block.bytes()]).unwrap();
+        let mut out = String::new();
+        for id in [0x8au32, 0x87] {
+            let Some(s) = sprites.get(&id) else { continue };
+            out += &format!("sprite {id:#x}: scale {}, {} vertices, {} prims, {} textures, {} frames\n", s.scale, s.vertices.len(), s.prims.len(), s.textures, s.frames.len());
+            for (f, keys) in s.frames.iter().enumerate() {
+                for (b, k) in keys.iter().enumerate() {
+                    out += &format!("  frame {f} bone {b}: rot {:?} scale {:?} trans {:?} parent {:?}\n", k.rotation, k.scale, k.translation, k.parent);
+                }
+            }
+            for v in &s.vertices { out += &format!("  vertex {:?}\n", v); }
+            for p in &s.prims { out += &format!("  prim {:?}\n", p); }
+        }
+        // The dump goes to a file: a passing test's output is captured.
+        let _ = std::fs::write("/private/tmp/claude-501/-Users-aslanhud-Repos-randcre/780d5ae9-5d6d-4c3e-9999-b946bde12c64/scratchpad/sprite_8a.txt", &out);
+        println!("{out}");
+    }
+
     #[test]
     fn packed_vertex_fields() {
         // bone 1, x = −64 (bits 0..13 = 0x3ff0), z = −225 (bits 12..27).

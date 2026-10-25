@@ -47,6 +47,19 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
 /// one in Ratchet's hand (`0x306018`) when he takes it; the port has them from the start.
 pub const GADGETS: [i32; 4] = [rc_game::hero::items::LANCER_CLASS as i32, rc_game::hero::items::GRAVITY_BOMB_CLASS as i32, rc_game::hero::items::DYNAMO_CLASS as i32, rc_game::hero::items::TRACTOR_CLASS as i32];
 
+/// The hand classes loaded with level `index`: [`GADGETS`] and those of the weapons the level's vendors sell
+/// (`rc_game::vendor::STOCK_LEVELS` up to the level, the item records' `+0x04`): the game loads one as the vendor
+/// previews it (`0x306258`); the port has them from the start.
+pub fn gadgets(root: &Path, index: u32) -> Vec<i32> {
+    let mut out: Vec<i32> = GADGETS.to_vec();
+    let tables = crate::play::menu_tables(root, index);
+    for &(item, _) in rc_game::vendor::STOCK_LEVELS.iter().filter(|&&(_, first)| first <= index as i32 && (index as i32) < rc_game::vendor::LAST_STOCK_LEVEL) {
+        let Some(c) = tables.items.get(item as usize).map(|r| r.classes[0]).filter(|&c| c != 0) else { continue };
+        if !out.contains(&c) { out.push(c); }
+    }
+    out
+}
+
 /// Gadget `o_class` (part A of its `GADGET.WAD` entry): its class and sequences added to the level's moby classes, its
 /// textures appended to the moby texture table (slot `k` = entry `moby_textures.len() + k`, as the armour's).
 fn attach_gadget(root: &Path, core: &level::LevelCore, mobys: &mut crate::moby_render::LevelMobys, textures: &mut Vec<texture::LevelTexture>, o_class: i32) -> Result<()> {
@@ -91,9 +104,19 @@ fn attach_ship_hull(root: &Path, mobys: &mut crate::moby_render::LevelMobys, hul
     let blob = ship_hull_blob(root, hull)?;
     let class = rc_formats::moby::parse_moby_class(&blob).context("ship hull: class")?;
     let seqs = rc_formats::moby_anim::parse_sequences(&blob, &class).context("ship hull: sequences")?;
-    let i = mobys.classes.iter().position(|c| c.o_class == HULL_CLASS).context("no ship class in the level")?;
-    mobys.anim[i] = rc_formats::moby_anim::MobyAnimClass::new(&class, seqs);
-    mobys.classes[i].class = class;
+    match mobys.classes.iter().position(|c| c.o_class == HULL_CLASS) {
+        Some(i) => {
+            mobys.anim[i] = rc_formats::moby_anim::MobyAnimClass::new(&class, seqs);
+            mobys.classes[i].class = class;
+        }
+        None => {
+            // A level whose core has no 0x0d54 (Oozla): the load appends it all the same (`0x304c14`), so the parked
+            // ship (rc_game::travel) and the ship scenes' actors have a class; its texture slots are all 0xff and its
+            // entry takes the paint (`+8 ≠ 0`).
+            mobys.anim.push(rc_formats::moby_anim::MobyAnimClass::new(&class, seqs));
+            mobys.classes.push(rc_formats::moby::LevelMobyClass { o_class: HULL_CLASS, entry: level::ClassEntry { offset_in_asset_wad: 0, o_class: HULL_CLASS, unknown_8: 1, unknown_c: 0, textures: [0xff; 16] }, class });
+        }
+    }
     Ok(())
 }
 
@@ -143,7 +166,7 @@ pub fn class_blobs(root: &Path, index: u32) -> Result<ClassBlobs> {
         .iter()
         .filter_map(|e| core.block(&core_data, &format!("moby_class/{:04}", e.o_class)).map(|b| (e.o_class, b.to_vec())))
         .collect();
-    for g in GADGETS {
+    for g in gadgets(root, index) {
         if let Ok((b, _)) = gadget_blob(root, g) { blobs.insert(g, b); }
     }
     // The ship's mobys use the hull's class (attach_ship_hull), its collision and joint lists included.
@@ -224,7 +247,7 @@ pub fn load(root: &Path, index: u32) -> Result<LoadedLevel> {
     let mut mobys = crate::moby_render::load_mobys_with_gs(root, &core, &core_data, &gameplay, gs_ram, collision.as_ref()).context("loading mobys")?;
     if let Err(e) = attach_ratchet(root, &core, &mut mobys, &mut textures, 0) { eprintln!("level: Ratchet's armour not attached ({e:#}); he has no mesh"); }
     if let Err(e) = attach_armour_row(root, &core, &mut mobys, &mut textures, 0x47, rc_formats::disc::armor::WRENCH_ROW) { eprintln!("level: the wrench's mesh not attached ({e:#})"); }
-    for g in GADGETS {
+    for g in gadgets(root, index) {
         if let Err(e) = attach_gadget(root, &core, &mut mobys, &mut textures, g) { eprintln!("level: gadget {g:#x} not loaded ({e:#})"); }
     }
     if let Err(e) = attach_ship_hull(root, &mut mobys, 0) { eprintln!("level: the ship's hull not attached ({e:#})"); }
@@ -280,13 +303,13 @@ fn music(root: &Path, index: u32) -> Result<[Option<std::sync::Arc<rc_game::audi
 /// class's defs (blob header +0x0d count, +0x28 pointer) play from it, their `index` the blob's own (the loader only
 /// writes the bank handle). The port's audio has one bank, so each gadget's is appended to the level's and its defs
 /// point past the level's sounds.
-fn gadget_sounds(root: &Path, bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds) {
+fn gadget_sounds(root: &Path, index: u32, bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds) {
     use rc_formats::disc::{gadget, toc::Toc};
     let run = |bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds| -> Result<()> {
         let hdr = crate::disc_source::read(root, "RC2.HDR")?;
         let toc = Toc::parse(&hdr)?;
         let wad = crate::disc_source::read(root, "G/GADGET.WAD")?;
-        for o in GADGETS {
+        for o in gadgets(root, index) {
             let Some(e) = gadget::gadgets(&toc)?.into_iter().find(|e| e.o_class == o) else { continue };
             let Some(own) = gadget::sound_bank(&wad, &e)? else { continue };
             let blob = gadget::read(&wad, &e)?.class;
@@ -321,7 +344,7 @@ fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &leve
         let bank = if rc_formats::wad::is_wad(part) { rc_formats::wad::decompress(part)? } else { part.to_vec() };
         let mut bank = rc_formats::sound_bank::parse_bank(&bank)?;
         let mut sounds = rc_formats::sound_bank::parse_level_sounds(core_index, core, core_data)?;
-        gadget_sounds(root, &mut bank, &mut sounds);
+        gadget_sounds(root, index, &mut bank, &mut sounds);
         let bank = std::sync::Arc::new(bank);
         let music = music(root, index).unwrap_or_else(|e| {
             eprintln!("audio: the level's music not read ({e:#})");

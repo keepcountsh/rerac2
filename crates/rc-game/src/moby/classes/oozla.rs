@@ -596,7 +596,7 @@ pub fn update_0cb5(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         let dynamo = h.tmpl.source.and_then(|s| w.mobys.get(s)).is_some_and(|s| s.o_class == 0x825);
         let g = w.mobys[id].group;
         if dynamo && g != -1 {
-            for i in usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default() { w.mobys[i].timer = 2; }
+            w.poke_group(g as i32, 2);
         }
     }
     w.clear_hit(id);
@@ -795,7 +795,7 @@ fn hologram(m: &mut crate::moby::Moby, phase: usize, on: bool, rng: &mut crate::
 /// 1.5 times its scale (else it is gone at once), turning 4.5° a tick; Ratchet in its cuboid `+0x04` asks for the
 /// scene 0x26 (`0x2f4ee8`, then `0x2f5030`: the chain started) and it waits (2), hidden while the scene plays. Once no
 /// scene is asked for or playing (`0x371ba8`) Ratchet is put at the cuboid `+0x08` (`0x2b9e68`), the Dynamo
-/// is his (`0x2f46e0`, in the quick select `0x3227d8`) and it is gone.
+/// is his (`0x2f46e0`), asked for in his hand (`0x3227d8`) and it is gone.
 ///
 /// Not ported: its sparkle (`0x3cff58`), the message 0x1225 (`0x327448`), the autosave (`0x30d658`), the camera of
 /// the moby `+0x0c` (`0x42d968`), the help 0x9b9 after three minutes.
@@ -834,8 +834,10 @@ pub fn update_0a95(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 // The game holds him in 0x6f for the camera of `+0x0c` (`0x42d968`, not ported): idle at once here.
                 ctx.hero.request_state(0, true);
             }
+            // `0x2e99e8(0x24)` then `0x3186d0(0x24)` (L01's `0x2f46e0` / `0x3227d8`): his, then in his hand.
             ctx.game.get_item(DYNAMO);
-            ctx.game.give_item(DYNAMO);
+            let held = ctx.game.held;
+            ctx.hero.items.ask(held, DYNAMO);
             w.delete(id);
         }
         _ => {}
@@ -1389,26 +1391,117 @@ pub fn update_0a1e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     m.scale = class_scale;
     m.set_pv_f(0x74, frame);
 }
-/// **Stand-in** for Oozla's Tractor Beam sale: at the end of the slide tube the shopkeeper's scene (the talk 0x02e1
-/// uid 104, `0x395620`, poked by the scene's start; its script camera and the scene are not ported) offers the
-/// Tractor Beam for 1000 bolts. Here Ratchet within 6 of the tube's end (its checkpoint 0x0325, where the scene starts),
-/// 8 of the shopkeeper (0x0ab4, hidden until the scene shows it) or 5 of the talk's spot gets it (crate::hero::items::TRACTOR) once, the talk's uid counted as the game does when a talk
-/// is over. The talk never updates in the port (no model, update distance 0), so the boxes nearby call this
-/// (crate::moby::classes::tractor::update_box). Remove when the scene and the sale are ported.
-pub fn shop_stand_in(w: &MobyWorld, ctx: &mut Ctx) {
-    const TUBE_END: V3 = [294.9, 349.7, 109.0];
+/// 0x0ace (`0x3d42b0`): the Tractor Beam's seller at the end of the slide tube. The price is item 0x2e's record's
+/// (`0x263820 + 0xe0·0x139596`, 1000 bolts). By state:
+/// * **0**: the Tractor Beam had (`0x1a7b2e`) deletes it (`0x307440`); else 1, or with scene 0x24 seen (`0x13978c`)
+///   3 when the bolts are under the price, else 4; its grid cells (`0x313ae0`) and its prop 0xd7e made (`0x3070d8`:
+///   its update and draw distances, drawn).
+/// * **1**: Ratchet in the cuboid `+0x120` queues the talk scene 0x27 (`0x2ea1f0` → `0x2f4ee8`) and starts it (`0x2ea338`
+///   → `0x2f5030`): 2.
+/// * **2** and **5**: hidden with its prop while the scene plays (scene mode, `0x1a8f40` = 2); after it (`0x367d78`) shown
+///   again. 2: Ratchet put at the cuboid `+0x120` (`0x2b9b38(.., 0, 1)`), then 3 or 4 by the bolts. 5: its group's
+///   timers set to 1 (`0x3127b8`) and, the Tractor Beam not had yet, the bolts paid, the bolt counter shown (`0x3032e8(0xb4)`),
+///   the Tractor Beam his (`0x2e99e8` / `0x3186d0`: L00's `0x2f46e0` / `0x3227d8`), the message 0x1226 (`0x31d0e0`), the
+///   help 0x9bc in slot 0x13 (`0x2ea578`); the prop and the seller gone.
+/// * **3** (short of bolts; more than the price → 4) and **4** (enough; fewer → the counter shown, 3): while Ratchet can
+///   talk to it ([`can_talk`], 2.5) the bolt counter shows and the second message box the price in the text 0x1300
+///   (3) or 0x12fe (4) (`0x325830`); in 4 a △ press (`0x138324 & 0x10`) queues the sale's scene 0x28 and starts it: 5.
+///
+/// Not ported: the talk record it marks (`0x325980(0x3259d8(m))`: the level's talk list `0x1c5d20` / `0x28ead0`, its
+/// record `0x139a34 + 0x10·i`; the missions' kinds 4 and 5 read it), its prop's set-up and joint (`0x309b28`,
+/// `0x315f20`, `0x31a700(m, prop, 2, 0)`), its head and body turning to Ratchet (the joint aims `0x31a0e0` with the
+/// timers `+0x114` / `+0x118` / `+0x11e` and its idle sequence `0x311358`: no joint aims in the port), the scene flag
+/// `0x1b22a8`, the camera `0x42d968` of `+0x12c` and the autosave `0x303030` after the sale (as the Dynamo's).
+pub fn update_0ace(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     use crate::hero::items::TRACTOR;
-    if ctx.game.level != 1 { return; }
-    let Some(talk) = w.mobys.iter().find(|m| m.o_class == 0x02e1 && m.uid == 104 && m.state < 0x80) else { return };
-    if ctx.game.uid_count(talk.uid) != 0 { return; }
-    // Where the scene starts in the PS2: Ratchet out of the tube, at its checkpoint (0x0325 at (294.9, 349.7)).
-    let exit = w.mobys.iter().find(|k| k.o_class == 0x0325 && k.state < 0x80 && dist2(k.pos, TUBE_END) < 1.0).map_or(TUBE_END, |k| k.pos);
-    let keeper = w.mobys.iter().find(|k| k.o_class == 0x0ab4 && k.state < 0x80).map(|k| k.pos);
-    if dist2(exit, ctx.hero.pos) < 6.0 || dist2(talk.pos, ctx.hero.pos) < 5.0 || keeper.is_some_and(|k| dist2(k, ctx.hero.pos) < 8.0) {
-        if ctx.game.items.get(TRACTOR as usize).copied().unwrap_or(0) == 0 {
-            ctx.game.get_item(TRACTOR);
-            ctx.game.give_item(TRACTOR);
+    const ZONE: usize = 0x120;
+    const PROP: usize = 0x128;
+    const PROP_CLASS: i16 = 0x0d7e;
+    let price = ctx.level.items.get(TRACTOR as usize).map_or(0, |r| r.price);
+    let had = ctx.game.items.get(TRACTOR as usize).is_some_and(|&b| b != 0);
+    let bolts = ctx.game.bolts as i32;
+    let prop = |w: &MobyWorld| w.mobys[id].pv_link(PROP).filter(|&c| w.mobys.get(c).is_some_and(|m| m.state < 0x80));
+    let show = |w: &mut MobyWorld, on: bool| {
+        for i in std::iter::once(id).chain(prop(w)) {
+            let m = &mut w.mobys[i];
+            if on { m.drawn = 1; m.mode &= !1; } else { m.drawn = 0; m.mode |= 1; }
         }
-        ctx.game.count_uid(talk.uid);
+    };
+    match w.mobys[id].state {
+        0 => {
+            if had { return w.delete(id); }
+            let next = if ctx.game.scenes_seen.get(0x24).copied().unwrap_or(false) { if bolts < price { 3 } else { 4 } } else { 1 };
+            w.mobys[id].set_state(next, -1);
+            w.rebuild(id, &*ctx.host);
+            if w.class(PROP_CLASS).is_some() {
+                let c = w.create(PROP_CLASS);
+                let (pos, ud, dd) = (w.mobys[id].pos, w.mobys[id].update_dist, w.mobys[id].draw_dist);
+                let m = &mut w.mobys[c];
+                m.pos = pos;
+                (m.update_dist, m.draw_dist, m.drawn) = (ud, dd, 1);
+                w.mobys[id].set_pv_i(PROP, c as i32);
+            }
+        }
+        1 => {
+            if !ctx.level.in_cuboid(w.mobys[id].pv_i(ZONE), ctx.hero.pos) { return; }
+            if ctx.game.scenes.queue.push(0x27) {
+                ctx.game.scenes.start_queue(ctx.hero.hp);
+                w.mobys[id].set_state(2, -1);
+            }
+        }
+        2 | 5 => {
+            let state = w.mobys[id].state;
+            if ctx.game.scenes.mode == crate::scene::SCENE { show(w, false); }
+            if ctx.game.scenes.in_scene() { return; }
+            show(w, true);
+            if state == 2 {
+                if let Some((pos, rot)) = ctx.level.cuboid_place(w.mobys[id].pv_i(ZONE)) {
+                    ctx.hero.teleport(pos, rot);
+                    ctx.hero.request_state(0, true);
+                }
+                w.mobys[id].set_state(if bolts < price { 3 } else { 4 }, -1);
+                return;
+            }
+            let group = w.mobys[id].group as i32;
+            w.poke_group(group, 1);
+            if had { return; }
+            ctx.game.bolts = (bolts - price).max(0) as u32;
+            ctx.game.show_bolts = Some(0xb4);
+            ctx.game.get_item(TRACTOR);
+            let held = ctx.game.held;
+            ctx.hero.items.ask(held, TRACTOR);
+            ctx.game.messages.push(crate::msgbox::Request::Text { text: 0x1226, ticks: None });
+            ctx.game.help(0x9bc, 0x13);
+            if let Some(c) = prop(w) { w.delete(c); }
+            w.delete(id);
+        }
+        3 | 4 => {
+            let state = w.mobys[id].state;
+            if state == 3 && price < bolts { return w.mobys[id].set_state(4, -1); }
+            if state == 4 && bolts < price {
+                ctx.game.show_bolts = Some(0xb4);
+                return w.mobys[id].set_state(3, -1);
+            }
+            if !can_talk(w, id, ctx, 2.5, 10) { return; }
+            ctx.game.show_bolts = Some(0xb4);
+            let text = if state == 3 { 0x1300 } else { 0x12fe };
+            ctx.game.messages.push(crate::msgbox::Request::SecondFormatted { text, n: price, ticks: Some(1) });
+            if state == 4 && ctx.hero.items.pressed & crate::pad::button::TRIANGLE != 0 && ctx.game.scenes.queue.push(0x28) {
+                ctx.game.scenes.start_queue(ctx.hero.hp);
+                w.mobys[id].set_state(5, -1);
+            }
+        }
+        _ => {}
     }
+}
+
+/// `0x3258c0(r, moby, n)`: Ratchet can talk to `id`: not in states 0x1c / 0x31, with health, on the ground (`0x18a160`
+/// ticks, no air ticks `0x18a16e`), not in movement group 3, the game in play (`$gp−0x60b0`), within 2·r of it (3D),
+/// the level running `n` frames or more (`0x1b2088`, L00's `0x1b1948`).
+fn can_talk(w: &MobyWorld, id: usize, ctx: &Ctx, r: f32, n: i32) -> bool {
+    let h = &*ctx.hero;
+    if h.state == 0x1c || h.state == 0x31 || h.hp == 0 || h.grounded_ticks == 0 || h.air_ticks != 0 || h.group == 3 { return false; }
+    if ctx.game.scenes.mode != crate::scene::PLAY { return false; }
+    if r + r < crate::hero::physics::dist(w.mobys[id].pos, h.pos) { return false; }
+    n <= w.frame
 }

@@ -281,7 +281,6 @@ fn drag(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, r: f32, path: i32) {
 
 /// 0x0acb / 0x0acc (`0x3d40e8`): see the module.
 pub fn update_box(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
-    super::oozla::shop_stand_in(w, ctx);
     let class_scale = w.class(w.mobys[id].o_class).map_or(1.0, |c| c.scale);
     let (old, yaw) = (w.mobys[id].pos, w.mobys[id].rot[2]);
     let m = &mut w.mobys[id];

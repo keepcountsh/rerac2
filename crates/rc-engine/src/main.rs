@@ -50,9 +50,12 @@ mod gs_post;
 mod front_end;
 mod card;
 mod port_options;
+mod level_code;
 mod level_wad;
 mod mobys;
+mod overlay_mobys;
 mod play;
+mod vendor_play;
 mod clock;
 
 mod world_screen;
@@ -155,6 +158,7 @@ fn main() -> anyhow::Result<()> {
     .add_plugins(particle_render::ParticlePlugin)
     .add_plugins(fx_draw::FxDrawPlugin)
     .add_plugins(hud_render::HudPlugin)
+    .add_plugins(overlay_mobys::OverlayPlugin)
     .add_plugins(world_screen::WorldScreenPlugin)
     .add_plugins(aa_blit::AaBlitPlugin)
     // Sound slots, 989snd, music and the software SPU2 mixed per game tick (crate::audio_out; RC_AUDIO=0 off).

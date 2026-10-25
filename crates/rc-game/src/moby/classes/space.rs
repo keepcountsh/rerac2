@@ -330,9 +330,10 @@ fn hits(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let hp = (w.mobys[id].pv_f(HEALTH) - h.tmpl.damage).max(0.0);
     w.mobys[id].set_pv_f(HEALTH, hp);
     if hp <= 0.0 {
-        // `0x4184c8(0.5, …)`: its blast (the same as the ground's, crate::moby::blast), then its drop.
+        // `0x4184c8(0.5, pos, 0, 0x32, 0x1e, 0x1e, 0x1e, 0x28, 1, 1, 0, 0)`: L25's copy of the blasts' `0x3f8348`
+        // (class 0x116a; crate::moby::blast): no shake, the flash ball (`+0x34` = 1); then its drop.
         let at = w.mobys[id].pos;
-        crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.5, bursts: [0x32, 0x1e, 0x1e], puffs: 0x1e, streaks: 0x28 });
+        crate::moby::blast::burst(w, ctx, at, &crate::moby::blast::Blast { size: 0.5, bursts: [0x32, 0x1e, 0x1e], puffs: 0x1e, streaks: 0x28, light: true, shake: false });
         drop(w, id, ctx);
         set_ai_i(w, id, a::ATTACKING, 0);
         set_ai_i(w, id, a::ACTIVE, 0);
@@ -692,8 +693,9 @@ pub fn update_asteroid(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 crate::particles::puff(sys, g, 0.0, 1.0, 1.0, size * 210_000.0, at, spin, v, 0x7fff_ffff, 0);
             }
         }
-        if let (true, Some(s)) = (ram, w.mobys.iter().position(|m| m.o_class == crate::ship::SHIP_CLASS && m.state < 0x80)) {
-            crate::ship::shake(w, s, if class == 0x0955 { 0.05 } else { 0.15 }, if class == 0x0955 { 30 } else { 60 });
+        // `0x3c9c40`: the ram's shake (0.05 over 30 ticks for 0x955, else 0.15 over 60: `0x1b91a0`, crate::camera::Shakes).
+        if ram {
+            if class == 0x0955 { ctx.game.shakes.ask(0, 0.05, 0x1e) } else { ctx.game.shakes.ask(0, 0.15, 0x3c) }
         }
         if 5.0 <= AST_SIZE[k] { drop(w, id, ctx); }
         return w.delete(id);

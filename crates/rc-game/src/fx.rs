@@ -17,6 +17,8 @@
 //! | `0x38e4c8` | the Tractor Beam holding | its beam ([`crate::moby::classes::tractor::draw`]) |
 //! | `0x4137d0` | the space fights' laser 0xffa | a streak ([`crate::ship::draw_laser`]) |
 //!
+//! Before them, the frame's blob shadows (`0x2e7ab0`, crate::shadows: FX 0, ALPHA 0x44) go first into the same quads.
+//!
 //! The frame's first list (`0x2e7718`, run by `0x2e7768` before the particles, `0x3311e0`) holds on Aranos the
 //! arrival ship's draw (`0x362b40`, which the engine's created-moby draw does), class 0xd0's ribbon (`0x39ac30`, not
 //! placed) and the nanotech clusters' glow (here with the others: it draws no random numbers); its other users are
@@ -106,6 +108,10 @@ fn draw_0b0b(w: &MobyWorld, host: &dyn crate::moby::MobyHost, id: usize, rng: &m
 pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut crate::game::GameState, hero_state: i32, view: &crate::particles::BSphereView, cam: V3) -> Vec<FxQuad> {
     use crate::moby::classes::tie_lights;
     let mut out = Vec::new();
+    // The blob shadows first (`0x2e7ab0` runs before the callbacks' list, `0x2e7970`).
+    crate::shadows::draw(&w.shadows, &mut out);
+    // The ship's shadow (`0x361af8`, its callback; crate::travel).
+    crate::travel::draw_ship_shadow(game, view, &mut out);
     for id in w.draws.clone() {
         if w.mobys.get(id).is_none_or(|m| 0x80 <= m.state) { continue; }
         match w.mobys[id].o_class {

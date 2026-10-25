@@ -254,11 +254,7 @@ fn alarm(w: &mut MobyWorld, id: usize) {
     let mut groups = vec![m.group as i32];
     if m.pv_i(0x280) != -1 { groups.push(m.pv_i(0x280)); }
     if m.pv_i(0x284) != -1 { groups.push(m.pv_i(0x280)); }
-    for g in groups {
-        for i in usize::try_from(g).ok().and_then(|g| w.groups.get(g)).cloned().unwrap_or_default() {
-            if w.mobys[i].state < 0x80 { w.mobys[i].timer = 1; }
-        }
-    }
+    for g in groups { w.poke_group(g, 1); }
     w.mobys[id].timer = 1;
 }
 

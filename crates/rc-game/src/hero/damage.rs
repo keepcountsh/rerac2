@@ -9,9 +9,11 @@
 //! drowning 0x7c (in a deep liquid: the speed ×0.92, dead after 221 ticks), the electric death 0x7d, the burns 0x67 /
 //! 0x7f (the momentum eases out by 1/900, the fall springs to −0.025).
 //!
-//! Not ported: the water hurts 0x72 / 0x73 (with the water states), Clank's (0x42, 0x43), the per-level death
-//! counters, the hurt sounds and voice (`0x2d6cc8(0x12)`, `0x2b9c90(0x14)`), the drowning's bubbles moby (class
-//! 0x52a), the burns' smoke (`0x3378b0`), the gravity frames.
+//! The water hurts 0x72 / 0x73 are crate::hero::water's, as are 0x7c's bob and 0x67's breath bubbles.
+//!
+//! Not ported: Clank's hurts (0x42, 0x43), the per-level death counters, the hurt sounds and voice (`0x2d6cc8(0x12)`,
+//! `0x2b9c90(0x14)`), the drowning's bubbles moby (class 0x52a: in no level's class table, so the game's `CreateMoby`
+//! gives none either) and its `0x18a010` = 10000, the gravity frames.
 
 use super::physics::*;
 use super::states::Entry;
@@ -196,6 +198,13 @@ impl Hero {
                 if play { Entry::Anim(8.0, 0x11, 0) } else { Entry::Done }
             }
             0x7c => {
+                // The sink's bob (`0x18a5b0..`, crate::hero::water): 0.2 of the fall (at most 7 a second) toward a
+                // level 0.37 under the liquid's surface.
+                let w = &mut self.water;
+                w.bob_v = (self.disp[2] * 0.2).max(-0.116_666_675);
+                w.level = self.surf.water_z - 0.37;
+                w.level_v = 0.0;
+                w.bob = self.pos[2] - w.level;
                 self.group = 0x14;
                 self.cam_mode = 0;
                 self.hp = 0;
@@ -244,12 +253,16 @@ impl Hero {
                 self.vel[2] = 0.0;
                 let l = len2(self.vel);
                 self.vel = set_len2(self.vel, l * 0.92);
+                // `0x2c94b0`: it bobs on its level (crate::hero::water; its bubbles moby 0x52a is in no level's table).
+                self.surface_bob();
             }
             0x67 | 0x7f => {
                 let mut l = len(self.momentum);
                 approach(0.0, 0.001_111_111_2, &mut l);
                 self.momentum = set_len(self.momentum, l);
                 self.vel = self.momentum;
+                // The breath bubbles of the body in the water (crate::hero::water).
+                self.drown_breath();
                 if 0.0 < self.damage.fall_v { self.damage.fall_v = 0.0; }
                 approach(-0.025, 0.000_416_666_67, &mut self.damage.fall_v);
                 self.vel[2] = self.damage.fall_v;

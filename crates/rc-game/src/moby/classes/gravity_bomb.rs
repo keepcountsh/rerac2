@@ -4,7 +4,8 @@
 //! **The hand** (pvars: `+0x00` the landing point, `+0x10` its normal, `+0x20` the cooldown in seconds, `+0x24` a
 //! landing found): each tick the aim — out of the look stance, the cone search (crate::moby::aim, π/8 × π/4 to 11.1
 //! from the hand along Ratchet's facing, no crates) — and the throw that reaches it ([`launch`], `0x37e328`: 15 a
-//! second across, the rise worked out for the gravity 12 a second²; with nothing aimed at, 12 ahead), then the arc
+//! second across, the rise worked out for the gravity 12 a second²; with nothing aimed at, 12 ahead, or with L1
+//! held the camera's look as far as it meets the ground under Ratchet, [`look_aim`]), then the arc
 //! followed to where it lands ([`landing`], `0x37e988`) for the marker ([`draw_marker`], `0x37dfc0`). Its sequence 2
 //! run out: back to 1. In hand 23 ticks, the cooldown out and ○ held (in the look stance after its wait): one bomb
 //! (`0x2d42d0`), the use stance (crate::hero::items::ItemBlock::use_start: Ratchet's sequence 0x36, both hands),
@@ -14,24 +15,24 @@
 //! **The bomb** (pvars: `+0x00` its velocity, `+0x10` / `+0x14` its spins, `+0x20` the hit's normal, `+0x30` the hand):
 //! each tick a step of the arc and the sweep ([`sweep`], `0x37edb8`: a 0.25 sphere at the new place, else the line
 //! from the old); a wall (normal under 0.5 up) bounces it (its normal speed reversed at a quarter), a floor stops it
-//! there, as does any moby that is a target; stopped, it plays class sound 0, blows up ([`blast`], `0x3f0860`) and
-//! goes. It spins (`+0xf0` / `+0xf4`) and is gone out of the world's bounds (2..1021).
+//! there, as does a moby of class type 5 or 9 or one the lines test (the blast then on the ground under it); stopped, it plays class sound 0, blows up ([`blast`], `0x3f0860`) and
+//! goes. It spins (`+0xf0` / `+0xf4`), asks for its blob shadow (crate::shadows, 0.2 across) and is gone out of the
+//! world's bounds (2..1021).
 //!
 //! **The blast** (one at a time: a new one deletes the last; pvars `+0x00` the normal, `+0x10` its size, `+0x14` its
-//! timer, `+0x18` the growth, `+0x1c` its alpha, `+0x24`): 20 ticks of hits — every moby with health or a target, not
-//! Ratchet nor class 0xa5a, inside a sphere growing to 6 takes the record's blast damage (`+0x74`: 4) with flags
-//! 0x830000 along the line from the centre — then 40 ticks fading.
+//! timer, `+0x18` the growth, `+0x1c` its alpha, `+0x24`): at once its effect, what flies out of it ([`burst`]: debris,
+//! billows, a light, embers) and a camera shake (crate::camera::Shakes); then 20 ticks of hits — every moby with
+//! health or one the lines test (mode 0x4000), not Ratchet nor class 0xa5a, inside a sphere growing to 6 takes the
+//! record's blast damage (`+0x74`: 4) with flags 0x830000 along the line from the centre — then 40 ticks fading.
 //!
 //! **The blast's effect** ([`Effect`], drawn by [`draw_blast`]): 200 flares on a ring about the normal drifting out over
 //! 90 ticks and fading over 55 (`0x3f13d8` / `0x3f1618`, `0x3f1b00`), and the shockwave mesh twice (`0x3f0f18`,
-//! `0x3f1180`; Aranos's overlay tables). The blast goes once its last flare has.
+//! `0x3f1180`; the tables the level's overlay carries, [`DomeMesh`]). The blast goes once its last flare has.
 //!
-//! Not ported: the target held by `0x18b270` (nothing sets it on Aranos), the aim with L1 (`0x37e328`'s camera branch),
-//! the gravity frames and moving frames of the arc (`0x37f538` / `0x37f618`, `0x380e08` / `0x380ec0`: nothing on
-//! Aranos), the rumble, the statistics (`0x3f9f70`), the trail, the blast's debris, puffs, sparks and light
-//! (`0x3f09e0`: `0x390888`, `0x333a70`, `0x3348c0`, `0x39e7f0`), its camera shake (`0x1b8d60`), the shockwave mesh on
-//! levels other than Aranos (their overlays' addresses), the bomb's explosion on a target's own line (`0x3efda0`'s
-//! `0x2de878(.., 6, target)`: here at the sweep's point).
+//! Not ported: the target held by `0x18b270` (nothing sets it on Aranos), the gravity frames and moving frames of
+//! the throw and the arc (`0x326448`'s other gravities, `0x37f538` / `0x37f618`, `0x380e08` / `0x380ec0`: nothing on
+//! Aranos; down is `(0, 0, −1)` here), the rumble, the statistics (`0x3f9f70`), the trail, the hit the ground line
+//! under a moby delivers (`0x3efda0`'s `0x2de878(.., 6, target)` passes the moby as its hit template).
 
 use crate::hero::items::{row, GRAVITY_BOMB};
 use crate::hero::physics::{add, add_rot, cross, dot, len, scale, set_len, sub, V3};
@@ -43,9 +44,10 @@ pub const HAND_CLASS: i16 = 0xce3;
 pub const BOMB_CLASS: i16 = 0xce4;
 pub const BLAST_CLASS: i16 = 0xce5;
 
-/// `gp+0x17c0..+0x17cc`: the throw's reach with nothing aimed at, the least, the gravity (a second²) and the speed
-/// across (a second).
+/// `gp+0x17c0..+0x17cc`: the throw's reach with nothing aimed at, the least (1e-5), the gravity (a second²) and
+/// the speed across (a second).
 const REACH: f32 = 12.0;
+const LEAST: f32 = f32::from_bits(0x3727_c5ac);
 const GRAVITY: f32 = 12.0 / 3600.0;
 const SPEED: f32 = 15.0 / 60.0;
 /// `0x3257a0`'s limits for the bomb.
@@ -120,16 +122,56 @@ pub fn update(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     w.register_draw(id);
 }
 
-/// `0x37e328(least, reach, speed, gravity, out, from, target, 0)` under plain gravity: the throw from `from` that comes
-/// down on `target` (a moby's place), or `reach` ahead along Ratchet's facing; `speed` across, the rise for the fall.
+/// `0x37e328(least, reach, speed, gravity, out, from, target, 0)` under plain gravity (down `(0, 0, −1)`,
+/// `0x326448`): the throw from `from` that comes down on `target` (a moby's place), or ahead of Ratchet — `reach`
+/// along his facing, or with L1 held (`0x138320 & 4`) and the item not kept away (`0x18c0dc`) along the camera's
+/// look ([`look_aim`]); `speed` across, the rise for the fall.
 fn launch(ctx: &Ctx, from: V3, target: Option<V3>) -> V3 {
-    let to = target.unwrap_or_else(|| add(ctx.hero.pos, set_len(ctx.hero.rows[0], REACH)));
+    let to = target.unwrap_or_else(|| {
+        let it = ctx.hero.items;
+        let (way, reach) = if it.held & crate::pad::button::L1 != 0 && it.no_use == 0 { look_aim(ctx) } else { (ctx.hero.rows[0], REACH) };
+        add(ctx.hero.pos, set_len(way, reach))
+    });
     let d = sub(to, from);
     let across = [d[0], d[1], 0.0];
     let mut v = set_len(across, SPEED);
     let t = len(across) / SPEED;
     if 0.0 < t { v[2] = (d[2] + GRAVITY * t * t * 0.5) / t; }
     v
+}
+
+/// `0x37e328`'s L1 branch: the way and the reach of the throw from the camera (`0x1b8f70` its rows, `0x1b8d40` its
+/// place). The way: the camera's forward and its part across; the quaternion about their cross whose half angle
+/// is *half their cosine* (`0x2ef460` / `0x2ef448`, the VU0 sine and cosine: the game's own arithmetic, kept)
+/// turns the camera's rows (`0x2efc20` its matrix, `0x2efa00` row by row) and the first row is the way. The
+/// reach: where the camera's forward ray reaches the level of Ratchet's feet (when it looks down at all), its
+/// distance across from the camera held to `least`..`reach`, else `reach`; then eased by `1 − (1 − x)²`
+/// (`0x31b918`).
+fn look_aim(ctx: &Ctx) -> (V3, f32) {
+    use crate::hero::physics::unit;
+    const DOWN: V3 = [0.0, 0.0, -1.0];
+    let cam = ctx.host.camera_rows();
+    let fwd = unit(cam[0]);
+    let across = unit(sub(fwd, scale(DOWN, dot(fwd, DOWN))));
+    let axis = cross(fwd, across);
+    let half = dot(fwd, across) * 0.5;
+    let (s, c) = rc_formats::moby_light::vu0_sin_cos(half.to_bits());
+    let a = scale(axis, f32::from_bits(s));
+    let row = crate::moby::shards::rotate([a[0], a[1], a[2], f32::from_bits(c)], [1.0, 0.0, 0.0]);
+    let way: V3 = std::array::from_fn(|k| row[0] * cam[0][k] + row[1] * cam[1][k] + row[2] * cam[2][k]);
+    let height = -dot(ctx.hero.pos, DOWN);
+    let fwd = unit(cam[0]);
+    let down = dot(DOWN, fwd);
+    let mut reach = REACH;
+    if 0.0 < down {
+        let eye = ctx.host.camera_pos();
+        let k = (dot(DOWN, eye) + height) / down;
+        let v = sub(sub(eye, scale(fwd, k)), eye);
+        let d = len(sub(v, scale(DOWN, dot(v, DOWN))));
+        reach = if REACH < d { REACH } else if d < LEAST { LEAST } else { d };
+    }
+    let x = reach / REACH;
+    (way, REACH * (1.0 - (1.0 - x) * (1.0 - x)))
 }
 
 /// `0x37e988(gravity, from, vel, ..)`: the arc from `from` at `vel`, ten ticks between line tests (flags 0x12, not the
@@ -191,15 +233,16 @@ enum Sweep {
 
 /// `0x37edb8` for the bomb: the 0.25 sphere at `to` (its pushed-out centre), else the line `from` → `to` (its point),
 /// not the bomb nor Ratchet nor another bomb. The normal under 0.5 up bounces `vel` (reflected, a quarter of the
-/// normal speed kept); else it stops. Returns the place, the surface's normal and the moby touched.
-fn sweep(w: &MobyWorld, ctx: &Ctx, id: usize, from: V3, to: V3, vel: &mut V3) -> (Sweep, V3, V3, Option<usize>) {
-    let Some(c) = ctx.coll else { return (Sweep::None, to, [0.0; 3], None) };
+/// normal speed kept); else it stops. Returns the place, the surface's normal, the moby touched and the query's own
+/// point (`0x1bf1a0`).
+fn sweep(w: &MobyWorld, ctx: &Ctx, id: usize, from: V3, to: V3, vel: &mut V3) -> (Sweep, V3, V3, Option<usize>, V3) {
+    let Some(c) = ctx.coll else { return (Sweep::None, to, [0.0; 3], None, to) };
     let q = crate::collision::QueryFlags(0);
     let hit = crate::collision::coll_sphere_m(c, ctx.scene, to, 0.25, q, Some(id)).map(|h| (h.pushed_centre.unwrap_or(h.point), h))
         .or_else(|| w.coll_line(ctx, from, to, 0, Some(id)).map(|h| (h.point, h)));
-    let Some((at, h)) = hit else { return (Sweep::None, to, [0.0; 3], None) };
+    let Some((at, h)) = hit else { return (Sweep::None, to, [0.0; 3], None, to) };
     if h.moby.is_some_and(|m| m == id || Some(m) == ctx.hero_moby || w.mobys.get(m).is_some_and(|x| x.o_class == HAND_CLASS || x.o_class == 0)) {
-        return (Sweep::None, to, [0.0; 3], None);
+        return (Sweep::None, to, [0.0; 3], None, to);
     }
     let n = crate::hero::physics::unit(h.normal);
     if dot([0.0, 0.0, 1.0], n) < FLOOR {
@@ -207,9 +250,9 @@ fn sweep(w: &MobyWorld, ctx: &Ctx, id: usize, from: V3, to: V3, vel: &mut V3) ->
         let r = sub(*vel, scale(n, 2.0 * dot(*vel, n)));
         let along = scale(n, dot(r, n));
         *vel = add(sub(r, along), scale(along, RESTITUTION));
-        return (Sweep::Bounce, at, n, h.moby);
+        return (Sweep::Bounce, at, n, h.moby, h.point);
     }
-    (Sweep::Stop, h.point, n, h.moby)
+    (Sweep::Stop, h.point, n, h.moby, h.point)
 }
 
 /// `0x3efda0`.
@@ -221,7 +264,7 @@ pub fn update_bomb(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             let mut vel = w.mobys[id].pv_v(0);
             let to = add(from, vel);
             vel[2] -= GRAVITY;
-            let (s, at, n, touched) = sweep(w, ctx, id, from, to, &mut vel);
+            let (s, at, n, touched, point) = sweep(w, ctx, id, from, to, &mut vel);
             let m = &mut w.mobys[id];
             m.set_pv_v(0, vel);
             match s {
@@ -236,15 +279,33 @@ pub fn update_bomb(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                     m.state = 2;
                 }
             }
-            // A target touched stops it there.
+            // A moby of class type 5 or 9, or one the lines test (mode 0x4000), stops it: at the query's point, then
+            // the line 3 down from there (raised by the moby's aim height when it has one; flags 6) gives the place
+            // and the normal it blows up with, so the blast lies on the ground under it.
             if let Some(t) = touched {
-                let target = w.mobys.get(t).is_some_and(|x| x.mode & mode::TARGET != 0) || aim::health(w, t).is_some();
-                if target { w.mobys[id].state = 2; }
+                let kind = w.mobys.get(t).and_then(|x| w.class(x.o_class)).map_or(0, |c| c.kind);
+                if kind == 5 || kind == 9 || w.mobys.get(t).is_some_and(|x| x.mode & mode::LINE != 0) {
+                    let up = [0.0, 0.0, 1.0];
+                    let start = match aim::health(w, t) {
+                        Some((_, h)) => add(w.mobys[id].pos, scale(up, h)),
+                        None => w.mobys[id].pos,
+                    };
+                    let (mut p, mut nn) = (point, n);
+                    if let Some(h) = w.coll_line(ctx, start, add(start, scale(up, -3.0)), 6, None) {
+                        (p, nn) = (h.point, crate::hero::physics::unit(h.normal));
+                    }
+                    let m = &mut w.mobys[id];
+                    m.pos = p;
+                    m.set_pv_v(0x20, nn);
+                    m.state = 2;
+                }
             }
             let m = &mut w.mobys[id];
             m.rot[0] = add_rot(m.rot[0], m.pv_f(0x10));
             m.rot[1] = add_rot(m.rot[1], m.pv_f(0x14));
-            let p = m.pos;
+            // `0x31d930(0.2, bomb)`: its blob shadow, after the spins and before the bounds.
+            crate::shadows::request(w, ctx, 0.2, id);
+            let p = w.mobys[id].pos;
             if p.iter().any(|&c| !(2.0..=1021.0).contains(&c)) {
                 w.delete(id);
                 return;
@@ -307,6 +368,11 @@ pub fn update_blast(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         m.set_pv_i(0x14, 0x14);
         let (at, n) = (m.pos, m.pv_v(0));
         effect_start(w, ctx, id, at, n);
+        burst(w, ctx, id, at);
+        // The camera shake (up and down, 0.45 over 40 ticks) when it is in view within 100.
+        if !ctx.view.is_some_and(|v| v.culled(100.0, [at[0], at[1], at[2] + 1.0, 2.0])) {
+            ctx.game.shakes.ask(0, 0.45, 0x28);
+        }
     }
     effect_tick(w, id);
     w.register_draw(id);
@@ -320,7 +386,7 @@ pub fn update_blast(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             if let Some(sc) = ctx.scene {
                 for t in crate::collision::coll_sphere_mobys(sc, at, r, crate::collision::QueryFlags(0), Some(id)) {
                     let Some(x) = w.mobys.get(t) else { continue };
-                    if !(aim::health(w, t).is_some() || x.mode & mode::TARGET != 0) || Some(t) == ctx.hero_moby || x.o_class == 0xa5a { continue; }
+                    if !(aim::health(w, t).is_some() || x.mode & mode::LINE != 0) || Some(t) == ctx.hero_moby || x.o_class == 0xa5a { continue; }
                     let d = crate::hero::physics::unit(sub(x.pos, at));
                     let mut tm = HitTemplate::new(BLAST_DAMAGE, Some(id), 0x0083_0000, [d[0], d[1], d[2], NO_KNOCK_LIMIT]);
                     tm.kind = (x.o_class as u16 as u32) << 16 | 0x0305;
@@ -354,6 +420,65 @@ pub fn update_blast(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 if w.gravity_bomb.blast == Some(id) { w.gravity_bomb.blast = None; }
                 w.delete(id);
             }
+        }
+    }
+}
+
+/// `0x3f0310`'s colours for the billows (`0x1b07f0` / `0x1b0808`).
+const BILLOW_FROM: [u32; 6] = [0x4f00_8fff, 0x4f00_8fff, 0x4f00_7fff, 0x4f00_6fff, 0x2fff_ffff, 0x2fff_ffff];
+const BILLOW_TO: [u32; 6] = [0x2f00_5f7f, 0x2f00_4f7f, 0x2f00_3f7f, 0x2f00_004f, 0x2f00_0000, 0x3f00_0000];
+
+/// `0x3f09e0(blast, at)`: what flies out of the blast, every way turned by the blast's rows (third up):
+/// * a chunk of debris (kind 0) toward the camera, 1/300 of its distance a random way plus twice its distance a
+///   second toward it lifted by half the distance, at most 10 a second; 9 smoking ones (kind 1) out at 25°..45° up,
+///   13..20 a second; each 60..90 ticks (crate::moby::classes::debris);
+/// * 10 billows (crate::particles::billow), 12..15 a second, 20..40 ticks, from blue or white to dark blue or black;
+/// * the light (crate::moby::classes::light::GRAVITY_BOMB);
+/// * 50 embers (crate::particles::ember) out at 8°..35° up, 16..30 a second, 50..110 ticks, orange to dark red, trailing.
+fn burst(w: &mut MobyWorld, ctx: &mut Ctx, id: usize, at: V3) {
+    use super::{debris, light, shot::polar};
+    let rows = w.mobys[id].rows;
+    let through = |v: V3| -> V3 { std::array::from_fn(|k| v[0] * rows[0][k] + v[1] * rows[1][k] + v[2] * rows[2][k]) };
+    let mut d = sub(ctx.host.camera_pos(), at);
+    let dist = len(d);
+    let g = &mut ctx.game.rng;
+    let r = [g.randf(-1.0, 1.0), g.randf(-1.0, 1.0), g.randf(-1.0, 1.0)];
+    d[2] += dist * 0.5;
+    let mut v = add(set_len(r, dist * 0.003_333_333_6), set_len(d, (dist + dist) * 0.016_666_668));
+    // `0x2ef1d0(1/6, v, v)`: at most that long.
+    let l = len(v);
+    if 0.0 < l && 0.166_666_67 <= l { v = scale(v, 0.166_666_67 / l); }
+    let life = g.rand_range(0x3c, 0x5a);
+    debris::spawn(w, ctx, at, through(v), life, 0);
+    for _ in 0..9 {
+        let g = &mut ctx.game.rng;
+        let pitch = g.randf(0.436_332_3, 0.785_398_2);
+        let yaw = g.rand_angle();
+        let speed = g.randf(13.0, 20.0);
+        let v = through(polar(speed * 0.016_666_668, yaw, pitch));
+        let life = g.rand_range(0x3c, 0x5a);
+        debris::spawn(w, ctx, at, v, life, 1);
+    }
+    for _ in 0..10 {
+        let g = &mut ctx.game.rng;
+        let speed = g.randf(8.0, 10.0) * 0.016_666_668 * 1.5;
+        let (a, b) = (g.randi(6) as usize, g.randi(6) as usize);
+        let life = g.rand_range(0x14, 0x28);
+        let hold = g.rand_range(0x32, 0x46) as u8;
+        if let Some(s) = ctx.parts.as_deref_mut() {
+            crate::particles::billow(s, &mut ctx.game.rng, 600_000.0, speed, at, [0.0; 3], BILLOW_FROM[a], BILLOW_TO[b], life, hold, 0, 0);
+        }
+    }
+    light::spawn(w, ctx, &light::GRAVITY_BOMB, at);
+    for _ in 0..50 {
+        let g = &mut ctx.game.rng;
+        let pitch = g.randf(0.139_626_3, 0.610_865_3);
+        let yaw = g.rand_angle();
+        let speed = g.randf(16.0, 30.0);
+        let v = through(polar(speed * 0.016_666_668, yaw, pitch));
+        let life = g.rand_range(0x3c, 0x78) - 10;
+        if let Some(s) = ctx.parts.as_deref_mut() {
+            crate::particles::ember(s, &mut ctx.game.rng, 40_000.0, at, v, 0x4f00_7fff, 0x1f00_007f, life, 1, None, None, 0);
         }
     }
 }
@@ -419,8 +544,8 @@ pub struct Flare {
     kind: u8,
 }
 
-/// The blast's mesh (L00's overlay: the 64 quads `0x29b400` of `{vertex, ST}` pairs, the vertices `0x29af00`, the
-/// STs `0x29b800`), drawn twice as its shockwave.
+/// The blast's mesh (the 64 quads of `{vertex, ST}` pairs at L00's `0x29b400`, the vertices `0x29af00`, the STs
+/// `0x29b800`; the same tables in every level's overlay, at that level's addresses), drawn twice as its shockwave.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DomeMesh {
     pub verts: Vec<V3>,
@@ -429,7 +554,8 @@ pub struct DomeMesh {
 }
 
 impl DomeMesh {
-    /// From the overlay through `read(address, length)` (L00's addresses).
+    /// From the level's overlay through `read(address, length)` of L00's addresses (the engine maps them to the
+    /// level's copy of the blast's draw, `0x3f0f18`'s `lui`/`addiu` pairs).
     pub fn read(read: impl Fn(u32, usize) -> Option<Vec<u8>>) -> Option<DomeMesh> {
         let q = read(0x0029_b400, 64 * 16)?;
         let half = |b: &[u8], i: usize| u16::from_le_bytes([b[2 * i], b[2 * i + 1]]);

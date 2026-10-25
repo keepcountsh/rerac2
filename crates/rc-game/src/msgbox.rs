@@ -245,6 +245,9 @@ pub enum Request {
     Text { text: i32, ticks: Option<i32> },
     /// `0x30eff8(text, ticks)` with the text by id.
     Second { text: i32, ticks: Option<i32> },
+    /// The text by id formatted with `n` (`0x115da8`) into the second box (L01 `0x325830`: its `0x2ed8b8` →
+    /// `0x3049d0` = L00 `0x30eff8`).
+    SecondFormatted { text: i32, n: i32, ticks: Option<i32> },
 }
 
 impl Boxes {
@@ -257,6 +260,7 @@ impl Boxes {
                 Request::Formatted { text: t, n, ticks } => self.first.show_formatted(text(t), n, ticks, glyphs),
                 Request::Text { text: t, ticks } => self.first.show_text(text(t), ticks, glyphs),
                 Request::Second { text: t, ticks } => self.second.show_second(text(t), ticks, glyphs),
+                Request::SecondFormatted { text: t, n, ticks } => self.second.show_second(&format(text(t), n), ticks, glyphs),
             }
         }
         self.first.tick(glyphs);

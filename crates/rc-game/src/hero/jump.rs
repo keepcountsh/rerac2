@@ -59,6 +59,8 @@ impl Hero {
         self.group = 4;
         self.cam_mode = if matches!(id, 0x28 | 0x29) { 3 } else { 0x50 };
         self.vel = self.eff;
+        // Out of the water: its splash (crate::hero::water).
+        self.jump_splash(id);
         let height = self.height;
         let wall_lock = self.wall.lock;
         self.wall.lock = 0;

@@ -32,10 +32,13 @@ pub enum PictureTable {
     /// The Help Controls page's two halves of the pad (`0x14c310` / `0x14c338`), by controller configuration.
     ControlsLeft,
     ControlsRight,
+    /// The ship's map page's backdrop (`0x14c950`, a row per level: the picture widget `0x286fd8`, flags 0x40022,
+    /// streams the selected level's photo, 256 × 128, drawn over the whole screen by `0x3546e0`).
+    Galaxy,
 }
 
 impl PictureTable {
-    pub const ALL: [PictureTable; 8] = [
+    pub const ALL: [PictureTable; 9] = [
         PictureTable::Gadgets,
         PictureTable::Weapons,
         PictureTable::Items,
@@ -44,6 +47,7 @@ impl PictureTable {
         PictureTable::HelpGadgets,
         PictureTable::ControlsLeft,
         PictureTable::ControlsRight,
+        PictureTable::Galaxy,
     ];
 
     fn table(self) -> (usize, usize) {
@@ -56,13 +60,14 @@ impl PictureTable {
             PictureTable::HelpGadgets => (0xcb0, 12),
             PictureTable::ControlsLeft => (0xa68, 5),
             PictureTable::ControlsRight => (0xa90, 5),
+            PictureTable::Galaxy => (0x10a8, 28),
         }
     }
 
     /// The pictures' height (their panel's `+0x3c`; all are 256 wide).
     pub fn height(self) -> u32 {
         match self {
-            PictureTable::HelpMoves | PictureTable::HelpWeapons | PictureTable::HelpGadgets => 128,
+            PictureTable::HelpMoves | PictureTable::HelpWeapons | PictureTable::HelpGadgets | PictureTable::Galaxy => 128,
             _ => 256,
         }
     }
@@ -137,6 +142,17 @@ impl<'a> Toc<'a> {
         let (at, rows) = t.table();
         if rows <= i { return Ok(None); }
         let o = at + i * 8;
+        let p = Part { sector: h.u32(o)?, sectors: h.u32(o + 4)? };
+        Ok((p.sectors > 0).then_some(p))
+    }
+
+    /// Planet `level`'s picture lump in `HUD.WAD` (`crate::disc::planet_picture`): the header's rows at +0x1188
+    /// (`0x14ca30`), or the alternate set at +0x126c (`0x14cb14`) with `alt`; `None` for an empty row.
+    pub fn planet_picture(&self, level: usize, alt: bool) -> Result<Option<Part>> {
+        let h = self.header(Global::Hud)?;
+        if 0x1c <= level { return Ok(None); }
+        let o = if alt { 0x126c } else { 0x1188 } + level * 8;
+        if o + 8 > h.len() { return Ok(None); }
         let p = Part { sector: h.u32(o)?, sectors: h.u32(o + 4)? };
         Ok((p.sectors > 0).then_some(p))
     }
