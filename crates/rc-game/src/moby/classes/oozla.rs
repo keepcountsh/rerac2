@@ -213,18 +213,30 @@ pub fn update_0c58(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     if m.state < 3 { carry_hero(ctx, id, old, old_yaw, m.pos, m.rot[2]); }
 }
 
-/// 0x0a17 (`0x3bcdd8`): the swamp's water. Its level (`game.water_base`, L01 `$gp+0xdec`) is its `+0x14`, or with
-/// Ratchet in one of its eight cuboids `+0x40..+0x60` that cuboid's centre height + 0.15; with him in one of the two
-/// cuboids `+0x30` / `+0x34` (dry ground) it is left as it was. While the camera is above `+0x20` the water is
-/// drawn (`0x3bc3c0`, through the first draw-callback list, with its texture scroll: not ported, G-REN-009) and its
-/// height (`game.water_z`, `$gp+0xde8`, what `0x3bc3b8` gives the floating objects) waves 0.1 about the level,
-/// `sin(frame mod 360 · 0.017444445 − 3.14)`. Not ported: the camera test of the dry cuboids when `0x18c0b4` is 0x1c,
-/// and the flag `0x18a01e` (0 in the dry cuboids, else 2).
+/// 0x0a17 (`0x3bcdd8`): the swamp's water. At its start (state 0) its colours (`+0x00` the band near `0x80103030`,
+/// `+0x04` the band far and the wall's foot `0x800c1006`, `+0x0c` / `+0x10` the surface near / at two tiles
+/// `0x50106060` / `0x00106060`), its reach `+0x28` 224, the layers' scroll 0 (`game.water_scroll`, `0x1b2fd0`) and the
+/// camera noted (`game.water_cam`, `$gp+0x3fd0`). Its level (`game.water_base`, L01 `$gp+0xdec`) is its `+0x14`, or
+/// with Ratchet in one of its eight cuboids `+0x40..+0x60` that cuboid's centre height + 0.15; with him in one of the
+/// two cuboids `+0x30` / `+0x34` (dry ground) the tick ends there. Then the camera's move since the last tick turns
+/// each layer's scroll by `move · 2·scale / (5·tile)` (scales `$gp+0xdc0`: 2, 3; tile `+0x18`; the whole turns
+/// dropped), and while the camera is above `+0x20` the scroll drifts by the layer's speed (`$gp+0xdd0`: (0.04, 0.04)
+/// and (0, −0.04)) / 60, both kept within ±1; the height (`game.water_z`, `$gp+0xde8`, what `0x3bc3b8` gives the
+/// floating objects) waves 0.1 about the level, `sin(frame mod 360 · 0.017444445 − 3.14)`; and the water is drawn
+/// ([`draw_0a17`], registered on the draw list before the ties `0x2dcec8`). Not ported: the camera test of the dry
+/// cuboids when `0x18c0b4` is 0x1c, and the flag `0x18a01e` (0 in the dry cuboids, else 2).
 pub fn update_0a17(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    const SCALE: [f32; 2] = [2.0, 3.0];
+    const SPEED: [[f32; 2]; 2] = [[0.04, 0.04], [0.0, -0.04]];
+    let cam = ctx.host.camera_pos();
     let m = &mut w.mobys[id];
     if m.state == 0 {
         m.update_dist = 0xff;
         m.state = 1;
+        for (o, c) in [(0x00, 0x8010_3030u32), (0x04, 0x800c_1006), (0x0c, 0x5010_6060), (0x10, 0x0010_6060)] { m.set_pv_i(o, c as i32); }
+        m.set_pv_f(0x28, 224.0);
+        ctx.game.water_scroll = [[0.0; 2]; 2];
+        ctx.game.water_cam = cam;
         ctx.game.water_base = m.pv_f(0x14);
         return;
     }
@@ -235,11 +247,85 @@ pub fn update_0a17(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         .find(|&c| ctx.level.in_cuboid(c, hero))
         .and_then(|c| ctx.level.cuboid_place(c))
         .map_or(m.pv_f(0x14), |(centre, _)| centre[2] + 0.15);
-    if m.pv_f(0x20) < ctx.host.camera_pos()[2] {
+    let d = sub(cam, ctx.game.water_cam);
+    ctx.game.water_cam = cam;
+    if m.pv_f(0x20) < cam[2] {
+        let wrap = |x: f32| if 1.0 < x { x - 1.0 } else if x < -1.0 { x + 1.0 } else { x };
+        let tile = m.pv_f(0x18);
+        for (k, sc) in ctx.game.water_scroll.iter_mut().enumerate() {
+            let f = SCALE[k] * 2.0 / (tile * 5.0);
+            let step = |v: f32| if v != 1.0 { v - v.trunc() } else { v };
+            sc[0] = wrap(sc[0] + step(d[0] * f));
+            sc[1] = wrap(sc[1] + step(d[1] * f));
+        }
         // The game's own 3.14 (not π).
         #[allow(clippy::approx_constant)]
         let phase = (ctx.game.frame % 360) as f32 * 0.017_444_445 - 3.14;
         ctx.game.water_z = ctx.game.water_base + phase.sin() * 0.1;
+        for (k, sc) in ctx.game.water_scroll.iter_mut().enumerate() {
+            sc[0] = wrap(sc[0] + SPEED[k][0] / 60.0);
+            sc[1] = wrap(sc[1] + SPEED[k][1] / 60.0);
+        }
+        w.register_draw(id);
+    }
+}
+
+/// `0x3bc3c0` (0x0a17's draw, crate::fx): the swamp water about the camera at the water's height (`game.water_z`).
+/// F and L are the camera's forward and left rows flattened and normalised.
+/// * The far band (FX 0x16, ST 0, ALPHA 0x44: the colours' own alpha, opaque here): a strip from `cam − 75F ∓ 87L` to
+///   `cam + reach·F ∓ 750L` (`+0x28`) in five steps, its colour `+0x00` → `+0x04` along it.
+/// * The wall (the same FX, ALPHA 0x44), with the camera more than `+0x24` above the level (`+0x14`; not in state 0x1c):
+///   from the band's far edge up to `camera z − +0x24`, `+0x04` at its foot and `+0x08` at its top.
+/// * The surface, two layers (FX `+0x1c + layer + 0x3f`, ALPHA 0x48: added): 4 × 4 tiles of `+0x18` about the camera
+///   (`cam + (x, y) + 1`), ST `x / (2·tile) · scale + scroll`, each corner's colour `+0x0c` → `+0x10` by its distance
+///   to the camera over two tiles.
+///
+/// The water's own fog (`0x1bdbe8` / `0x1bdbec` set to 255 / 249.9 for its draw: next to none) is the effects' (none).
+/// Not ported: its draws' Z test without Z write (the effects test Z the same way), the hero state 0x1c's normal fog.
+pub fn draw_0a17(w: &MobyWorld, id: usize, game: &crate::game::GameState, cam: V3, rows: [V3; 3], out: &mut Vec<crate::fx::FxQuad>) {
+    use crate::fx::FxQuad;
+    use crate::hud::lerp_rgba;
+    const SCALE: [f32; 2] = [2.0, 3.0];
+    let m = &w.mobys[id];
+    let c = |o: usize| m.pv_i(o) as u32;
+    let z = game.water_z;
+    let flat = |v: V3| set_len([v[0], v[1], 0.0], 1.0);
+    let (f, l) = (flat(rows[0]), flat(rows[1]));
+    let at = |a: f32, b: f32| -> V3 { let p = add(add(scale(f, a), scale(l, b)), cam); [p[0], p[1], z] };
+    let (n0, n1, f0, f1) = (at(-75.0, -87.0), at(-75.0, 87.0), at(m.pv_f(0x28), -750.0), at(m.pv_f(0x28), 750.0));
+    let lerp = |a: V3, b: V3, t: f32| add(a, scale(sub(b, a), t));
+    let st0 = [[0.0; 2]; 4];
+    let band = |i: usize| (i as f32 * 0.2, lerp_rgba(i as f32 * 0.2, c(0x00), c(0x04)));
+    for i in 0..5 {
+        let ((t0, c0), (t1, c1)) = (band(i), band(i + 1));
+        out.push(FxQuad { fx: 0x16, additive: false, corners: [lerp(n0, f0, t0), lerp(n1, f1, t0), lerp(n0, f0, t1), lerp(n1, f1, t1)], st: st0, rgba: [c0, c0, c1, c1] });
+    }
+    let top = cam[2] - m.pv_f(0x24);
+    if m.pv_f(0x14) < top {
+        let up = |p: V3| [p[0], p[1], top];
+        out.push(FxQuad { fx: 0x16, additive: false, corners: [f0, up(f0), f1, up(f1)], st: st0, rgba: [c(0x04), c(0x08), c(0x04), c(0x08)] });
+    }
+    let tile = m.pv_f(0x18);
+    if tile <= 0.0 { return; }
+    let colour = |p: V3| lerp_rgba((crate::hero::physics::len(sub(p, cam)) / (tile * 2.0)).min(1.0), c(0x0c), c(0x10));
+    for (layer, sc) in game.water_scroll.iter().enumerate() {
+        let fx = (m.pv_i(0x1c) + layer as i32 + 0x3f) as usize;
+        let st = |x: f32, y: f32| [x / (tile * 2.0) * SCALE[layer] + sc[0], y / (tile * 2.0) * SCALE[layer] + sc[1]];
+        for row in 0..4 {
+            let y = (row as f32 - 2.0) * tile;
+            for col in 0..4 {
+                let x = (col as f32 - 2.0) * tile;
+                let p = |dx: f32, dy: f32| [cam[0] + x + dx + 1.0, cam[1] + y + dy + 1.0, z];
+                let corners = [p(0.0, 0.0), p(0.0, tile), p(tile, 0.0), p(tile, tile)];
+                out.push(FxQuad {
+                    fx,
+                    additive: true,
+                    corners,
+                    st: [st(x, y), st(x, y + tile), st(x + tile, y), st(x + tile, y + tile)],
+                    rgba: corners.map(colour),
+                });
+            }
+        }
     }
 }
 
