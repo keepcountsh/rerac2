@@ -82,7 +82,7 @@
 
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    BlendComponent, BlendFactor, BlendOperation, BlendState, CompareFunction, RenderPipelineDescriptor,
+    BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites, CompareFunction, RenderPipelineDescriptor,
 };
 use bevy::shader::ShaderDefVal;
 use std::sync::OnceLock;
@@ -181,6 +181,12 @@ pub enum GsPass {
     EffectOpaque,
     /// `OpaqueTested` on display bytes, likewise.
     EffectTested { aref: u8 },
+    /// Z only, no colour (TEST_1 0x52001: ATST NEVER, AFAIL ZB_ONLY, ZTST GEQUAL): a mode-0x2000 moby's first pass
+    /// (MobyProc L00 `0x318fd0`, template word `0x28c340`), in AlphaMask3d so it lands before the colour pass.
+    DepthOnly,
+    /// Colour only on display bytes, Z tested against [`Self::DepthOnly`]'s and not written (TEST_1 0x51001: ATST NEVER,
+    /// AFAIL FB_ONLY): the same moby's second pass, so only its front surface blends in.
+    EffectOnDepth,
 }
 
 /// Which fragments a draw discards.
@@ -204,6 +210,8 @@ pub struct GsState {
     pub depth_write: bool,
     pub depth_compare: CompareFunction,
     pub discard: AlphaDiscard,
+    /// Colour written (false: a Z-only draw).
+    pub color_write: bool,
 }
 
 /// `(Cs − Cd)·As + Cd` with As = fragment alpha (ALPHA_1 = 0x8000000044; FIX unused).
@@ -230,10 +238,13 @@ impl GsPass {
             GsPass::LateOpaque => (false, true, GreaterEqual, D::None),
             GsPass::EffectOpaque => (true, true, GreaterEqual, D::None),
             GsPass::EffectTested { aref } => (true, true, GreaterEqual, D::Below(aref)),
+            GsPass::DepthOnly => (false, true, GreaterEqual, D::None),
+            GsPass::EffectOnDepth => (true, false, GreaterEqual, D::None),
         };
         let additive = matches!(self, GsPass::AdditiveNoZ);
-        let display = matches!(self, GsPass::AdditiveNoZ | GsPass::EffectMix | GsPass::EffectLowAlpha { .. } | GsPass::EffectOpaque | GsPass::EffectTested { .. });
-        GsState { blend, additive, depth_write, depth_compare, discard, display }
+        let display = matches!(self, GsPass::AdditiveNoZ | GsPass::EffectMix | GsPass::EffectLowAlpha { .. } | GsPass::EffectOpaque | GsPass::EffectTested { .. } | GsPass::EffectOnDepth);
+        let color_write = !matches!(self, GsPass::DepthOnly);
+        GsState { blend, additive, depth_write, depth_compare, discard, display, color_write }
     }
 
     /// The Bevy phase: Opaque3d, AlphaMask3d (drawn after all of Opaque3d) or Transparent3d.
@@ -241,7 +252,7 @@ impl GsPass {
         match self {
             GsPass::Opaque => AlphaMode::Opaque,
             // The cutoff is not read: the shader discards per `GS_AREF`.
-            GsPass::OpaqueTested { .. } => AlphaMode::Mask(0.5),
+            GsPass::OpaqueTested { .. } | GsPass::DepthOnly => AlphaMode::Mask(0.5),
             _ => AlphaMode::Blend,
         }
     }
@@ -255,7 +266,10 @@ impl GsPass {
             ds.depth_compare = Some(s.depth_compare);
         }
         if let Some(f) = descriptor.fragment.as_mut() {
-            for t in f.targets.iter_mut().flatten() { t.blend = s.blend.then_some(GS_BLEND); }
+            for t in f.targets.iter_mut().flatten() {
+                t.blend = s.blend.then_some(GS_BLEND);
+                if !s.color_write { t.write_mask = ColorWrites::empty(); }
+            }
             if s.display { f.shader_defs.push(if s.additive { "DISPLAY_BLEND_ADD" } else { "DISPLAY_BLEND_MIX" }.into()); }
             let (def, aref) = match s.discard {
                 AlphaDiscard::None => (None, 0),

@@ -426,7 +426,10 @@ fn metal_passes(texel: AlphaRange) -> Vec<GsPass> {
 ///   Z (`EffectTested`), the rest blend colour-only (`EffectLowAlpha`); a flash fails the test everywhere and blends
 ///   over the scene without occluding it, a nearly opaque pickup still hides its own back faces;
 /// * [`Self::Additive`]: mode bit 0x200 (the game switches the moby to `Cs·As + Cd`): **additive on display bytes,
-///   no depth write, sorted**.
+///   no depth write, sorted**;
+/// * [`Self::DepthFirst`]: mode bit 0x2000 (Going Commando's MobyProc L00 `0x318fd0`; R&C1 has no such bit): the
+///   packets twice, first Z only (TEST_1 0x52001), then colour only against that Z (0x51001), so a model fading in
+///   (the vendor's preview) shows only its front surface.
 ///
 /// Each value is one entity group per (instance, LOD) ([`Self::passes`]). No class is special-cased.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -439,6 +442,8 @@ pub enum MobyBlend {
     Fading,
     /// Mode bit 0x200: ALPHA_1 0x48, TEST_1 0x5360b.
     Additive,
+    /// Mode bit 0x2000 (without 0x200): a Z-only pass, then a colour-only pass on it.
+    DepthFirst,
 }
 
 impl MobyBlend {
@@ -447,6 +452,8 @@ impl MobyBlend {
         let t6 = (mode & 0x208) | ((fading as u16) << 3);
         if t6 & 0x200 != 0 {
             MobyBlend::Additive
+        } else if mode & 0x2000 != 0 {
+            MobyBlend::DepthFirst
         } else if t6 & 8 != 0 {
             MobyBlend::Fading
         } else if vertex_alpha != 0x80 {
@@ -474,6 +481,7 @@ impl MobyBlend {
                     .collect()
             }
             MobyBlend::Additive => vec![GsPass::AdditiveNoZ],
+            MobyBlend::DepthFirst => vec![GsPass::DepthOnly, GsPass::EffectOnDepth],
         }
     }
 }
@@ -1481,6 +1489,9 @@ mod tests {
         assert_eq!(MobyBlend::pick(0, true, 0x30), MobyBlend::Fading);
         assert_eq!(MobyBlend::pick(8, false, 0x80), MobyBlend::Fading);
         assert_eq!(MobyBlend::pick(0x200, true, 0x80), MobyBlend::Additive);
+        assert_eq!(MobyBlend::pick(0x2010, false, 0x20), MobyBlend::DepthFirst);
+        assert_eq!(MobyBlend::pick(0x2200, false, 0x20), MobyBlend::Additive);
+        assert_eq!(MobyBlend::DepthFirst.passes(AlphaRange::OPAQUE, AlphaRange::OPAQUE), vec![GsPass::DepthOnly, GsPass::EffectOnDepth]);
         let o = AlphaRange::OPAQUE;
         assert_eq!(MobyBlend::Plain.passes(o, o), vec![GsPass::Opaque]);
         let a = gs_state::AREF_WORLD;
