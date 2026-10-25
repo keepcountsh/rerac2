@@ -382,6 +382,8 @@ pub trait MobyHost {
     fn set_anim(&mut self, _m: &Moby, _seq: u8, _frame: u8, _blend: u8) {}
     /// The camera's position (`0x1b8d40`).
     fn camera_pos(&self) -> V3 { [0.0; 3] }
+    /// The camera's matrix (`0x1b8f70`): rows forward, left, up.
+    fn camera_rows(&self) -> [V3; 3] { [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] }
     /// `+0x48`: the playback speed.
     fn set_anim_speed(&mut self, _m: &Moby, _speed: f32) {}
     /// `0x311880`: the moby's place in its sequence in the frames' time units (`+0x44` the blend between two keys of one
@@ -460,6 +462,8 @@ pub struct MobyWorld {
     pub nanotech: classes::nanotech::Globals,
     /// The Gravity Bomb's blast effect (classes::gravity_bomb).
     pub gravity_bomb: classes::gravity_bomb::Effect,
+    /// The frame's blob shadows (`0x1be840`, crate::shadows), asked for by the updates and drawn with crate::fx's quads.
+    pub shadows: crate::shadows::Shadows,
     /// The point lights (`0x1c6ec0`), owned by the explosion lights (classes::light); the engine lights the world and
     /// the mobys with them.
     pub point_lights: crate::point_lights::PointLights,
@@ -632,6 +636,7 @@ impl MobyWorld {
             self.load_pass(ctx);
         }
         self.draws.clear();
+        self.shadows.clear();
         for id in self.run_list(cam) {
             if self.mobys[id].state >= 0x80 { continue; }
             if self.mobys[id].mode & mode::NO_ADVANCE == 0 { ctx.host.advance(&self.mobys[id]); }

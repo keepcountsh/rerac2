@@ -167,11 +167,24 @@ pub struct Scenes {
     pub player: Option<Player>,
     /// The movie playing (mode 1).
     pub movie: Option<i32>,
+    /// The player plays one of the ship's scenes (mode 6's take-off or landing, `0x364260` subs 0 / 3: crate::travel):
+    /// the fade comes in by 0.125 a tick, any button past tick 12 with the fade in skips (the take-off to its last 30
+    /// ticks, the landing out over 5), and no letterbox.
+    pub space: Option<SpaceScene>,
+}
+
+/// The ship scene's part of the mode-6 frame (`0x364260`): which (0 the take-off, 3 the landing), and the landing's
+/// skip (`0x152c6c`: the tick it started at, −5 within the first 5 ticks; the fade then grows 0.2 a tick, and at 1 the
+/// scene ends).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpaceScene {
+    pub sub: i32,
+    pub skip_at: Option<i32>,
 }
 
 impl Default for Scenes {
     fn default() -> Self {
-        Scenes { queue: Queue::default(), mode: PLAY, pending: NONE, arg: (0, 0), stack: Vec::new(), zoom: 0.0, fade: 0.0, fade_in: 0.0, letterbox: false, bars: 0, player: None, movie: None }
+        Scenes { queue: Queue::default(), mode: PLAY, pending: NONE, arg: (0, 0), stack: Vec::new(), zoom: 0.0, fade: 0.0, fade_in: 0.0, letterbox: false, bars: 0, player: None, movie: None, space: None }
     }
 }
 
@@ -271,8 +284,9 @@ impl Scenes {
         self.fade = 1.0;
         self.zoom = 0.0;
         self.mode = SCENE;
-        self.letterbox = true;
-        self.bars = 0x34;
+        // A ship scene (`0x361d08`) has no letterbox.
+        self.letterbox = self.space.is_none();
+        self.bars = if self.space.is_none() { 0x34 } else { 0 };
         self.player = Some(Player { id, scene, tick: 0, chunk_tick: 0, chunk: 0, done: false, actors });
     }
 
@@ -293,17 +307,46 @@ impl Scenes {
         if p.done { return None; }
         p.tick += 1;
         p.chunk_tick += 1;
-        if p.tick < 0x12 { approach(0.0, 0.166_666_67, &mut self.fade); }
-        let mut skip = false;
-        if 0x11 < p.tick && self.fade == 0.0 {
-            let start = pad.pressed & button::START != 0;
-            skip = if (!beaten && 0 < level) || !start {
-                start && pad.held & 0xf == 0xf
-            } else {
-                true
-            };
-        }
         let end = p.end_tick();
+        let mut skip = false;
+        if let Some(sp) = self.space.as_mut() {
+            // `0x364260` subs 0 / 3: the fade in by 0.125; any button (`0x138324 & 0x9ff`) past tick 12 with the fade
+            // in, before the last 30 ticks, skips: the take-off jumps to its last 30 ticks (behind a 4-frame fade
+            // `0x2e7c90(4)`, the fade back at 1); the landing fades out over 5 ticks from where it was and ends.
+            // The flight between the planets (sub 2, `0x363360`): the fade in by 0.25, no skipping.
+            approach(0.0, if sp.sub == 2 { 0.25 } else { 0.125 }, &mut self.fade);
+            let any = pad.pressed & 0x9ff != 0 && sp.sub != 2;
+            if any && 0xc < p.tick && self.fade == 0.0 && p.tick < end - 0x1e {
+                if sp.sub == 0 {
+                    p.tick = end - 0x1e;
+                    let tpc = p.scene.ticks_per_chunk() as i32;
+                    p.chunk = ((p.tick / tpc) as usize).min(p.scene.chunks.len() - 1);
+                    p.chunk_tick = p.tick % tpc;
+                    self.fade = 1.0;
+                } else {
+                    sp.skip_at = Some(if p.tick < 5 { -5 } else { p.tick - 1 });
+                }
+            }
+            if sp.sub == 3 {
+                if let Some(at) = sp.skip_at {
+                    let from = if at == 0 { end - 6 } else { at };
+                    if from <= p.tick {
+                        self.fade = ((p.tick - from) as f32 * 0.2).min(1.0);
+                        if 1.0 < (p.tick - from) as f32 * 0.2 { p.tick = end; }
+                    }
+                }
+            }
+        } else {
+            if p.tick < 0x12 { approach(0.0, 0.166_666_67, &mut self.fade); }
+            if 0x11 < p.tick && self.fade == 0.0 {
+                let start = pad.pressed & button::START != 0;
+                skip = if (!beaten && 0 < level) || !start {
+                    start && pad.held & 0xf == 0xf
+                } else {
+                    true
+                };
+            }
+        }
         if skip {
             self.queue.skipped = true;
             self.queue.clear(seen);
@@ -348,6 +391,8 @@ impl Scenes {
         self.player = None;
         self.zoom = 0.0;
         (self.letterbox, self.bars) = (false, 0);
+        // A ship scene's end is the ship mode's (`0x364260`, crate::travel): the fade stays as it was, Ratchet too.
+        if self.space.take().is_some() { return; }
         // `0x2d9d68(6)`: back in from black over 6 ticks.
         self.fade = 1.0;
         self.fade_in = 1.0 / 6.0;

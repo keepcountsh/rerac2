@@ -87,6 +87,17 @@ pub struct ItemRecord {
     /// items have two, one a foot).
     pub attach: i32,
     pub classes: [i32; 2],
+    /// The vendor's fields (`0x3724c8`, `0x3747e8`): `+0x70` its price, `+0x78` its ammo's unit price (0: no ammo:
+    /// the same word as `uses_ammo`), `+0x82` the ammo it comes with, `+0x36` its description on the vendor's ticker
+    /// (text id), `+0x3c` the row it upgrades (0: a base row).
+    pub price: i32,
+    pub ammo_price: u16,
+    pub start_ammo: u16,
+    pub vendor_text: i16,
+    pub base: i16,
+    /// `+0x88` / `+0x8c` / `+0x90`: its weapon mods' prices in platinum bolts by slot (0: no such mod; the mod
+    /// vendor `0x373268`).
+    pub mods: [i32; 3],
 }
 
 /// A level's pause tables.
@@ -129,6 +140,12 @@ impl MenuTables {
                     pickup_text: [i16_at(b + 0x2a).unwrap_or(0), i16_at(b + 0x28).unwrap_or(0)],
                     attach: i32_at(b).unwrap_or(0),
                     classes: [i32_at(b + 4).unwrap_or(0), i32_at(b + 8).unwrap_or(0)],
+                    price: i32_at(b + 0x70).unwrap_or(0),
+                    ammo_price: i16_at(b + 0x78).unwrap_or(0) as u16,
+                    start_ammo: i16_at(b + 0x82).unwrap_or(0) as u16,
+                    vendor_text: i16_at(b + 0x36).unwrap_or(0),
+                    base: i16_at(b + 0x3c).unwrap_or(0),
+                    mods: [i32_at(b + 0x88).unwrap_or(0), i32_at(b + 0x8c).unwrap_or(0), i32_at(b + 0x90).unwrap_or(0)],
                 });
             }
         }

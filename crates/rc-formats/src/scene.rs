@@ -138,6 +138,22 @@ pub struct SceneChunk {
     pub(crate) subtitles: Vec<Subtitle>,
 }
 
+/// The chunks of a global scene lump (L00 `0x305690`: a table of `{s32 offset, s32 size}` pairs ended by a size of 0,
+/// at most 0x46 entries, the chunk data at `0x800 + offset`; each chunk a WAD in the chunk format above, decompressed
+/// into `0x1bcaac` by `0x305768` / `0x30f798`). The compressed slices, in order.
+pub fn lump_chunks(lump: &[u8]) -> Result<Vec<&[u8]>> {
+    let b = Buf(lump);
+    let mut out = Vec::new();
+    for i in 0..0x46 {
+        let (off, size) = (b.i32(8 * i)?, b.i32(8 * i + 4)?);
+        if size == 0 { break; }
+        if off < 0 || size < 0 { return invalid(format!("scene lump entry {i}: offset {off} size {size}")); }
+        out.push(b.sub(0x800 + off as usize, size as usize, "scene lump chunk")?.bytes());
+    }
+    if out.is_empty() { return invalid("scene lump: no chunks".to_string()); }
+    Ok(out)
+}
+
 /// Camera records of chunk `index` of a scene ending at `end_tick`: the chunk's ticks plus one.
 pub(crate) fn camera_records(end_tick: i32, index: usize, region: Region) -> Result<usize> {
     let tpc = region.ticks_per_chunk() as i32;
@@ -228,6 +244,18 @@ impl Scene {
         if chunks.iter().any(|c| c.header.end_tick as i32 != end) { return invalid(format!("scene {index}: chunks disagree on the end tick")); }
         if (end + tpc - 1) / tpc != chunks.len() as i32 { return invalid(format!("scene {index}: {} chunks for end tick {end}", chunks.len())); }
         Ok(Scene { index, region, chunks })
+    }
+
+    /// A global scene lump ([`lump_chunks`]: the ship's take-off and landing scenes of `SPACE.WAD`, L00 `0x305690` /
+    /// `0x305768`), every chunk decompressed (`0x30f798`) and parsed as a level scene's (`0x305428` reads the same
+    /// chunk layout); `index` is the lump's row.
+    pub(crate) fn from_lump(lump: &[u8], index: usize, region: Region) -> Result<Scene> {
+        let chunks = lump_chunks(lump)?
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| parse_scene_chunk(&crate::wad::decompress(c)?, i, region))
+            .collect::<Result<Vec<_>>>()?;
+        Scene::from_chunks(index, region, chunks)
     }
 
     pub fn end_tick(&self) -> i32 { self.chunks[0].header.end_tick as i32 }

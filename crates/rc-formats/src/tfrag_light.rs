@@ -54,6 +54,14 @@ impl Default for LightBank {
     fn default() -> Self { LightBank { sets: [DirLightSet::default(); BANK_SETS], count: 0 } }
 }
 
+impl LightBank {
+    /// Set `i` written by the game at run time (the vendor's light, set 14: `0x374038` → `0x1c6e40`): `[colour A,
+    /// direction A, colour B, direction B]` as the set's four quads.
+    pub fn set_dir_light(&mut self, i: usize, quads: [[f32; 4]; 4]) {
+        if let Some(s) = self.sets.get_mut(i) { *s = DirLightSet { color_a: quads[0], dir_a: quads[1], color_b: quads[2], dir_b: quads[3] }; }
+    }
+}
+
 /// Parses the directional lights from a decompressed gameplay file: `u32` at 0x04 is the
 /// section offset; the section is `s32 count`, 12 bytes padding, then `count` x [`DirLightSet`].
 pub fn parse_light_bank(gameplay: &[u8]) -> Result<LightBank> {

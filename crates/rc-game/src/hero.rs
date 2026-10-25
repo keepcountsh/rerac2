@@ -13,7 +13,7 @@
 //!
 //! The update (`0x2a6dd0`, mode 0, the parts ported): Ratchet's advance (`0x2d2888`), the input + physics + move
 //! step `0x2b37e8` ([`Hero::input_physics_move`]), the transitions `0x2cb650`, the write-back.
-//! Not ported yet: the water / surface check `0x2aca80`, the ledge grab `0x2ad000`, the swim, gadget, weapon,
+//! The water / surface check `0x2aca80` is [`surface`], the swim [`water`]. Not ported yet: the gadget, weapon,
 //! damage and HUD sub-steps of the update (`0x2ae140` … `0x2a97d8`).
 //!
 //! Field names are ours; each carries its L00 address.

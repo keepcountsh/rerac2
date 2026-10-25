@@ -39,7 +39,10 @@
 //! leash off unless `+0x24`, the yaw target at 60″ a tick). Moving or leaving turns it off (`+0x26`) until its
 //! reset (`0x42b9f0`, the arrival 0x1330's after the fly-by).
 //!
-//! Not ported: the classes 4 (first person: Ratchet's camera mode 4 / 0x51), 5, 6, 7 (no Swingshot on Aranos), the
+//! **The script camera** (class 5) is `crate::script_camera`: switched in by its callers, not the choice; its
+//! release hands back to the follow camera with a cut or with its pose carried over ([`Out::follow_pose`]).
+//!
+//! Not ported: the classes 4 (first person: Ratchet's camera mode 4 / 0x51), 6, 7 (no Swingshot on Aranos), the
 //! placed view's record angles (`+0x14` / `+0x18`, used when its pvars' are both 0: not on Aranos), 0x1b (its hook
 //! says no); the blends (`0x2d8ab0`,
 //! `0x2d9488`: none between Aranos's cameras); the fly-by's look at a moby (+0x28 with the offset +0x2c: none on
@@ -49,6 +52,7 @@ use crate::hero::physics::*;
 use crate::camera::FollowCamera;
 use crate::hero::Hero;
 use crate::level::LevelData;
+use crate::script_camera::{ScriptCamera, CLASS_SCRIPT};
 use crate::spline::{advance, Cursor};
 
 pub const CLASS_FOLLOW: i16 = 0;
@@ -118,6 +122,9 @@ pub struct Out {
     pub tan: Option<f32>,
     /// The follow camera is current again after a cut: it starts over behind Ratchet.
     pub follow_reset: bool,
+    /// The follow camera is current again with the old camera's pose carried over (`0x2d8168` with the release flag
+    /// 3 or 5: the slot entered 2, [`FollowCamera::from_pose`]).
+    pub follow_pose: Option<(V3, [V3; 3])>,
     /// Ratchet's `SetState(state, 1)`.
     pub hero_state: Option<i32>,
     /// `0x1b1868`: the letterbox up or down.
@@ -134,6 +141,11 @@ pub struct Cameras {
     pub rows: [V3; 3],
     /// `0x1bd2f0`: the view's tangent (0.62 in play).
     pub tan: f32,
+    /// The script camera (class 5, `crate::script_camera`).
+    pub script: ScriptCamera,
+    /// `0x1b8d40` / `0x1b8f70`: the view's position and rows as the last camera update left them (the follow
+    /// camera's when it is current).
+    pub last_view: (V3, [V3; 3]),
 }
 
 /// The level path `i` with each point's w its chord to the next (the last's to the first), and the length of the
@@ -349,22 +361,35 @@ impl Cameras {
         }
         if switched {
             let prev = self.current;
-            // `0x2d8168`: the old camera's flags cleared; the new one's init.
+            // `0x2d8168`: the old camera's release flag 3 / 5 carries its pose into the new slot (entered 2); its
+            // flags cleared; the new one's init.
+            let keep_pose = prev.is_some_and(|p| matches!(self.slots[p].release, 3 | 5));
             if let Some(p) = prev.and_then(|p| self.slots.get_mut(p)) {
                 p.release = 0;
                 p.entered = 0;
             }
             self.current = best;
-            let prev_view = if prev.is_some_and(|p| self.slots[p].class == CLASS_FLYBY) { (self.pos, self.rows) } else { follow };
+            let prev_view = match prev.map(|p| self.slots[p].class) {
+                Some(CLASS_FLYBY) => (self.pos, self.rows),
+                Some(CLASS_SCRIPT) => (self.script.pos, self.script.rows),
+                _ => follow,
+            };
             match self.current_class() {
                 CLASS_FLYBY => self.flyby_init(level, prev_view, &mut out),
+                CLASS_SCRIPT => self.script_init(),
+                _ if keep_pose => out.follow_pose = Some(prev_view),
                 _ => out.follow_reset = true,
             }
         }
-        if self.current_class() == CLASS_FLYBY {
-            self.flyby_update(level, fade, fade_in, &mut out);
-            out.view = Some((self.pos, self.rows));
+        match self.current_class() {
+            CLASS_FLYBY => {
+                self.flyby_update(level, fade, fade_in, &mut out);
+                out.view = Some((self.pos, self.rows));
+            }
+            CLASS_SCRIPT => self.script_update(hero, &mut out),
+            _ => {}
         }
+        self.last_view = out.view.unwrap_or(follow);
         out
     }
 

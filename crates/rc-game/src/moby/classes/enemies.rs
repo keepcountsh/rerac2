@@ -189,7 +189,7 @@ pub fn update_099c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 if h != -1 { ctx.host.stop_sound(h); }
                 w.mobys[id].set_pv_i(0x2a8, -1);
                 let at = w.mobys[id].pos;
-                crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.3, bursts: [0; 3], puffs: 0x14, streaks: 0x2d });
+                crate::moby::blast::burst(w, ctx, at, &crate::moby::blast::Blast { size: 0.3, bursts: [0; 3], puffs: 0x14, streaks: 0x2d, light: true, shake: false });
                 ctx.host.play_sound(&w.mobys[id], 0, 0);
                 crate::moby::bolts::drop(w, id, 0, 3, ctx);
                 w.delete(id);
@@ -354,7 +354,7 @@ fn die(w: &mut MobyWorld, id: usize, ctx: &mut Ctx, speeds: (f32, f32)) {
     let at = add(m.pos, scale(m.rows[2], 0.75));
     let knock = scale(m.pv_v(ai::react(m) + 0x80), 0.05);
     let mask = if m.o_class == 0x0b0a { 0x7f8 } else { 0x3f8 };
-    crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.5, bursts: [5; 3], puffs: 0, streaks: 0 });
+    crate::moby::blast::burst(w, ctx, at, &crate::moby::blast::Blast { size: 0.5, bursts: [5; 3], puffs: 0, streaks: 0, light: true, shake: false });
     crate::moby::shards::break_into(w, id, ctx, speeds, speeds, mask, knock, 0xff);
 }
 

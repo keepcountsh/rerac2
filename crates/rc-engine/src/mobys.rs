@@ -110,8 +110,9 @@ pub struct Host<'a> {
     pub hero_chains: &'a [Vec<u8>],
     /// The classes' joint lists ([`Mobys::chains`]; None: the queries find no joints).
     pub chains: Option<&'a Chains>,
-    /// The camera's position (`0x1b8d40`).
+    /// The camera's position (`0x1b8d40`) and its rows forward, left, up (`0x1b8f70`).
     pub camera: V3,
+    pub camera_rows: [V3; 3],
     /// The sound system the class sounds play into (crate::audio_out); None: no sound.
     pub sound: Option<HostSound<'a>>,
 }
@@ -199,6 +200,7 @@ fn rows_f(r: [[f32; 4]; 4]) -> ([V3; 3], V3) {
 
 impl MobyHost for Host<'_> {
     fn camera_pos(&self) -> V3 { self.camera }
+    fn camera_rows(&self) -> [V3; 3] { self.camera_rows }
 
     /// `0x313420` for a created moby (the placed ones advance in crate::moby_anim).
     /// `0x313420` (`MobyAnimAdvance`): the keys step; a tick that did not land a blend then plays the first trigger

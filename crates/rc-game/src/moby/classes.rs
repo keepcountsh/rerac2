@@ -7,6 +7,7 @@ pub mod chute;
 pub mod crate_;
 pub mod debris;
 pub mod enemies;
+pub mod flash;
 pub mod gate;
 pub mod gravity_bomb;
 pub mod lancer;
@@ -17,6 +18,7 @@ pub mod props;
 pub mod shot;
 pub mod spawn_point;
 pub mod tie_lights;
+pub mod vendor;
 pub mod wrench;
 
 use super::UpdateFn;
@@ -30,6 +32,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         gravity_bomb::BOMB_CLASS => Some(gravity_bomb::update_bomb),
         gravity_bomb::BLAST_CLASS => Some(gravity_bomb::update_blast),
         0xbfe => Some(shot::update),
+        flash::CLASS | flash::BOMB_CLASS => Some(flash::update),
         500 | 501 | 511 => Some(crate_::update),
         13..=19 => Some(bolt::update),
         0x12f5 => Some(props::update_12f5),
@@ -74,6 +77,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0c22 => Some(props::update_0c22),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),
+        crate::vendor::CLASS => Some(vendor::update),
         _ => None,
     }
 }

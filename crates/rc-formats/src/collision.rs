@@ -330,3 +330,60 @@ pub(crate) struct CollisionTriangle {
     pub(crate) part: u8,
 }
 const _: () = assert!(std::mem::size_of::<CollisionTriangle>() == 44);
+
+#[cfg(test)]
+mod water_inventory {
+    //! A dev inventory of the levels' liquid faces (the hero's water, G-HERO-001): per level, the count and bounds of
+    //! the surface-0 (water), 0xd (deep liquid), 3 (quicksand), 1 (lava) and 0xb (pit) faces, written to
+    //! `work/scratch/water_inventory.tsv` (skipped without the data folder).
+
+    #[test]
+    fn liquid_faces_per_level() {
+        use crate::disc::level::{LevelWad, Lump};
+        use std::fmt::Write as _;
+        let root = crate::test_data::root();
+        let mut out = String::from("level\tsurface\tfaces\tmin_x\tmin_y\tmin_z\tmax_x\tmax_y\tmax_z\n");
+        let mut any = false;
+        for level in 0..27u32 {
+            let Ok(file) = std::fs::read(root.join(format!("G/LEVEL{level}.WAD"))) else { continue };
+            any = true;
+            let w = LevelWad::parse(&file).unwrap();
+            let core_data = crate::wad::decompress(w.lump(Lump::CoreData).unwrap().unwrap()).unwrap();
+            let core = crate::level::parse_level_core(w.lump(Lump::CoreIndex).unwrap().unwrap(), core_data.len()).unwrap();
+            let coll = super::parse_collision(&core, &core_data).unwrap();
+            // The water particle types' def frames (crate::particles::water): offsets and first frames, and the
+            // texture each frame names.
+            if let Ok(pt) = crate::particle_tex::parse_particle_textures(&core, w.lump(Lump::CoreIndex).unwrap().unwrap(), &core_data) {
+                for ty in [0x22usize, 0x23, 0x2d, 0x2e, 0x2c, 0x3b] {
+                    let off = pt.defs.offsets.get(ty).copied();
+                    let frame = pt.defs.first_frame(ty);
+                    let tex = frame.and_then(|f| pt.entries.get(f as usize)).map(|e| format!("{e:?}"));
+                    writeln!(out, "# level {level} type {ty:#x}: def offset {off:?} first frame {frame:?} texture {tex:?}").unwrap();
+                }
+            }
+            for id in [0u8, 0xd, 3, 1, 0xb] {
+                let (mut n, mut lo, mut hi) = (0usize, [f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+                for cell in &coll.cells {
+                    let c = cell.centre();
+                    for face in &cell.faces {
+                        if face.surface & 0x1f != id { continue; }
+                        n += 1;
+                        for &vi in &face.v {
+                            let Some(pv) = cell.packed.get(vi as usize) else { continue };
+                            let p = pv.world(c);
+                            for k in 0..3 {
+                                lo[k] = lo[k].min(p[k]);
+                                hi[k] = hi[k].max(p[k]);
+                            }
+                        }
+                    }
+                }
+                if n == 0 { continue; }
+                writeln!(out, "{level}\t{id:#x}\t{n}\t{:.1}\t{:.1}\t{:.1}\t{:.1}\t{:.1}\t{:.1}", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]).unwrap();
+            }
+        }
+        if !any { return; }
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../work/scratch/water_inventory.tsv");
+        std::fs::write(path, out).unwrap();
+    }
+}

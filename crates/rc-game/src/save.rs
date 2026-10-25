@@ -157,6 +157,17 @@ mod at {
     pub const MISSIONS: u32 = 0x19b2e8;
     pub const UID_BITS: u32 = 0x19b4a8;
     pub const VISITED: u32 = 0x1a7bf0;
+    /// The vendor's stock (crate::vendor) and the challenge mode.
+    pub const STOCK: u32 = 0x1a7b70;
+    pub const CHALLENGE: u32 = 0x1a7a12;
+    /// The armour worn, the weapon mods on offer and bought (0x38 bytes each), the platinum bolts spent.
+    pub const ARMOR: u32 = 0x1a7a20;
+    pub const MODS_AVAILABLE: u32 = 0x1a7ac0;
+    pub const MODS_BOUGHT: u32 = 0x1a7a88;
+    pub const PLATINUM_SPENT: u32 = 0x139648;
+    /// The planets unlocked (`0x322730`), one byte per level (crate::travel).
+    pub const PLANETS: u32 = 0x1a7bd0;
+    pub const PLANETS_LEN: usize = 0x1c;
     /// Item ids of the bytes `GameState` also keeps as flags.
     pub const CLANK: usize = 2;
     pub const GRAVITY_BOOTS: usize = 0x13;
@@ -191,9 +202,16 @@ impl GameState {
         }
         for i in 0..at::AMMO_LEN { s.set_i32(G, at::AMMO + 4 * i as u32, self.ammo.get(i).copied().unwrap_or(0)); }
         for i in 0..at::QUICK_SELECT_LEN { s.set_i32(G, at::QUICK_SELECT + 4 * i as u32, self.quick_select.get(i).copied().unwrap_or(0)); }
+        for i in 0..at::PLANETS_LEN { s.set_u8(G, at::PLANETS + i as u32, self.planets.get(i).copied().unwrap_or(0)); }
         s.set_i32(G, at::HELD, self.held);
         for (i, &item) in self.ring.iter().enumerate() { s.set_i32(G, at::RING + 4 * i as u32, item); }
         s.set_i32(G, at::PLAY_TIME, self.play_time);
+        if let Some(b) = s.bytes_mut(G, at::STOCK, self.stock.len()) { b.copy_from_slice(&self.stock); }
+        s.set_u8(G, at::CHALLENGE, self.challenge as u8);
+        if let Some(b) = s.bytes_mut(G, at::ARMOR, 2) { b.copy_from_slice(&self.armor.to_le_bytes()); }
+        if let Some(b) = s.bytes_mut(G, at::MODS_AVAILABLE, 0x38) { b.copy_from_slice(&self.mods_available); }
+        if let Some(b) = s.bytes_mut(G, at::MODS_BOUGHT, 0x38) { b.copy_from_slice(&self.mods_bought); }
+        s.set_u8(G, at::PLATINUM_SPENT, self.platinum_spent);
         for (n, &seen) in self.scenes_seen.iter().enumerate() {
             let (w, bit) = scene_bit(n);
             let v = s.i32(G, w) as u32;
@@ -238,6 +256,9 @@ impl GameState {
         for i in 0..at::QUICK_SELECT_LEN {
             if let Some(q) = self.quick_select.get_mut(i) { *q = s.i32(G, at::QUICK_SELECT + 4 * i as u32); }
         }
+        for i in 0..at::PLANETS_LEN {
+            if let Some(p) = self.planets.get_mut(i) { *p = s.u8(G, at::PLANETS + i as u32); }
+        }
         self.held = s.i32(G, at::HELD);
         for (i, item) in self.ring.iter_mut().enumerate() { *item = s.i32(G, at::RING + 4 * i as u32); }
         // Port-only: the port's saves before the quick select left its slots empty; the items had get theirs.
@@ -247,6 +268,12 @@ impl GameState {
             }
         }
         self.play_time = s.i32(G, at::PLAY_TIME);
+        if let Some(b) = s.bytes(G, at::STOCK, self.stock.len()) { self.stock.copy_from_slice(b); }
+        self.challenge = s.u8(G, at::CHALLENGE) != 0;
+        if let Some(b) = s.bytes(G, at::ARMOR, 2) { self.armor = i16::from_le_bytes([b[0], b[1]]); }
+        if let Some(b) = s.bytes(G, at::MODS_AVAILABLE, 0x38) { self.mods_available.copy_from_slice(b); }
+        if let Some(b) = s.bytes(G, at::MODS_BOUGHT, 0x38) { self.mods_bought.copy_from_slice(b); }
+        self.platinum_spent = s.u8(G, at::PLATINUM_SPENT);
         for n in 0..self.scenes_seen.len() {
             let (w, bit) = scene_bit(n);
             self.scenes_seen[n] = s.i32(G, w) as u32 & bit != 0;

@@ -7,8 +7,11 @@
 //! `0x1a7b13`: `0x18a168` = 1), 3 quicksand, 4 a slide, 7 ice, 8 / 0xc mud (`0x18b2ba`), 0xb a pit, 0xd a deep
 //! liquid.
 //!
-//! Not ported: the liquid heights `0x18a150` / `0x18a154` come from the water probe (with the swim states), so 0x7c,
-//! 0x65 and the pit stay off until it is; the vehicle body's lava 0x7a (`0x18c0d4` = 1).
+//! The liquid heights `0x18a150` / `0x18a154` are the ground probe's (`0x2b4a08`, crate::hero::physics; the water's
+//! height query `0x31d7a0` in crate::hero::water's docs). Nothing is done with the hero's updates off (`0x18c0dd`).
+//!
+//! Not ported: the vehicle body's lava 0x7a (`0x18c0d4` = 1), the lava death's variants with no health (0x7d on level
+//! 2 with `0x1a9010`, 0x79 unless Ratchet's pvar `+0x1f0` is 0: 0x39 here).
 
 use super::physics::*;
 use super::Hero;
@@ -53,6 +56,7 @@ impl Hero {
         let (water_z, sand_z) = (self.surf.water_z, self.surf.sand_z);
         self.surf = SurfaceBlock { water_z, sand_z, ..Default::default() };
         let id = self.surface;
+        if self.no_update { return false; }
         let on = self.grounded_ticks != 0 || (self.state == 0x7b && self.height < 0.4);
         if id == -1 { return false; }
         let s = &mut self.surf;
@@ -93,7 +97,8 @@ impl Hero {
         {
             next = Some(if self.hp != 0 { 0x65 } else { 0x78 });
         } else if s.pit && !matches!(self.state, 0x78 | 0x74) && (s.sand_z - (self.pos[2] + 0.25)).abs() < 1.0 && 0.0 < s.sand_z - self.pos[2] && (self.disp[2] < 0.0 || self.state == 0x7b) {
-            next = Some(0x78);
+            // Level 0xd's pits are the fall out of the level.
+            next = Some(if env.level == 0xd { 0x74 } else { 0x78 });
         }
         match next {
             Some(n) => self.set_state(anim, env, n, true),

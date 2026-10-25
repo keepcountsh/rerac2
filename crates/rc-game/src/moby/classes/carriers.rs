@@ -132,7 +132,7 @@ pub fn update_09c7(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
                 let limit = ctx.game.rng.rand_range(3, 5);
                 crate::moby::bolts::spawn(w, t, 0.0, 0x1e, 0x32, 2, limit, ctx);
                 let at = w.mobys[t].pos;
-                crate::moby::blast::burst(ctx, at, &crate::moby::blast::Blast { size: 0.85, bursts: [0x19, 0x14, 0x14], puffs: 0x14, streaks: 0x2d });
+                crate::moby::blast::burst(w, ctx, at, &crate::moby::blast::Blast { size: 0.85, bursts: [0x19, 0x14, 0x14], puffs: 0x14, streaks: 0x2d, light: true, shake: false });
                 let tie = w.mobys[id].pv_i(0x10);
                 if let Some(g) = usize::try_from(tie).ok().and_then(|g| w.tie_groups.get(g)).cloned() {
                     for i in g {

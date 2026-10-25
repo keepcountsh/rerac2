@@ -22,6 +22,7 @@ pub mod gui_sprite;
 pub mod item_picture;
 pub mod level;
 pub mod menu_tables;
+pub mod planet_picture;
 pub mod save_game;
 pub mod scene;
 pub mod space;

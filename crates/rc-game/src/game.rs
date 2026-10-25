@@ -92,9 +92,16 @@ pub struct GameState {
     pub no_item_area: bool,
     /// `0x1c92c0`: the level's variant (the scenes and the level code set it; 0 on a load).
     pub variant: i32,
-    /// `0x1a7b00`: the items had (one byte each); `0x139948`: the list `0x322730` keeps (28 slots, 0 free).
+    /// `0x1a7b00`: the items had (one byte each); `0x139948`: the planets in the order they were unlocked (the list
+    /// `0x322730` keeps: 28 slots, 0 free; the ship's galaxy map lists them so, crate::travel).
     pub items: Vec<u8>,
     pub quick_select: Vec<i32>,
+    /// `0x1a7bd0`: the planets unlocked (one byte per level, `0x322730`); `0x1a7c09`: the Wupash Nebula fight done
+    /// (until it is, a trip to Maktar goes to level 0x19 first: `0x34fe48`).
+    pub planets: Vec<u8>,
+    pub wupash_done: bool,
+    /// The ship and the planet travel (crate::travel).
+    pub travel: crate::travel::Travel,
     /// `0x1a73b8`: the quick select's eight slots (their items, 0 empty; crate::quick_select).
     pub ring: [i32; 8],
     /// `0x139688 + 4·item`: the ammo (items whose row has ammo, crate::hero::items::ItemRow).
@@ -129,6 +136,30 @@ pub struct GameState {
     pub next_level: Option<i32>,
     /// The request's `save`: the autosave `0x30d658(0, level)` before the level ends.
     pub next_level_save: bool,
+    /// `0x1a7b70`: the vendor's stock (crate::vendor: 32 slots, 0xff free, the item | 0x40 when owned as it went
+    /// in); `0x1a7a12`: the challenge mode; `0x1a7a28`: the R&C1 save's weapons found (bits 0..4), for Barlow's
+    /// Gadgetron vendor.
+    pub stock: [u8; crate::vendor::STOCK_SLOTS],
+    pub challenge: bool,
+    pub rac1_weapons: u32,
+    /// A vendor moby's request for game mode 5 (`0x32c5f0(5, 1, vendor)`, crate::moby::classes::vendor), taken by
+    /// the engine after the moby tick; the vendors' globals `gp−0x100` (the glow phase) and `gp−0x108` / `gp−0x104`
+    /// (the hologram's manipulator angles).
+    pub vendor_open: Option<usize>,
+    pub vendor_phase: [f32; 3],
+    /// The action prompt's lease (crate::prompt).
+    pub prompt: crate::prompt::Prompt,
+    /// `0x1a7a20`: the armour worn (0 the Commando Suit, 1..4 Tetrafiber to Carbonox: the ARMOR.WAD row); `0x139645`:
+    /// the armours this planet's vendor offers (bit = the level; the levels' code sets it, not ported); `0x1a7ac0` /
+    /// `0x1a7a88`: per item, the weapon mods on offer (bit = the slot) and bought (bits 2·slot, 2·slot + 1);
+    /// `0x139648`: the platinum bolts spent on mods; the platinum bolts found (`0x327c68`, at most 40: the engine
+    /// reads them from the save's per-level bytes). crate::vendor.
+    pub armor: i16,
+    pub armor_offer: u8,
+    pub mods_available: [u8; 0x38],
+    pub mods_bought: [u8; 0x38],
+    pub platinum_spent: u8,
+    pub platinum_found: i32,
 }
 
 /// `0x2621e0`: the health levels, the XP / 32 to the next (each gives one health), −1 ends.
@@ -144,7 +175,9 @@ impl Default for GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, pickup_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
             clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), shakes: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, play_time: 0, visited: vec![0; 0x1c],
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], planets: vec![0; 0x1c], wupash_done: false, travel: Default::default(), ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, play_time: 0, visited: vec![0; 0x1c],
+            stock: [0xff; crate::vendor::STOCK_SLOTS], challenge: false, rac1_weapons: 0, vendor_open: None, vendor_phase: [0.0; 3], prompt: Default::default(),
+            armor: 0, armor_offer: 0, mods_available: [0; 0x38], mods_bought: [0; 0x38], platinum_spent: 0, platinum_found: 0,
         }
     }
 }
@@ -196,6 +229,10 @@ impl GameState {
             help_counts: old.help_counts,
             items: old.items,
             quick_select: old.quick_select,
+            planets: old.planets,
+            wupash_done: old.wupash_done,
+            // The ship mode's trip state goes with the game (`0x152c2c`: the landing on arrival).
+            travel: crate::travel::Travel::carried(old.travel),
             ring: old.ring,
             ammo: old.ammo,
             held: old.held,
@@ -203,6 +240,14 @@ impl GameState {
             scenes_seen: old.scenes_seen,
             play_time: old.play_time,
             visited: old.visited,
+            stock: old.stock,
+            challenge: old.challenge,
+            rac1_weapons: old.rac1_weapons,
+            armor: old.armor,
+            mods_available: old.mods_available,
+            mods_bought: old.mods_bought,
+            platinum_spent: old.platinum_spent,
+            platinum_found: old.platinum_found,
             ..Default::default()
         };
         // The level start (`0x2a3b88`): visited.
@@ -210,6 +255,9 @@ impl GameState {
             if *v == 0 { *v = 1; }
         }
         self.start_items();
+        // `0x2fcf60`'s tail: the stock's slots no planet sells dropped (`0x2fceb8`); the planet's weapons come with
+        // the level's item records (`0x2fd028`, crate::vendor::GameState::stock_for_level, the engine's load).
+        self.stock_clean();
     }
 
     /// `0x2fcf60` (every level start, `0x2fcd40`): the items a game starts with, when not had yet — the Lancer (the
@@ -225,8 +273,8 @@ impl GameState {
         if let Some(b) = self.items.get_mut(0x2f) { *b = 1; }
     }
 
-    /// `0x2f46e0(item)`: the item had, with its row's starting ammo when it has none, and a slot of the quick select
-    /// for it (`0x2f45e0`).
+    /// `0x2f46e0(item)`: the item had, with its row's starting ammo when it has none, into the vendor's stock as
+    /// owned (`0x2f47c0`, crate::vendor), and a slot of the quick select for it (`0x2f45e0`).
     pub fn get_item(&mut self, item: i32) {
         let Some(have) = self.items.get_mut(item.max(0) as usize) else { return };
         if *have != 0 { return; }
@@ -234,6 +282,7 @@ impl GameState {
         if let (Some(r), Some(a)) = (crate::hero::items::row(item), self.ammo.get_mut(item.max(0) as usize)) {
             if r.ammo && *a == 0 { *a = r.start_ammo; }
         }
+        self.stock_add_raw(item);
         self.ring_add(item);
     }
 
@@ -245,15 +294,15 @@ impl GameState {
         if let Some(s) = self.ring.iter_mut().find(|s| **s == 0) { *s = item; }
     }
 
-    /// `0x322730(item)`: the item had; a weapon or gadget (below 0x15, or 0x18) goes in the first free
-    /// quick-select slot.
-    pub fn give_item(&mut self, item: i32) {
-        let Some(have) = self.items.get_mut(item.max(0) as usize) else { return };
+    /// `0x322730(planet)`: planet `planet` unlocked (`0x1a7bd0`); a planet of the galaxy map (below 0x15, or 0x18)
+    /// goes after the ones unlocked before in the list `0x139948` (the map's order).
+    pub fn unlock_planet(&mut self, planet: i32) {
+        let Some(have) = self.planets.get_mut(planet.max(0) as usize) else { return };
         if *have != 0 { return; }
         *have = 1;
-        if item < 0x15 || item == 0x18 {
+        if planet < 0x15 || planet == 0x18 {
             let n = self.quick_select.iter().filter(|&&q| q != 0).count();
-            if let Some(q) = self.quick_select.get_mut(n) { *q = item; }
+            if let Some(q) = self.quick_select.get_mut(n) { *q = planet; }
         }
     }
 

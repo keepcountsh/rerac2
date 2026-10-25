@@ -176,7 +176,7 @@ impl Plugin for SkyRenderPlugin {
             .add_systems(crate::level_switch::LevelStartup, spawn_sky)
             .add_systems(crate::level_switch::LevelPostStartup, main_camera_loads)
             .add_systems(crate::level_switch::LevelUnload, crate::level_switch::remove::<SkyAnim>)
-            .add_systems(Update, (animate_shells, stop_clearing))
+            .add_systems(Update, (spawn_flight_sky, animate_shells.after(spawn_flight_sky), stop_clearing))
             .add_systems(PostUpdate, follow_main_camera.before(TransformSystems::Propagate));
     }
 }
@@ -345,12 +345,56 @@ fn stop_clearing(anim: Option<Res<SkyAnim>>, mut cams: Query<&mut Camera, With<S
     for mut cam in &mut cams { cam.clear_color = ClearColorConfig::None; }
 }
 
-/// SkyM per shell from the game's rotations.
-fn animate_shells(game: Option<Res<GameSkyRotations>>, mut shells: Query<(&SkyShellEntity, &mut Transform)>) {
+/// The flight between the planets' sky (rc_game::travel: the flight lump's, `0x365b10` → `0x2fe7d0`), drawn in place
+/// of the level's shells while it flies (`0x35e038`); inserted by crate::play at the flight's start and removed at the
+/// level switch (which spawns the next level's sky).
+#[derive(Resource)]
+pub struct FlightSky(pub LevelSky);
+
+/// The flight sky's shells' pose (`0x35e038`: SkyM = the shell's Euler angles with the variant's turn, then the drift
+/// translation `0x1b23b0`), by shell, in game units; inserted every tick of the flight.
+#[derive(Resource, Default)]
+pub struct FlightSkyPose(pub Vec<(Quat, [f32; 3])>);
+
+/// The flight sky's shells in place of the level's (once, when [`FlightSky`] appears).
+fn spawn_flight_sky(
+    mut commands: Commands,
+    flight: Option<Res<FlightSky>>,
+    shells: Query<Entity, With<SkyShellEntity>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<SkyMaterial>>,
+    mut spawned: Local<bool>,
+) {
+    let Some(f) = flight else {
+        *spawned = false;
+        return;
+    };
+    if *spawned { return; }
+    *spawned = true;
+    for e in &shells { commands.entity(e).despawn(); }
+    let s = spawn_shells(&mut commands, &f.0, RenderLayers::layer(SKY_LAYER), &mut meshes, &mut images, &mut materials, |e, si| {
+        e.insert((Transform::IDENTITY, SkyShellEntity { shell: si }));
+    });
+    println!("sky: the flight's: {} shells, {} draws, {} triangles, {} textures", f.0.sky.shells.len(), s.order, s.triangles, f.0.textures.len());
+}
+
+/// SkyM per shell from the game's rotations (the flight's pose while it flies).
+fn animate_shells(game: Option<Res<GameSkyRotations>>, flight: Option<Res<FlightSkyPose>>, mut shells: Query<(&SkyShellEntity, &mut Transform)>) {
+    if let Some(f) = flight {
+        for (s, mut t) in &mut shells {
+            let (r, p) = f.0.get(s.shell).copied().unwrap_or((Quat::IDENTITY, [0.0; 3]));
+            let p = game_to_bevy(p);
+            if t.rotation != r { t.rotation = r; }
+            if t.translation != p { t.translation = p; }
+        }
+        return;
+    }
     let Some(g) = game else { return };
     for (s, mut t) in &mut shells {
         let r = g.0.get(s.shell).copied().unwrap_or(Quat::IDENTITY);
         if t.rotation != r { t.rotation = r; }
+        if t.translation != Vec3::ZERO { t.translation = Vec3::ZERO; }
     }
 }
 
