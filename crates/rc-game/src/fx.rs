@@ -48,6 +48,21 @@ fn unit(v: V3) -> V3 {
     if 0.0 < l { scale(v, 1.0 / l) } else { v }
 }
 
+/// `0x2edf78(size, push, roll, point, fx, rgba, additive)`: a sprite facing the camera, `push` toward it: its rows the
+/// way to the camera, that across gravity (`0x18a0e0`, down) and the third, turned by `roll` about the first; the
+/// template `0x1aa310` (±1 square) × `size`.
+#[allow(clippy::too_many_arguments)]
+pub fn sprite(out: &mut Vec<FxQuad>, size: f32, push: f32, roll: f32, point: V3, cam: V3, fx: usize, rgba: u32, additive: bool) {
+    let d = unit(sub(cam, point));
+    let c = unit(cross(d, [0.0, 0.0, -1.0]));
+    let b = unit(cross(c, d));
+    let (s, co) = roll.sin_cos();
+    let (c, b) = (add(scale(c, co), scale(b, s)), sub(scale(b, co), scale(c, s)));
+    let p = add(point, scale(d, push));
+    let corner = |y: f32, z: f32| add(p, add(scale(c, y * size), scale(b, z * size)));
+    out.push(FxQuad { fx, additive, corners: [corner(-1.0, 1.0), corner(-1.0, -1.0), corner(1.0, 1.0), corner(1.0, -1.0)], st: [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]], rgba: [rgba; 4] });
+}
+
 /// `0x3d86a0(size, m, point, rgb, alpha, alpha2)`: a soft glow (FX 0xb, additive) at `point` pulled 0.5 toward the
 /// camera, facing it with a random roll (`0x31bb00`): the template's ±2 square × `size` in `rgb` at `alpha`, then half
 /// of it at `alpha2`.

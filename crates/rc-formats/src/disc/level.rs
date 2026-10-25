@@ -7,9 +7,11 @@
 use crate::buf::{invalid, Buf, Result};
 use std::ops::Range;
 
-/// The level header's parts (`{s32 sector, s32 sectors}` from +0x10, sectors from the file's start).
+/// The level header's parts (`{s32 sector, s32 sectors}` from +0x10, sectors from the file's start). A level in
+/// chunks (Oozla) has each chunk's data at +0x30 + 8k (`0x150808`, the chunk switch `0x2f9bd8`) and its sound bank at
+/// +0x48 + 8k (`0x150820`): chunk k's bank is bank handle k + 1 (`0x32e4a0` / `0x323ca0`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Part { Data = 0, CoreBank = 1, Gameplay = 2, Occlusion = 3 }
+pub enum Part { Data = 0, CoreBank = 1, Gameplay = 2, Occlusion = 3, ChunkBank0 = 7, ChunkBank1 = 8, ChunkBank2 = 9 }
 
 /// The flight's arrival pictures of a planet ([`LevelWad::planet_pictures`]): the planet seen from space (the quad
 /// the ship flies toward) and its name as a picture per language (English first).

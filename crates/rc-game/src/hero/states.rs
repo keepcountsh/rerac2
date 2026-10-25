@@ -174,11 +174,7 @@ impl Hero {
         if self.melee_trigger(env, anim) { return; }
         if self.charge_trigger(env, anim) { return; }
         if self.water_checks(env, anim) { return; }
-        // △ (`0x2f79d8`, the quick select, is the menu's): the health and bolt counters show.
-        if env.pad.pressed & crate::pad::button::TRIANGLE != 0 && self.no_menu == 0 && self.items.no_use == 0 {
-            self.show_health = Some(0x168);
-            self.show_bolts = Some(0xb4);
-        }
+        // △ (the quick select and the health and bolt counters) is the engine's (its gates are the game's).
         if self.fall_out_check(env, anim) { return; }
         let next = match module_of(self.state) {
             Module::Ground => self.trans_ground(env, anim),

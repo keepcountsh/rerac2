@@ -208,6 +208,12 @@ impl Snd989 {
         }
     }
 
+    /// `snd_StopAllSounds`: [`Self::stop_sound`] on every handler.
+    pub(crate) fn stop_all(&mut self, spu: &mut Spu) {
+        let keys: Vec<u32> = self.handlers.keys().copied().collect();
+        for k in keys { self.stop_sound(spu, k as i32); }
+    }
+
     /// `snd_SetSoundParams(handle, mask, vol, pan, pm, pb)`: mask 1 volume, 2/4 pan, 8 pitch mod, 0x10 pitch
     /// bend (the EE's mask bits; the IOP's decoding of 4 vs 2 is inferred). Returns the handle or 0.
     #[allow(clippy::too_many_arguments)]

@@ -333,6 +333,34 @@ fn gadget_sounds(root: &Path, index: u32, bank: &mut rc_formats::sound_bank::Ban
     if let Err(e) = run(bank, sounds) { eprintln!("audio: the gadgets' sounds not read ({e:#})"); }
 }
 
+/// The chunk banks (rc_formats::disc::level::Part::ChunkBank0): the level start loads chunk 0's as bank 1 (`0x304420`
+/// stage 4 → `0x32e4a0(0)`); banks 2 and 3 come only with the chunk switch `0x2f9bd8` (not ported), so their defs
+/// play nothing, as the original's with the bank not loaded (`0x35f3c0`). Bank 1 is appended to the level's and its
+/// defs point past the level's sounds (as the gadgets').
+fn chunk_sounds(wad: &LevelWad, bank: &mut rc_formats::sound_bank::Bank, sounds: &mut rc_formats::sound_bank::LevelSounds) {
+    let loaded = || -> Result<Option<rc_formats::sound_bank::Bank>> {
+        let Some(part) = wad.part_bytes(Part::ChunkBank0)? else { return Ok(None) };
+        let raw = if rc_formats::wad::is_wad(part) { rc_formats::wad::decompress(part)? } else { part.to_vec() };
+        Ok(Some(rc_formats::sound_bank::parse_bank(&raw)?))
+    };
+    let base = match loaded() {
+        Ok(b) => b.map(|b| bank.append(&b)),
+        Err(e) => {
+            eprintln!("audio: the chunk's sound bank not read ({e:#})");
+            None
+        }
+    };
+    for c in &mut sounds.classes {
+        for d in &mut c.defs {
+            d.index = match (d.bank_handle, base) {
+                (1, Some(b)) if d.index != 0xffff => b + d.index,
+                (1..=3, _) => 0xffff,
+                _ => continue,
+            };
+        }
+    }
+}
+
 /// The level's sound data for crate::audio_out (rc_game::audio, the 989snd bank R&C1's reader parses as it is): the
 /// level's core sound bank (the file's part 1), the sound definitions (level and class, `0x304660`'s remap) and the
 /// music ([`music`]) and the sound instances. Not yet: the env sample points. None with `RC_AUDIO=0` or when the
@@ -345,6 +373,7 @@ fn audio(root: &Path, index: u32, wad: &LevelWad, core_index: &[u8], core: &leve
         let mut bank = rc_formats::sound_bank::parse_bank(&bank)?;
         let mut sounds = rc_formats::sound_bank::parse_level_sounds(core_index, core, core_data)?;
         gadget_sounds(root, index, &mut bank, &mut sounds);
+        chunk_sounds(wad, &mut bank, &mut sounds);
         let bank = std::sync::Arc::new(bank);
         let music = music(root, index).unwrap_or_else(|e| {
             eprintln!("audio: the level's music not read ({e:#})");

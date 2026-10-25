@@ -321,7 +321,8 @@ pub struct SoundDef {
     pub flags: u8,
     /// 0x1a: on disc an index into the remap's map; after load the **bank sound id** (0xffff = none).
     pub index: u16,
-    /// 0x1c: bank handle, written by the loader (the port has one level bank; 0 on disc).
+    /// 0x1c: bank handle, written by the loader (0 on disc): the play takes the bank `0x189e00[handle]` and plays
+    /// nothing when that bank is not loaded. The port appends the loaded banks to the level's and moves `index`.
     pub bank_handle: u32,
 }
 const _: () = assert!(std::mem::size_of::<SoundDef>() == 0x20);
@@ -387,7 +388,13 @@ pub fn parse_level_sounds(core_index: &[u8], core: &LevelCore, core_data: &[u8])
             // The loader writes entry[j] into def j for every j < header count, walking past the class's remap
             // list when the header count is larger (level 10 class 1229: 12 defs, 6 ids; it picks up the next
             // class's ids). Same here.
-            for (j, d) in defs.iter_mut().enumerate() { d.index = idx.u16(rel(off)? + 4 * (j + skip))?; }
+            // Each def's bank handle is the list's first word + 1 (0x304660): 0 the level's bank, 1..3 a chunk's
+            // (Part::ChunkBank0..), 4 the hand gadget's.
+            let handle = (idx.i32(rel(off)?)? + 1) as u32;
+            for (j, d) in defs.iter_mut().enumerate() {
+                d.index = idx.u16(rel(off)? + 4 * (j + skip))?;
+                d.bank_handle = handle;
+            }
             (defs, Some(n))
         } else {
             (Vec::new(), None)

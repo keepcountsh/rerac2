@@ -315,6 +315,15 @@ impl MobyHost for Host<'_> {
         Some(rows_f(moby_anim::attach_matrix(p, &rows, m.pos, m.scale)))
     }
 
+    fn bone_matrix(&self, m: &Moby, j: u8) -> Option<([V3; 3], V3)> {
+        let (class, state, snap) = self.state_of(m)?;
+        let ac: &MobyAnimClass = self.lv.anim.get(class)?;
+        let p = moby_anim::evaluate_chains(ac, &state, snap.as_ref(), &[&[j]]);
+        let p = p.first()?;
+        let rows = m.rows.map(|r| [r[0].to_bits(), r[1].to_bits(), r[2].to_bits(), 0]);
+        Some(rows_f(moby_anim::attach_matrix(p, &rows, m.pos, m.scale)))
+    }
+
     /// `0x2aa1f0` / `0x3128f0`: the pose of Ratchet's joint list `HERO_LISTS[k]` turned into the world.
     fn hero_attach(&self, k: usize) -> Option<([V3; 3], V3)> {
         let h = self.hero?;

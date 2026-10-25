@@ -712,6 +712,23 @@ impl AudioSystem {
         *self = fresh;
     }
 
+    /// 989snd's bank load for a bank beside the level's (`snd_BankLoadFromEE`: the flight's five, `0x365aa0`): the
+    /// port has one bank, so it is appended to the level's (the sound RAM with it; the sounds playing keep their
+    /// samples where they are). Returns the number its sound 0 takes.
+    pub fn load_bank(&mut self, other: &Bank) -> u16 {
+        let bank = Arc::make_mut(&mut self.data.bank);
+        let base = bank.append(other);
+        self.spu.ram = Arc::from(bank.samples.as_slice());
+        base
+    }
+
+    /// `snd_PlaySoundVolPanPMPB(bank, sound, vol, 0, 0, 0)` straight from the EE, outside the sound slots (the
+    /// flight's `0x132a10`); `sound` as [`Self::load_bank`] numbers it. The handle, 0 when nothing plays.
+    pub fn play_sound(&mut self, sound: u16, vol: i32) -> u32 { self.snd.play_sound(&self.data.bank, &mut self.spu, sound, vol, 0, 0, 0) }
+
+    /// `snd_StopAllSounds` (the flight's variant end, `0x132ac8`).
+    pub fn stop_all_sounds(&mut self) { self.snd.stop_all(&mut self.spu); }
+
     /// The level start's `music_start_track(0x151708 = 0, 1, 0x400)`: `entry` 0x259c40 makes it before its main loop,
     /// so before any class update. The port's sound step comes after the moby loop, so a class's first-tick
     /// `MusicRequestTrack` (Orxon's Clank section, class 22: `(2, 4)`) makes it first ([`class_sounds`]): the request

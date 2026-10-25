@@ -398,6 +398,9 @@ pub trait MobyHost {
     fn frame_time(&self, _m: &Moby) -> f32 { 0.0 }
     /// `0x312728(m, j)`: joint `j`'s frame in the world (rows, translation).
     fn joint_matrix(&self, _m: &Moby, _j: usize) -> Option<([V3; 3], V3)> { None }
+    /// Joint `j` itself (not a joint list) posed (its keys blended, as `0x362640` reads the root's from `+0x58` /
+    /// `+0x5c`), turned into the world as [`Self::joint_matrix`].
+    fn bone_matrix(&self, _m: &Moby, _j: u8) -> Option<([V3; 3], V3)> { None }
     /// The position of joint `j` of moby `m` in the world (`0x3127c8`: the posed joint's translation · scale / 1024,
     /// turned by the rows, plus the position).
     fn joint(&self, _m: &Moby, _j: usize) -> Option<V3> { None }

@@ -108,6 +108,15 @@ impl Transition {
         Ok((sky, textures))
     }
 
+    /// Variant `v`'s sound bank (`0x365b10` → `0x365aa0`: the bank file at `base + [0x19 + v]`, its handle into
+    /// `0x1b2410[v]`): the variant plays its sound 0 (`0x363360`).
+    pub fn sound_bank(&self, v: usize) -> Result<crate::sound_bank::Bank> {
+        if v >= FLIGHT_VARIANTS { return crate::buf::invalid(format!("flight variant {v}")); }
+        let at = self.word(1)? + self.word(0x19 + v)?;
+        let b = Buf(&self.raw).sub(at, self.raw.len() - at.min(self.raw.len()), "flight sound bank")?;
+        crate::sound_bank::parse_bank(b.bytes())
+    }
+
     /// Variant `v`'s scene (`0x365960`: its chunk table at `base + [0x14 + v]`).
     pub fn variant(&self, v: usize) -> Result<crate::scene::Scene> {
         if v >= FLIGHT_VARIANTS { return crate::buf::invalid(format!("flight variant {v}")); }

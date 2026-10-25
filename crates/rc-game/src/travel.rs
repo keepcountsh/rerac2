@@ -64,8 +64,11 @@
 //! **The "new planet" banner** ([`new_planet_banner`], `0x325270`). **The ship's shadow** ([`ShipShadow`],
 //! `0x361af8`).
 //!
-//! Not ported: the fly-away's exhaust and trail particles (`0x363f78` / `0x364108`: the particle spawner `0x3327e8`
-//! has no port yet) and Ratchet's seated sequence, the speech streams, the music pause, the selection's glow
+//! The flight's draw (`0x363ba0`) gives the ship its exhaust and smoke (crate::exhaust); each variant plays its own
+//! sound bank's sound 0 (the engine's flight).
+//!
+//! Not ported: the fly-away's exhaust (its callback `0x362ac8`, crate::exhaust, is not hooked to the fly-away) and
+//! trail particles (`0x363f78` / `0x364108`: the particle spawner `0x3327e8` has no port yet) and Ratchet's seated sequence, the speech streams, the music pause, the selection's glow
 //! (`0x2e9ae0`), the planet page's window sprites' keyframes, the missions list's scroll to the selected row
 //! (`+0xa4`), the fly-away's running world (the moby loop goes on under it in the original; here the game stands
 //! still), the HUD prompt's fade. The ship's shadow's alpha from the view's sphere test (`0x2f0178`'s distance fade)
