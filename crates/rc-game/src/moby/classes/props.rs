@@ -1424,8 +1424,17 @@ pub fn update_stub(w: &mut MobyWorld, id: usize, _ctx: &mut Ctx) {
     }
 }
 
-/// `0x29fc20[level]`: the scene lists of the level's scene triggers (0x0f6e's `+0x68`[8]); level 0's.
-const SCENES_L0: [&[i32]; 4] = [&[0x21], &[0x23], &[0x22], &[0x16]];
+/// `0x29fc20[level]` (Oozla's copy `0x2a1820`, read live): the scene lists of the level's scene triggers (0x0f6e's
+/// `+0x68`[8]; scenes 0x20.., movies below), Aranos's, Oozla's (the store's: a scene, the TV's movie 2, a scene; then
+/// Maktar's coordinates) and Maktar's.
+fn scene_lists(level: i32) -> &'static [&'static [i32]] {
+    match level {
+        0 => &[&[0x21], &[0x23], &[0x22], &[0x16]],
+        1 => &[&[0x29, 0x02, 0x2a]],
+        2 => &[&[0x2b], &[0x2c]],
+        _ => &[],
+    }
+}
 
 /// 0x0f6e's reward (`0x40ffa0`, states 3 and 4): the planet [9] unlocked (`0x322730`, `GameState::unlock_planet`;
 /// its "new planet" banner `0x325270` (`crate::travel::new_planet_banner`, not for 0x18)), the
@@ -1491,7 +1500,7 @@ pub fn update_0f6e(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             if vol != -1 && !ctx.level.in_cuboid(vol, ctx.hero.pos) { return; }
             if ctx.hero.state == 0x1c || g.scenes.mode != crate::scene::PLAY { return; }
             let force = m.pv_b(0xd) != 0;
-            let list = if g.level == 0 { SCENES_L0.get(m.pv_b(8) as usize).copied().unwrap_or(&[]) } else { &[] };
+            let list = scene_lists(g.level).get(m.pv_b(8) as usize).copied().unwrap_or(&[]);
             let mut played = false;
             for (i, &sc) in list.iter().enumerate() {
                 if force || !g.scenes_seen.get(sc as usize).copied().unwrap_or(true) {
