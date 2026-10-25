@@ -57,8 +57,15 @@ pub struct GameState {
     /// XP of the health level reached and of the next.
     pub nanotech: [bool; 10],
     pub level_xp: [i32; 2],
+    /// The boss health bar (`0x2f20b8(fraction, …)`: `$gp−0x5f2c` the fraction, `$gp−0x5f28` 5 ticks left, refreshed each
+    /// tick of a fight; the bar's draw `0x2f2158` is not ported).
+    pub boss_bar: Option<(f32, i32)>,
     /// `0x1b1a68`: the death height (the level's setting; objects change it).
     pub death_z: Option<f32>,
+    /// Oozla's water (L01 `$gp+0xdec` / `$gp+0xde8`, kept by its class 0x0a17): the level of the water and the
+    /// height the floating objects read (`0x3bc3b8`: the level and a 0.1 wave; 0 until the class runs).
+    pub water_base: f32,
+    pub water_z: f32,
     /// `0x19b2e8 + level·0x10`: the missions' progress, two bits per sub-mission (`mission + level·0x10`, bits
     /// `2·(sub & 3)`); `0x18c0e6`: the mission whose area Ratchet is in.
     pub missions: Vec<u8>,
@@ -84,7 +91,7 @@ pub struct GameState {
     /// The message boxes' requests this tick (crate::msgbox).
     pub messages: Vec<crate::msgbox::Request>,
     /// The help panel (`0x27d7c8` its state, 0 none; `0x27d7ec` / `0x27d7f0` the text asked for and its slot) and
-    /// the slots' counts (`0x18c958 + 0xc·slot`: the times △ dismissed it; −1 off).
+    /// the slots' counts (`0x18c958 + 0xc·slot`: the times △ dismissed it; −1 off; the space fights' up to 0x92).
     pub help_state: i32,
     pub help_req: Option<(i32, i32)>,
     pub help_counts: Vec<i16>,
@@ -96,10 +103,8 @@ pub struct GameState {
     /// `0x322730` keeps: 28 slots, 0 free; the ship's galaxy map lists them so, crate::travel).
     pub items: Vec<u8>,
     pub quick_select: Vec<i32>,
-    /// `0x1a7bd0`: the planets unlocked (one byte per level, `0x322730`); `0x1a7c09`: the Wupash Nebula fight done
-    /// (until it is, a trip to Maktar goes to level 0x19 first: `0x34fe48`).
+    /// `0x1a7bd0`: the planets unlocked (one byte per level, `0x322730`).
     pub planets: Vec<u8>,
-    pub wupash_done: bool,
     /// The ship and the planet travel (crate::travel).
     pub travel: crate::travel::Travel,
     /// `0x1a73b8`: the quick select's eight slots (their items, 0 empty; crate::quick_select).
@@ -136,6 +141,11 @@ pub struct GameState {
     pub next_level: Option<i32>,
     /// The request's `save`: the autosave `0x30d658(0, level)` before the level ends.
     pub next_level_save: bool,
+    /// `0x1a7a04`: the space fights' bolt pickups (the first one's help asked).
+    pub bolt_help_done: bool,
+    /// `0x1a7a04` itself and its panel's ticks left (`0x40f3e0`, the ship's `+0x30`).
+    pub space_bolts: i32,
+    pub space_bolts_shown: i32,
     /// `0x1a7b70`: the vendor's stock (crate::vendor: 32 slots, 0xff free, the item | 0x40 when owned as it went
     /// in); `0x1a7a12`: the challenge mode; `0x1a7a28`: the R&C1 save's weapons found (bits 0..4), for Barlow's
     /// Gadgetron vendor.
@@ -174,8 +184,8 @@ impl Default for GameState {
         GameState {
             bolts: 0, raritanium: 0, max_health: 4, level: 0, occlusion: 0, crate_sound_frame: -100, pickup_sound_frame: -100, bolt_bank: 0, xp_bank: 0, xp: 0, uid_bits: vec![0; 0x400],
             show_bolts: None, show_health: None, rng: Default::default(), recent_breaks: 0, last_break_frame: -1000, frame: 0,
-            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), shakes: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
-            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x40], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], planets: vec![0; 0x1c], wupash_done: false, travel: Default::default(), ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, play_time: 0, visited: vec![0; 0x1c],
+            clank: false, thruster: false, boots: false, charge_boots: false, grind_boots: false, nanotech: [false; 10], level_xp: [0; 2], death_z: None, boss_bar: None, water_base: 0.0, water_z: 0.0, missions: vec![0; 0x200], mission_area: 0, cam_tweaks: Default::default(), shakes: Default::default(), uid_pending: vec![0; 0x800], uid_dead: vec![0; 0x800], mission_table: vec![0; 0x100],
+            mission_xp: vec![0; 0x30], mission_bolts: vec![0; 0x30], checkpoint: None, checkpoint_bits: Vec::new(), last_checkpoint: None, messages: Vec::new(), help_state: 0, help_req: None, help_counts: vec![0; 0x100], no_item_area: false, variant: 0, items: vec![0; 0x40], quick_select: vec![0; 28], planets: vec![0; 0x1c], travel: Default::default(), ring: [0; 8], ammo: vec![0; 0x50], held: 0, wrench_out: false, trail_phase: 0.0, view_far: 1024.0, sky: Default::default(), markers: Vec::new(), scenes_seen: vec![false; 0x100], scenes: Default::default(), cameras: Default::default(), ship_parts: Vec::new(), area_ask: Vec::new(), area_hero: Vec::new(), next_level: None, next_level_save: false, bolt_help_done: false, space_bolts: 0, space_bolts_shown: 0, play_time: 0, visited: vec![0; 0x1c],
             stock: [0xff; crate::vendor::STOCK_SLOTS], challenge: false, rac1_weapons: 0, vendor_open: None, vendor_phase: [0.0; 3], prompt: Default::default(),
             armor: 0, armor_offer: 0, mods_available: [0; 0x38], mods_bought: [0; 0x38], platinum_spent: 0, platinum_found: 0,
         }
@@ -230,7 +240,6 @@ impl GameState {
             items: old.items,
             quick_select: old.quick_select,
             planets: old.planets,
-            wupash_done: old.wupash_done,
             // The ship mode's trip state goes with the game (`0x152c2c`: the landing on arrival).
             travel: crate::travel::Travel::carried(old.travel),
             ring: old.ring,

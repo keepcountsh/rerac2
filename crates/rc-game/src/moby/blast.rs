@@ -67,8 +67,7 @@ pub fn burst(w: &mut MobyWorld, ctx: &mut Ctx, at: V3, b: &Blast) {
     let s = b.size;
     // `0x3f8348`: in view (`0x2f0080(128, (at, 3·s))`) within 48 of the camera (`0x2ef018`), the shake when asked.
     if b.shake && !ctx.view.is_some_and(|v| v.culled(128.0, [at[0], at[1], at[2], s * 3.0])) && dist(at, cam) < 48.0 {
-        let sh = &mut ctx.game.shakes.0[0];
-        (sh.amp, sh.timer, sh.max) = (0.075, 0x28, 0);
+        ctx.game.shakes.ask(0, 0.075, 0x28);
     }
     let yaw = atan2(cam[0] - at[0], cam[1] - at[1]);
     // The 0x13a0 moby's rows (`0x3f8348`): toward the camera, then across and up.

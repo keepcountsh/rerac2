@@ -1,29 +1,44 @@
 //! The class updates the port has, by o_class: the level's update table (L00 `0x2a2e80`, records `{o_class,
 //! update, 0x2a3978}` up to o_class −1, written to the slot table `0x1da240` by `0x32e1f8`) as Rust ports.
 
+pub mod area_switch;
+pub mod beast;
 pub mod bolt;
 pub mod carriers;
 pub mod chute;
 pub mod crate_;
+pub mod dynamo;
+pub mod flower;
+pub mod flyer;
 pub mod debris;
 pub mod enemies;
 pub mod flash;
 pub mod gate;
 pub mod gravity_bomb;
 pub mod lancer;
+pub mod leaper;
+pub mod oozla;
 pub mod light;
 pub mod nanotech;
 pub mod pickup;
 pub mod props;
+pub mod space;
+pub mod spitter;
 pub mod shot;
 pub mod spawn_point;
 pub mod tie_lights;
+pub mod maktar;
+pub mod tractor;
 pub mod vendor;
 pub mod wrench;
 
 use super::UpdateFn;
 
 /// The port of `o_class`'s update (`None`: not ported, the moby gets mode 2 like a class without one).
+/// The ported classes without a model that are only created at run time (the space fights' laser), added to every
+/// level's class table as the overlay's table holds them.
+pub const CREATED_LOGIC: &[i16] = &[crate::ship::LASER_CLASS];
+
 pub fn update_for(o_class: i16) -> Option<UpdateFn> {
     match o_class {
         0x47 => Some(wrench::update),
@@ -67,7 +82,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0ac8 => Some(props::update_0ac8),
         0x0d1e => Some(props::update_0d1e),
         0x12f9 => Some(props::update_12f9),
-        0x12fa | 0x1143 => Some(props::update_breakable),
+        0x12fa | 0x1143 | 0x0e93 => Some(props::update_breakable),
         0x132d => Some(props::update_132d),
         0x0919 => Some(props::update_0919),
         0x0c8c => Some(props::update_0c8c),
@@ -75,6 +90,46 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x02a7 => Some(chute::update),
         0x0ac7 => Some(gate::update),
         0x0c22 => Some(props::update_0c22),
+        0x0102 => Some(area_switch::update),
+        0x08fb => Some(oozla::update_08fb),
+        0x0f14 => Some(oozla::update_0f14),
+        0x0a6a | 0x0a6b | 0x0aa0 | 0x0aa1 => Some(oozla::update_mover),
+        0x0c58 => Some(oozla::update_0c58),
+        0x0ca0 => Some(oozla::update_0ca0),
+        0x046f => Some(oozla::update_046f),
+        0x0a17 => Some(oozla::update_0a17),
+        0x0a92 | 0x0a93 => Some(oozla::update_float),
+        0x09a2 => Some(leaper::update),
+        0x0b2b => Some(spitter::update),
+        0x0a49 => Some(flyer::update),
+        0x09fc => Some(beast::update),
+        0x0a53 => Some(oozla::update_0a53),
+        0x0a56 => Some(oozla::update_0a56),
+        0x0a8d => Some(flower::update_arm),
+        0x0a8e => Some(flower::update_core),
+        0x0b1a => Some(flower::update_0b1a),
+        0x0cb5 => Some(oozla::update_0cb5),
+        0x0936 | 0x08fa | 0x0a00 => Some(oozla::update_dynamo_platform),
+        0x0aae => Some(oozla::update_0aae),
+        0x0a1e => Some(oozla::update_0a1e),
+        0x0a9d | 0x0aa7 => Some(oozla::update_gate),
+        0x0a9e | 0x0a9f => Some(oozla::update_sent),
+        0x0a95 => Some(oozla::update_0a95),
+        0x0ace => Some(oozla::update_0ace),
+        0x0a7b => Some(oozla::update_0a7b),
+        0x0825 => Some(dynamo::update),
+        0x00bc => Some(tractor::update),
+        0x0acb | 0x0acc => Some(tractor::update_box),
+        0x0afc => Some(maktar::update_0afc),
+        0x0aaf => Some(maktar::update_0aaf),
+        0x0873 => Some(maktar::update_0873),
+        crate::ship::LASER_CLASS => Some(crate::ship::update_laser),
+        space::FIGHTER | space::GUNSHIP => Some(space::update_fighter),
+        crate::ship::MISSION_CLASS => Some(crate::ship::update_mission),
+        space::FIELD => Some(space::update_field),
+        0x0953..=0x0956 | 0x0971 => Some(space::update_asteroid),
+        crate::ship::MISSILE_CLASS => Some(crate::ship::update_missile),
+        space::SHIELD_PICKUP | space::BOLT_PICKUP => Some(space::update_pickup),
         pickup::CLASS => Some(pickup::update),
         nanotech::CLASS => Some(nanotech::update),
         crate::vendor::CLASS => Some(vendor::update),

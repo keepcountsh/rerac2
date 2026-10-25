@@ -78,6 +78,8 @@ pub struct Header {
 pub struct Slot {
     pub class: i16,
     pub pos: V3,
+    /// The record's angles (`+0x10`).
+    pub rot: V3,
     pub header: Header,
     /// The record's pvar block (the fly-by keeps its state words in it).
     pub rec: Vec<u8>,
@@ -175,19 +177,22 @@ fn rows_about(fwd: V3, up: V3) -> [V3; 3] {
 
 impl Cameras {
     /// `0x2da248`: the slots from the records (`(class, position, pvar block)`), the follow camera current.
-    pub fn load(records: Vec<(i16, V3, Vec<u8>)>) -> Cameras {
+    pub fn load(records: Vec<(i16, V3, V3, Vec<u8>)>) -> Cameras {
         let slots: Vec<Slot> = records
             .into_iter()
-            .map(|(class, pos, rec)| {
+            .map(|(class, pos, rot, rec)| {
                 let w = |o: usize| rec.get(o..o + 4).map_or(-1, |b| i32::from_le_bytes(b.try_into().unwrap()));
                 let b = |o: usize| rec.get(o).copied().unwrap_or(0);
                 let header = Header { sphere: w(8), cuboid: w(0xc), cylinder: w(0x10), path: w(0x14), priority: b(0x1c), blend: b(0x1d), kind: b(0x1f) };
-                Slot { class, pos, header, rec, entered: 0, release: 0 }
+                Slot { class, pos, rot, header, rec, entered: 0, release: 0 }
             })
             .collect();
         let current = slots.iter().position(|s| s.class == CLASS_FOLLOW);
         Cameras { slots, current, tan: 0.62, ..Default::default() }
     }
+
+    /// The current camera's place, angles and pvar word `o` (the ship's camera: `+0x20` its ship moby).
+    pub fn current_record(&self, o: usize) -> Option<(V3, V3, i32)> { self.current.and_then(|i| self.slots.get(i)).map(|s| (s.pos, s.rot, s.i(o))) }
 
     /// The current camera's class (the follow camera without records).
     pub fn current_class(&self) -> i16 { self.current.and_then(|i| self.slots.get(i)).map_or(CLASS_FOLLOW, |s| s.class) }
@@ -323,6 +328,9 @@ impl Cameras {
             }
             // `0x42c030`: never.
             0x1b => -1,
+            // `0x438608`: the ship's camera while its fight is not done (`0x221884`, the save byte's 0x80: neither
+            // kept yet).
+            crate::ship::CLASS => 1,
             _ => 0,
         }
     }
@@ -376,6 +384,9 @@ impl Cameras {
             };
             match self.current_class() {
                 CLASS_FLYBY => self.flyby_init(level, prev_view, &mut out),
+                // `0x438608`'s `SetState(0x31, 1)`: Ratchet hidden; the flight's init is the engine's
+                // (crate::ship::Flight::new).
+                crate::ship::CLASS => out.hero_state = Some(0x31),
                 CLASS_SCRIPT => self.script_init(),
                 _ if keep_pose => out.follow_pose = Some(prev_view),
                 _ => out.follow_reset = true,

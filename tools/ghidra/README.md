@@ -6,7 +6,7 @@ Dev only, never ships. Workflow: `docs/workflows/ghidra.md`.
 
 | Path | What it is |
 |---|---|
-| `scripts/ghidra_http.py` | GET/POST client for the GhidraMCP plugin's HTTP API (`127.0.0.1:8089`, Ghidra GUI open) |
+| `scripts/ghidra_http.py` | GET/POST client for the GhidraMCP plugin's HTTP API (`127.0.0.1:8089`, or `GHIDRA_MCP_URL`; Ghidra GUI open) |
 | `scripts/overlay_to_elf.py [--disc extracted] [--out-dir work/ghidra-import]` | Reads `G/LEVELn.WAD` for all 27 levels, wraps each level overlay (Ratchet executable format) as an ELF with the seven donor section names, writes `levelNN.elf` and `levelNN.overlay.bin`, and copies the boot ELF. `--overlay X.bin --out X.elf` converts one overlay. |
 | `scripts/import_levels.py [NN ...]` | Imports `work/ghidra-import/SCUS_972.68` and `levelNN.elf` (00–26) into the open `ratchet2` project, waits for analysis, saves. No names (no Lombyte for this game): Version Tracking against R&C1's project instead (docs/plan/porting_from_rac1.md). |
 | `scripts/export_decomp.py <program>` | Decompiled C of every function to `work/decomp/<program>/` (+ `index.tsv`) |

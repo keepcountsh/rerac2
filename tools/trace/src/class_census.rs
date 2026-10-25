@@ -671,6 +671,12 @@ fn census(g: &Layout, inputs: Vec<(u32, LevelIn)>, repo: &Path, work: &Path, out
         );
     }
     crate::write_output(&out.join("shared.tsv"), t)?;
+    // sites.tsv (every level copy of a shared function and its key: which L00 function an address on another level is)
+    let mut t = String::from("level\taddress\tkey\n");
+    for (k, s, _, _) in &srow {
+        for (l, a) in &s.sites { t += &format!("{l:02}\t{a:08x}\t{k}\n"); }
+    }
+    crate::write_output(&out.join("sites.tsv"), t)?;
     // globals.tsv (boot globals the unported units' own code forms, by the instances of those units)
     let mut grow: Vec<(&String, Vec<usize>, bool)> = globals
         .iter()

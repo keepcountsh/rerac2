@@ -40,7 +40,8 @@ pub(crate) const SECTIONS: [(&str, &str); HEADER_WORDS] = [
     ("moby_classes", "content"),
     ("moby_instances", "content"),
     ("moby_groups", "order"),
-    ("shared_data", "order"),
+    // The mobys' shared words ([`shared_data`]; confirmed on Oozla by the live pointers of class 0x09a2).
+    ("shared_data", "content"),
     ("pvar_moby_links", "order"),
     ("pvar_table", "content"),
     ("pvar_data", "order"),
@@ -219,6 +220,31 @@ pub fn pvar_fixups(gameplay: &[u8], name: &str) -> Result<Vec<(usize, usize)>> {
         p += 8;
     }
     Ok(out)
+}
+
+/// The shared words and their pvar pointers `(pvar index, pvar offset, data offset)` ([`shared_data`]).
+pub type SharedData = (Vec<u8>, Vec<(usize, usize, usize)>);
+
+/// The mobys' shared words (section 21): `s32 bytes, s32 count, pad[2]`, the data (`bytes`, zero on the levels seen),
+/// then `count` pairs `{(pvar offset << 16) | pvar index, data offset}`: the loader points that pvar word at that
+/// place of the data, so the mobys listed with one offset share the words there (Oozla's 0x09a2 creatures: a 0x10
+/// block per group, their `+0x33c` / `+0x368` / `+0x36c` / `+0x370` at its words 0..3; live, the block sits after the
+/// pvar data). Returns the data and `(pvar index, pvar offset, data offset)`.
+pub fn shared_data(gameplay: &[u8]) -> Result<SharedData> {
+    let Some(s) = section(gameplay, "shared_data")? else { return Ok((Vec::new(), Vec::new())) };
+    let b = Buf(s);
+    let (bytes, count) = (b.i32(0)?, b.i32(4)?);
+    if bytes < 0 || count < 0 || 0x10 + bytes as usize + 8 * count as usize > s.len() {
+        return invalid(format!("shared data: {bytes:#x} bytes, {count} pairs past the section"));
+    }
+    let data = s[0x10..0x10 + bytes as usize].to_vec();
+    let mut pairs = Vec::with_capacity(count as usize);
+    for k in 0..count as usize {
+        let p = 0x10 + bytes as usize + 8 * k;
+        let (key, off) = (b.i32(p)? as u32, b.i32(p + 4)?);
+        pairs.push(((key & 0xffff) as usize, (key >> 16) as usize, off.max(0) as usize));
+    }
+    Ok((data, pairs))
 }
 
 /// The moby groups (section 20): `s32 count, s32 bytes, pad[2]`, then `count` offsets (−1 none) into the lists after

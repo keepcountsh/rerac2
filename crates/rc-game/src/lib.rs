@@ -33,6 +33,7 @@ pub mod rng;
 pub mod save;
 pub mod scene;
 pub mod scene_camera;
+pub mod ship;
 pub mod script_camera;
 pub mod shadows;
 pub mod sky;

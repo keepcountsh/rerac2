@@ -371,8 +371,7 @@ pub fn update_blast(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         burst(w, ctx, id, at);
         // The camera shake (up and down, 0.45 over 40 ticks) when it is in view within 100.
         if !ctx.view.is_some_and(|v| v.culled(100.0, [at[0], at[1], at[2] + 1.0, 2.0])) {
-            let s = &mut ctx.game.shakes.0[0];
-            (s.amp, s.timer, s.max) = (0.45, 0x28, 0);
+            ctx.game.shakes.ask(0, 0.45, 0x28);
         }
     }
     effect_tick(w, id);

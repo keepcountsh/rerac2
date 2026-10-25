@@ -1,8 +1,9 @@
 # Moved from decomp/scripts/ in the reorg (2026-09-27); unchanged. Used by every script here.
-"""Tiny client for the GhidraMCP plugin's HTTP server (default 127.0.0.1:8089)."""
-import json, urllib.request, urllib.parse
+"""Tiny client for the GhidraMCP plugin's HTTP server (default 127.0.0.1:8089; GHIDRA_MCP_URL overrides it, as for
+the plugin's MCP bridge, when the plugin's Server Port option is set elsewhere)."""
+import json, os, urllib.request, urllib.parse
 
-BASE = "http://127.0.0.1:8089"
+BASE = os.environ.get("GHIDRA_MCP_URL", "http://127.0.0.1:8089").rstrip("/")
 
 def get(endpoint, **params):
     url = f"{BASE}/{endpoint}"

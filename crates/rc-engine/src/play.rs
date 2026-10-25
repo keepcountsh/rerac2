@@ -135,17 +135,9 @@ fn quick_select_frame(qs: &mut rc_game::quick_select::QuickSelect, paused: &mut 
     qs.ring_tick(&slots);
 }
 
-/// `0x18c0e8`: the hand item asked for when it is not the one held (0: none, 0x77). Only the items the hero can hold
-/// (rc_game::hero::items::ROWS).
+/// `0x3227d8`: the hand item asked for (rc_game::hero::items::ItemBlock::ask).
 pub(crate) fn equip(held: i32, hero: &mut Hero, item: i32) {
-    let item = if item == 0 { 0x77 } else { item };
-    if item == held {
-        hero.items.request = 0;
-    } else if item == 0x77 || rc_game::hero::items::row(item).is_some() {
-        hero.items.request = item;
-    } else {
-        eprintln!("play: item {item:#x} cannot be held yet");
-    }
+    if !hero.items.ask(held, item) { eprintln!("play: item {item:#x} cannot be held yet"); }
 }
 
 /// The game state a level change keeps (`GameState::enter_level` keeps its game-wide part), for the next level's
@@ -174,6 +166,8 @@ pub(crate) struct Play {
     scale: f32,
     pub(crate) pad: PadState,
     pub(crate) camera: FollowCamera,
+    /// The space fights' flight while the ship's camera is current (rc_game::ship).
+    ship: Option<rc_game::ship::Flight>,
     /// The level's mobys (crate::mobys).
     pub(crate) mobys: Option<crate::mobys::Mobys>,
     /// The game-wide state (bolts, health limit).
@@ -361,7 +355,7 @@ fn tick(
         let pvars = g2::pvar_blocks(&lv.gameplay).unwrap_or_default();
         let records = g2::cameras(&lv.gameplay).map_err(|e| eprintln!("play: cameras: {e}")).unwrap_or_default();
         p.game.cameras = rc_game::cameras::Cameras::load(
-            records.iter().map(|r| (r.class as i16, r.pos, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
+            records.iter().map(|r| (r.class as i16, r.pos, r.rot, usize::try_from(r.pvar_index).ok().and_then(|i| pvars.get(i)).cloned().unwrap_or_default())).collect(),
         );
         // `entry`'s landing on arrival (rc_game::travel): after a trip by the ship, the landing scene at the start.
         if fresh { travel_arrival(p, lv); }
@@ -594,7 +588,7 @@ fn tick(
                 let a = m.instance.and_then(|ii| occl.as_ref()?.anim_index(ii)).and_then(|k| anim.as_ref()?.instances.get(k)).map(|i| i.state);
                 let a = a.map_or(String::new(), |s| format!(" seq {}/{} f {}/{} t {:.2} speed {:.2} rate {:.3} flags {}", s.seq_a, s.seq_b, s.frame_a, s.frame_b, s.t, s.speed, s.rate, s.flags));
                 let pv: Vec<String> = std::env::var("RC_MOBY_PV").unwrap_or_default().split(',').filter_map(|x| usize::from_str_radix(x.trim(), 16).ok()).map(|o| format!("+{o:#x}={}", m.pv_i(o))).collect();
-                println!("moby trace tick {}: #{} class {:#06x} state {} sub {} mode {:#x} upd {} drawn {} group {} pos ({:.1}, {:.1}, {:.1}) hero at {:.1}{a} {}", p.ticks, m.index, m.o_class, m.state, m.sub_state, m.mode, m.update_dist, m.drawn, m.group, m.pos[0], m.pos[1], m.pos[2], d, pv.join(" "));
+                println!("moby trace tick {}: #{} class {:#06x} state {} sub {} mode {:#x} upd {} drawn {} group {} pvars #{} pos ({:.1}, {:.1}, {:.1}) hero at {:.1}{a} {}", p.ticks, m.index, m.o_class, m.state, m.sub_state, m.mode, m.update_dist, m.drawn, m.group, m.pvar_index, m.pos[0], m.pos[1], m.pos[2], d, pv.join(" "));
             }
         }
     }
@@ -776,7 +770,58 @@ fn tick(
     // current one's update (`0x2d8618`: the fly-bys).
     p.game.scenes.fade_step();
     let g = &mut p.game;
-    let cam = g.cameras.tick(&p.hero, &mobys.level, (p.camera.pos, p.camera.rows), &mut g.scenes.fade, &mut g.scenes.fade_in);
+    let mut cam = g.cameras.tick(&p.hero, &mobys.level, (p.camera.pos, p.camera.rows), &mut g.scenes.fade, &mut g.scenes.fade_in);
+    // The ship's camera (class 0x19, rc_game::ship): its update flies the ship and is the view.
+    if p.game.cameras.current_class() == rc_game::ship::CLASS {
+        if p.ship.is_none() {
+            if let Some((pos, rot, idx)) = p.game.cameras.current_record(0x20) {
+                let ms = &mobys.world.mobys;
+                let ship = ms.iter().position(|m| m.index as i32 == idx && m.o_class == rc_game::ship::SHIP_CLASS).or_else(|| ms.iter().position(|m| m.o_class == rc_game::ship::SHIP_CLASS && m.state < 0x80));
+                let mut f = rc_game::ship::Flight::new(pos, rot, ship);
+                // The fight's sphere (the mission object 0x0eee's `+0x68`[0]).
+                let sphere = ms.iter().find(|m| m.o_class == rc_game::ship::MISSION_CLASS).map(|m| m.pv_i(0));
+                f.arena = sphere.and_then(|i| usize::try_from(i).ok()).and_then(|i| mobys.level.spheres.get(i)).map(|v| {
+                    let m = &v.matrix;
+                    ([m[3][0], m[3][1], m[3][2]], (m[0][0] * m[0][0] + m[0][1] * m[0][1] + m[0][2] * m[0][2]).sqrt())
+                });
+                p.ship = Some(f);
+            }
+        }
+        let heard = listener(&p.camera);
+        if let Some(f) = p.ship.as_mut() {
+            let sound = audio.as_deref_mut().map(|o| crate::mobys::HostSound { system: o.system(), listener: heard, tick: p.ticks, loops: &mut mobys.loop_slots });
+            let mut host = crate::mobys::Host { lv: &lv.mobys, occl: occl.as_deref(), anim: anim.as_deref_mut(), created: &mut mobys.created, hero: None, hero_chains: &[], chains: Some(&mobys.chains), camera: f.pos, camera_rows: f.rows, sound };
+            let scene = crate::mobys::scene_of(&mobys.snap, &mobys.coll, &mobys.cache);
+            f.tick(&p.pad, &mut mobys.world, &mut host, Some(coll), scene.as_ref());
+            // `0x307d80`: the mission's help texts.
+            if let Some((text, slot)) = f.help.take() {
+                let shown = p.game.help(text, slot);
+                if text == 0xa16 && (shown || p.game.help_state != 0) { f.opening_shown = true; }
+            }
+            // The shakes asked (`0x1b91a0`) shake this view with the others' (`0x2d9f38`, below).
+            cam.view = Some((f.pos, f.rows));
+            // The ship's flame (its draw callback `0x411c78`) on the ship as this tick left it, its shield's bubble and the
+            // dust streaming past; the bolts' panel's ticks.
+            if let Some(s) = f.ship { rc_game::ship::draw_flame(&mobys.world, s, f.pos, &mut p.game.rng, &mut p.fx_quads); }
+            f.draw_shield(&mobys.world, f.pos, &mut p.fx_quads);
+            f.draw_dust(&mobys.world, f.pos, &mut p.game.rng, &mut p.fx_quads);
+            f.draw_scrape(f.pos, &mut p.game.rng, &mut p.fx_quads);
+            if 0 < p.game.space_bolts_shown { p.game.space_bolts_shown -= 1; }
+            // `0x2c63f0`: the ship's death starts the fight again; `0x307bf0(2, 1)`: the fight won, Maktar Nebula.
+            if f.restart && p.game.next_level.is_none() { p.game.go_to_level(p.game.level, false); }
+            if f.done && p.game.next_level.is_none() {
+                // `0x1a7c09` = 1 (Wupash's byte of `0x1a7bf0`): the galactic map's way to Maktar (`0x33c0c0`) no longer
+                // goes through the fight.
+                if let Some(v) = p.game.visited.get_mut(25) { *v = 1; }
+                p.game.go_to_level(2, true);
+            }
+            p.game.scenes.fade = f.fade;
+            // The mobys' distances, the sounds and the draw callbacks go by this camera next tick.
+            (p.camera.pos, p.camera.rows) = (f.pos, f.rows);
+        }
+    } else {
+        p.ship = None;
+    }
     if let Some(st) = cam.hero_state { p.hero.request_state(st, true); }
     if let Some(on) = cam.letterbox { p.game.scenes.letterbox = on; }
     if cam.follow_reset { p.camera = FollowCamera::new(&cam_input(&p.hero, Some(coll), [0.0; 2])); }
@@ -795,6 +840,8 @@ fn tick(
     let it = &p.hero.items;
     let weapon = rc_game::hero::items::row(it.item).filter(|r| r.ammo && it.ready == 2 && p.hero.mode == 0).map(|r| (r.icon, p.game.ammo.get(it.item.max(0) as usize).copied().unwrap_or(0), r.max_ammo));
     p.hud.tick(p.hero.hp, p.game.max_health, sb, sh, weapon);
+    // The boss bar's own update (`0x2f2458`): its ticks left counted down, gone at 0.
+    p.game.boss_bar = p.game.boss_bar.and_then(|(f, t)| (1 < t).then_some((f, t - 1)));
     // The message boxes (`0x4451e8`'s part, after the panel).
     if let Some(g) = p.glyphs.as_deref() { p.boxes.tick(&mut p.game.messages, &p.texts, g); }
     // The help panel (`0x2f5680`).
@@ -1691,6 +1738,8 @@ fn draw_hud(
                 // The grids' own icons (the plain cells, `0xea85`, item 7's `0xea9a`).
                 // The ship's pages (rc_game::travel): the galaxy map's picture and its planet dots, the planet page's icon.
                 let menu = menu.chain(tables.grids.iter().flatten().filter(|c| c.icon != 0).map(|c| (c.icon, c.frame))).chain([(0xea9a, 0), (0xe99a, 10), (0xe99e, 0), (0xe99e, 1), (0xe99e, 2), (0xeaa2, 0), (0xe99d, 1)]);
+                // The space fights' HUD icons (rc_game::ship::HUD_ICONS).
+                let menu = menu.chain((0..16).map(|f| (rc_game::ship::HUD_ICONS, f)));
                 for (id, f) in menu {
                     if !h.has_icon(id) || icons.contains_key(&(id, f)) { continue; }
                     if let Ok(t) = h.decode_frame_raw(h.icon_frame(id, f as i32)) {
@@ -1701,11 +1750,17 @@ fn draw_hud(
             }
             Err(e) => eprintln!("play: no HUD icons ({e:#})"),
         }
-        // The markers' FX textures (the Lancer's reticle).
+        // The markers' FX textures (the Lancer's reticle) and the space fights' HUD's (rc_game::ship).
         let mut fx = std::collections::HashMap::new();
-        if let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(0x26)).and_then(Option::as_ref) {
-            fx.insert(0x26u16, (textures.len(), [t.width as f32, t.height as f32]));
-            textures.push(t.clone());
+        for id in std::iter::once(0x26u16).chain(rc_game::ship::HUD_FX) {
+            if let Some(t) = level.0.particles.textures.as_ref().and_then(|t| t.fx_textures.get(id as usize)).and_then(Option::as_ref) {
+                fx.insert(id, (textures.len(), [t.width as f32, t.height as f32]));
+                // The HUD's atlas holds the GS's bytes (0x80 = 1.0); the FX textures' alpha is decoded to 0..0xff (their
+                // colours stay as the GS has them, up to 2.0).
+                let mut t = t.clone();
+                for px in t.rgba.as_chunks_mut::<4>().0 { px[3] = ((px[3] as u16 + 1) >> 1) as u8; }
+                textures.push(t);
+            }
         }
         // The pause pages' item pictures.
         let pictures = ItemPictures::new(&root, [textures.len(), textures.len() + 1]);
@@ -1833,7 +1888,25 @@ fn draw_hud(
             let alive = |id: usize| p.mobys.as_ref().and_then(|m| m.world.mobys.get(id)).is_some_and(|m| m.state != 0xfe && m.state != 0xfd);
             quads.extend(rc_game::hud::marker_quads(&markers, p.camera.pos, p.camera.rows, crate::play_camera::GAME_TAN_HALF_FOV, &tex, &alive));
         }
-        let mut draws = p.hud.draw(p.game.bolts);
+        // The space fight's crosshair and radar.
+        if let (Some(f), Some(m)) = (p.ship.as_ref(), p.mobys.as_ref()) {
+            let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+            quads.extend(f.hud_quads(&m.world, crate::play_camera::GAME_TAN_HALF_FOV, &tex));
+            // `0x40e7a8`: the ship's HUD, in its order.
+            let strings = &hud.data.assets().strings;
+            let label = |id: u32| String::from_utf8_lossy(strings.get(id)).trim_end_matches('\0').to_string();
+            let icon = |id: u16, fr: u16| hud.icons.get(&(id, fr)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+            for item in f.hud_items(&m.world, (p.game.space_bolts, p.game.space_bolts_shown), &label) {
+                match item {
+                    rc_game::ship::HudItem::Quad(q) => quads.push(q),
+                    rc_game::ship::HudItem::Draw(d) => quads.extend(rc_game::hud::quads(std::slice::from_ref(&d), &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon)),
+                }
+            }
+            let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
+            quads.extend(f.radar_quads(&m.world, &tex));
+        }
+        // In the space fights the ship's HUD stands for Ratchet's (rc_game::ship::Flight::status).
+        let mut draws = if p.ship.is_some() { Vec::new() } else { p.hud.draw(p.game.bolts) };
         // The quick select's ring and texts (rc_game::quick_select).
         if let Some(m) = p.mobys.as_ref() {
             let slots = rc_game::quick_select::slots(&p.game, &m.level.items);
@@ -2149,7 +2222,7 @@ fn start(lv: &crate::level_load::LoadedLevel) -> Option<Play> {
     println!("play: Ratchet at ({:.1}, {:.1}, {:.1}), yaw {:.2}: game tick on", inst.position[0], inst.position[1], inst.position[2], inst.rotation[2]);
     Some(Play {
         anim: RatchetAnim { curves: &rc_game::hero::CURVES, ..RatchetAnim::new(&m.anim[class]) },
-        hero, class, instance, scale, pad: PadState::default(), camera, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
+        hero, class, instance, scale, pad: PadState::default(), camera, ship: None, mobys: None, game: Default::default(), hud: rc_game::hud::Hud::new(rc_game::game::GameState::default().max_health), ticks: 0, loaded: false,
         fx_quads: Vec::new(), scene_wad: None, scene_slots: Vec::new(), movie: None, movie_picture: None, leaving: None, scene_listener: None, movie_started: false, hero_loops: [-1; 9], pause: None, pause_opened: false, death_fade: None, qs: Default::default(), qs_paused: false, vendor: Default::default(), space_scene: None, flight: None, flight_cam: None, flight_quads: Vec::new(),
         help: Default::default(), boxes: Default::default(), glyphs: None, texts: rc_formats::strings::parse_strings(&lv.gameplay, rc_formats::strings::lang::ENGLISH).map_err(|e| eprintln!("play: no help texts ({e:#})")).unwrap_or_default(),
         trace: std::env::var("RC_PLAY_TRACE").is_ok_and(|v| v.trim() == "1"),

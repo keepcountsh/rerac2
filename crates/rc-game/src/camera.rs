@@ -59,6 +59,13 @@ pub struct Shake {
 pub struct Shakes(pub [Shake; 3]);
 
 impl Shakes {
+    /// A shake asked for, as the askers write it (L00 `0x1b8d60 + 0x10·slot`, L25 `0x1b91a0 + …`): its size and
+    /// ticks set, its length cleared (the value kept); a new ask replaces the running one.
+    pub fn ask(&mut self, slot: usize, amp: f32, ticks: i32) {
+        let s = &mut self.0[slot];
+        (s.amp, s.timer, s.max) = (amp, ticks, 0);
+    }
+
     /// `0x2d9f38`'s three `0x2d9528` calls after the camera's update, on the frame's eye and rows (forward, left, up)
     /// — the camera itself keeps its own. While its timer runs (the length the largest it was, the timer one down,
     /// t = timer / length): the eye moves `amp · cos(2·timer) · t²` along up (0) or forward (1); the rows roll about
@@ -867,7 +874,8 @@ impl FollowCamera {
         let (la, lb) = (len(a), len(b));
         if la == 0.0 || lb == 0.0 { return; }
         let c = (dot(a, b) / (la * lb)).clamp(-1.0, 1.0);
-        let ang = c.acos();
+        // `0x2ef478` is asin (π/2 − √(1 − x)·P(x)).
+        let ang = c.asin();
         let side = if 0.0 <= dot(cross(a, up), b) { 1.0 } else { -1.0 };
         let f = std::f32::consts::FRAC_PI_2 - ang;
         let gap = crate::hero::physics::sub_rot(std::f32::consts::PI, f);

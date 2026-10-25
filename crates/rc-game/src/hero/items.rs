@@ -24,9 +24,15 @@ pub const WRENCH: i32 = 10;
 /// The Lancer: item 0x1e, class 0x5d2 (`0x262504` of its row; a gadget, `G/GADGET.WAD`).
 pub const LANCER: i32 = 0x1e;
 pub const LANCER_CLASS: i16 = 0x5d2;
+/// The Dynamo: item 0x24, class 0x825 (L01 item table `0x2637b0`; got on Oozla, crate::moby::classes::dynamo).
+pub const DYNAMO: i32 = 0x24;
+pub const DYNAMO_CLASS: i16 = 0x825;
 /// The Gravity Bomb (item 0x2a) and its hand moby's class (crate::moby::classes::gravity_bomb).
 pub const GRAVITY_BOMB: i32 = 0x2a;
 pub const GRAVITY_BOMB_CLASS: i16 = 0xce3;
+/// The Tractor Beam: item 0x2e, class 0xbc (L01 item table; sold on Oozla, crate::moby::classes::tractor).
+pub const TRACTOR: i32 = 0x2e;
+pub const TRACTOR_CLASS: i16 = 0xbc;
 
 /// An item record (`0x262500 + 0xe0·row`, row `0x139568[item]` = the item): the fields the port reads.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -52,11 +58,13 @@ pub struct ItemRow {
     pub start_ammo: i32,
 }
 
-/// The rows the port has (L00 `0x262dc0`, `0x263f40`, `0x2649c0`).
-pub const ROWS: [ItemRow; 3] = [
+/// The rows the port has (L00 `0x262dc0`, `0x263f40`, `0x2649c0`; the Dynamo's from Oozla's live table).
+pub const ROWS: [ItemRow; 5] = [
     ItemRow { item: WRENCH, attach: 0, class: WRENCH_CLASS, stance: 0, icon: 0, use_seq: 0, keep: false, speed: 0.0, rate: 0.0, damage: 1.0, ammo: false, max_ammo: 0, start_ammo: 0 },
     ItemRow { item: LANCER, attach: 0, class: LANCER_CLASS, stance: 1, icon: 0xea64, use_seq: 0x38, keep: true, speed: 60.0, rate: 7.0, damage: 0.5, ammo: true, max_ammo: 200, start_ammo: 200 },
+    ItemRow { item: DYNAMO, attach: 1, class: DYNAMO_CLASS, stance: 1, icon: 0xea7f, use_seq: 0x8d, keep: false, speed: 0.0, rate: 0.0, damage: 0.0, ammo: false, max_ammo: 0, start_ammo: 0 },
     ItemRow { item: GRAVITY_BOMB, attach: 0, class: GRAVITY_BOMB_CLASS, stance: 2, icon: 0xea65, use_seq: 0x36, keep: false, speed: 0.0, rate: 0.5, damage: 0.0, ammo: true, max_ammo: 8, start_ammo: 8 },
+    ItemRow { item: TRACTOR, attach: 0, class: TRACTOR_CLASS, stance: 1, icon: 0xea80, use_seq: 0, keep: true, speed: 0.0, rate: 0.0, damage: 0.0, ammo: false, max_ammo: 0, start_ammo: 0 },
 ];
 
 /// Item `item`'s row.
@@ -152,6 +160,22 @@ pub struct ItemBlock {
 }
 
 impl ItemBlock {
+    /// `0x3227d8(item)` for a hand item (its record's slot kind `+0x0c` is 0): the hand item asked for (`0x18c0e8`),
+    /// taken by the next change; 0 asks for none (0x77), the item already held asks for nothing. Only the items the
+    /// hero can hold ([`ROWS`]); the head, feet and back slots (kinds 1..3) are not ported. True when asked.
+    pub fn ask(&mut self, held: i32, item: i32) -> bool {
+        let item = if item == 0 { 0x77 } else { item };
+        if item == held {
+            self.request = 0;
+            true
+        } else if item == 0x77 || row(item).is_some() {
+            self.request = item;
+            true
+        } else {
+            false
+        }
+    }
+
     /// `0x2d43e0(-1)`: the held item's ammo is not out (an item without ammo always can).
     pub fn has_ammo(&self, game: &crate::game::GameState) -> bool {
         match row(self.item) { Some(r) if r.ammo => game.ammo.get(self.item.max(0) as usize).is_some_and(|&a| a != 0), _ => true }

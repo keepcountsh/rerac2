@@ -45,7 +45,7 @@ fn attach_armour_row(root: &Path, core: &level::LevelCore, mobys: &mut crate::mo
 
 /// The hand gadgets the port loads with every level (`G/GADGET.WAD`, rc_formats::disc::gadget): the game streams the
 /// one in Ratchet's hand (`0x306018`) when he takes it; the port has them from the start.
-pub const GADGETS: [i32; 2] = [rc_game::hero::items::LANCER_CLASS as i32, rc_game::hero::items::GRAVITY_BOMB_CLASS as i32];
+pub const GADGETS: [i32; 4] = [rc_game::hero::items::LANCER_CLASS as i32, rc_game::hero::items::GRAVITY_BOMB_CLASS as i32, rc_game::hero::items::DYNAMO_CLASS as i32, rc_game::hero::items::TRACTOR_CLASS as i32];
 
 /// The hand classes loaded with level `index`: [`GADGETS`] and those of the weapons the level's vendors sell
 /// (`rc_game::vendor::STOCK_LEVELS` up to the level, the item records' `+0x04`): the game loads one as the vendor

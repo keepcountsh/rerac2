@@ -38,6 +38,7 @@ pub mod aim;
 pub mod attach;
 pub mod blast;
 pub mod bolts;
+pub mod floater;
 pub mod hits;
 pub mod shards;
 
@@ -458,6 +459,9 @@ pub struct MobyWorld {
     pub moved_shrubs: Vec<usize>,
     /// The ties hidden by the level's objects (the runtime tie's `+0x1e` bit 2), for the engine.
     pub hidden_ties: std::collections::HashSet<usize>,
+    /// The mobys' shared words (gameplay section 21, live after the pvar data): the pvar words listed in its pairs
+    /// hold an offset here ([`MobyWorld::shared_i`]).
+    pub shared: Vec<u8>,
     /// The nanotech clusters' globals (classes::nanotech).
     pub nanotech: classes::nanotech::Globals,
     /// The Gravity Bomb's blast effect (classes::gravity_bomb).
@@ -477,6 +481,10 @@ pub struct SpawnData {
     pub links: Vec<(usize, usize)>,
     /// `(pvar index, offset)`: a pointer relative to its own block (kept relative here: the classes read offsets).
     pub fixups: Vec<(usize, usize)>,
+    /// The shared words and `(pvar index, pvar offset, offset in them)` (section 21: the pointer there is kept as
+    /// the offset).
+    pub shared: Vec<u8>,
+    pub shared_ptrs: Vec<(usize, usize, usize)>,
     pub groups: Vec<Vec<u16>>,
     /// The ties' and shrubs' matrices and groups ([`MobyWorld::ties`]).
     pub ties: Vec<[[f32; 4]; 4]>,
@@ -549,6 +557,10 @@ impl MobyWorld {
                             pv[off..off + 4].copy_from_slice(&to.to_le_bytes());
                         }
                     }
+                    // The shared words' pointers (section 21): their offset into `self.shared`.
+                    for &(k, off, to) in &data.shared_ptrs {
+                        if k as i32 == b.pvar_index && off + 4 <= pv.len() { pv[off..off + 4].copy_from_slice(&(to as i32).to_le_bytes()); }
+                    }
                     m.pvars = pv;
                     m.pvar_index = b.pvar_index;
                 }
@@ -565,6 +577,15 @@ impl MobyWorld {
         self.shrub_groups = data.shrub_groups.clone();
         self.tie_classes = data.tie_classes.clone();
         self.tie_spheres = data.tie_spheres.clone();
+        self.shared = data.shared.clone();
+    }
+
+    /// The shared word a pvar pointer of section 21 names (its offset, [`SpawnData::shared_ptrs`]); 0 out of range.
+    pub fn shared_i(&self, off: i32) -> i32 {
+        usize::try_from(off).ok().and_then(|o| self.shared.get(o..o + 4)).map_or(0, |b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+    pub fn set_shared_i(&mut self, off: i32, v: i32) {
+        if let Some(b) = usize::try_from(off).ok().and_then(|o| self.shared.get_mut(o..o + 4)) { b.copy_from_slice(&v.to_le_bytes()); }
     }
 
     /// `CreateMoby(o_class)` `0x311320`: past the placed mobys, the first slot free (state 0xfe) for two frames, else
@@ -707,6 +728,15 @@ impl MobyWorld {
     pub fn coll_line(&self, ctx: &Ctx, a: V3, b: V3, flags: u32, ignore: Option<usize>) -> Option<crate::collision::CollOutput> {
         let live = |i: usize| self.mobys.get(i).is_some_and(|m| m.state < 0x80 && m.has_collision);
         crate::collision::coll_line_live(ctx.coll?, ctx.scene, a, b, crate::collision::QueryFlags(flags), ignore, &live)
+    }
+
+    /// `0x31c970(group, v)` (L01 `0x3127b8`): every member of the group (the list `0x1fa8a0[group]`) gets its timer byte
+    /// `+0xbc` = `v`; no group (−1 or unknown) does nothing.
+    pub fn poke_group(&mut self, group: i32, v: u8) {
+        let Some(members) = usize::try_from(group).ok().and_then(|g| self.groups.get(g)) else { return };
+        for &i in members {
+            if let Some(m) = self.mobys.get_mut(i) { m.timer = v; }
+        }
     }
 
     /// `0x313dc0`: rows from the Euler angles (unless mode 0x100; mode 0x8000 mirrors the second row), the bounding

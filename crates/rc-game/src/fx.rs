@@ -12,6 +12,10 @@
 //! | `0x3a17f0` | the nanotech cluster 0x326 (the first list) | its sphere, halo and crate glass ([`crate::moby::classes::nanotech::draw`]) |
 //! | `0x3efd68` | the Gravity Bomb in the hand 0xce3 | where its throw lands ([`crate::moby::classes::gravity_bomb::draw_marker`]) |
 //! | `0x3f0e80` | the Gravity Bomb's blast 0xce5 | its shockwave and flares ([`crate::moby::classes::gravity_bomb::draw_blast`]) |
+//! | `0x3cac30` | Oozla's conveyor 0x0a7b out | its belt of light ([`crate::moby::classes::oozla::draw_0a7b`]) |
+//! | `0x3d2ea8` | Oozla's hatch 0x0a9d open | its light ([`crate::moby::classes::oozla::draw_0a9d`]) |
+//! | `0x38e4c8` | the Tractor Beam holding | its beam ([`crate::moby::classes::tractor::draw`]) |
+//! | `0x4137d0` | the space fights' laser 0xffa | a streak ([`crate::ship::draw_laser`]) |
 //!
 //! Before them, the frame's blob shadows (`0x2e7ab0`, crate::shadows: FX 0, ALPHA 0x44) go first into the same quads.
 //!
@@ -118,6 +122,10 @@ pub fn callbacks(w: &mut MobyWorld, host: &dyn crate::moby::MobyHost, game: &mut
             crate::moby::classes::nanotech::CLASS => crate::moby::classes::nanotech::draw(w, id, cam, &mut out),
             crate::moby::classes::gravity_bomb::HAND_CLASS => crate::moby::classes::gravity_bomb::draw_marker(w, id, hero_state, game.frame, &mut out),
             crate::moby::classes::gravity_bomb::BLAST_CLASS => crate::moby::classes::gravity_bomb::draw_blast(w, id, view, cam, &mut out),
+            0x0a7b => crate::moby::classes::oozla::draw_0a7b(w, id, &mut out),
+            0x0a9d => crate::moby::classes::oozla::draw_0a9d(w, id, &mut out),
+            0x00bc => crate::moby::classes::tractor::draw(w, id, cam, -0.3 * (game.frame % 27) as f32, &mut out),
+            crate::ship::LASER_CLASS => crate::ship::draw_laser(w, id, cam, &mut out),
             _ => {}
         }
     }

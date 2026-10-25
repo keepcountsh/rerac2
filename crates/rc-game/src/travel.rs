@@ -614,7 +614,9 @@ pub fn menu_tick(g: &mut GameState, pad: &PadState) -> Vec<MenuOut> {
     let mut out = Vec::new();
     let pressed = pad.pressed;
     let level = g.level;
-    let wupash = g.wupash_done;
+    // `0x1a7c09`: the Wupash Nebula's visited byte (`0x1a7bf0[0x19]`, set by its win): until then a trip to Maktar
+    // goes to the fight first (`0x34fe48`).
+    let wupash = g.visited.get(WUPASH as usize).is_some_and(|&v| v != 0);
     let rows = map_rows(g);
     let unlocked: Vec<bool> = (0..LEVELS as i32).map(|l| g.planets.get(l as usize).is_some_and(|&b| b != 0)).collect();
     let in_list = |l: i32| rows.contains(&l) && !(l == 0 && level != 0);

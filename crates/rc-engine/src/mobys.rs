@@ -510,11 +510,19 @@ impl Mobys {
             if classes.iter().any(|c| c.o_class == o) { continue; }
             classes.push(ClassInfo { o_class: o, update: rc_game::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
         }
+        // The model-less classes only created at run time (the overlay's class table has them all).
+        for &o in rc_game::moby::classes::CREATED_LOGIC {
+            if classes.iter().any(|c| c.o_class == o) { continue; }
+            classes.push(ClassInfo { o_class: o, update: rc_game::moby::classes::update_for(o), scale: 1.0, ..Default::default() });
+        }
         let mut world = MobyWorld::new(classes);
+        let (shared, shared_ptrs) = g2::shared_data(&lv.gameplay).map_err(|e| eprintln!("mobys: shared data: {e}")).unwrap_or_default();
         let data = rc_game::moby::SpawnData {
             pvars: g2::pvar_blocks(&lv.gameplay).map_err(|e| eprintln!("mobys: pvars: {e}")).unwrap_or_default(),
             links: g2::pvar_fixups(&lv.gameplay, "pvar_moby_links").unwrap_or_default(),
             fixups: g2::pvar_fixups(&lv.gameplay, "pvar_pointer_fixups").unwrap_or_default(),
+            shared,
+            shared_ptrs,
             groups: g2::moby_groups(&lv.gameplay).map_err(|e| eprintln!("mobys: moby groups: {e}")).unwrap_or_default(),
             ties: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.world_matrix()).collect(),
             tie_classes: g2::tie_instances(&lv.gameplay).unwrap_or_default().iter().map(|t| t.o_class).collect(),
