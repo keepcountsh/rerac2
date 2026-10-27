@@ -16,6 +16,7 @@
 //! | 0x3b | [`sparkle`] `0x33b468` | `0x33b588` ([`update_sparkle`]) | the nanotech healing ring's sparkles, riding Ratchet |
 //! | 0x3c | [`glint`] `0x33b5e0` | `0x33b710` ([`update_glint`]) | the nanotech heal's glints (and the flying bolts'): drifting, fading out |
 //! | 0x35 | [`twinkle`] `0x33a6a0` | `0x33a848` ([`update_twinkle`]) | the bolts' twinkles: swelling and fading |
+//! | 0x4a | [`exhaust`] `0x349c48` | `0x349db0` ([`update_exhaust`]) | L25's ships' exhaust: puffs riding the moby, sized and coloured over the life |
 //! | 0x3e | [`orb`] `0x33bb60` | `0x33bc70` ([`update_orb`]) | the nanotech orbs (kind 1, moved by their cluster) and their trail puffs (kinds 0, 2) |
 //! | 4 | [`trail`] `0x332c10` | `0x332d28` ([`update_trail`]) | the debris' smoke trails: growing, colour eased over the life |
 //! | 0xb | [`billow`] `0x333a70` | `0x333d00` ([`update_billow`]) | the Gravity Bomb's smoke: billowing, splitting, rising and fading |
@@ -362,6 +363,71 @@ pub fn update_glow(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld
     let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     let k = if 0.0 < l { pull / l } else { 0.0 };
     rec::set_v3(r, 0x10, std::array::from_fn(|i| p[i] + d[i] * k));
+}
+
+/// Type 0x4a: an exhaust puff riding a moby (L25's space ships, crate::moby::classes::space).
+pub const EXHAUST: u8 = 0x4a;
+
+/// The exhaust puffs' descriptors (L25 `$gp+0xba8`, `+0xbb8`, `+0xbc8` the fighter's, `+0xc10`, `+0xc20`, `+0xc30` the
+/// gunship's; read live): the colour at the start and at the end, the size's range and least (in thousandths), the life.
+pub const EXHAUST_DESCS: [(u32, u32, i16, i16, i32); 6] = [
+    (0xcf00_00ff, 0x0000_00cf, -20, 60, 10),
+    (0x6000_ffff, 0x0000_0080, -20, 60, 12),
+    (0xefff_7f4f, 0x00ff_0000, -40, 40, 8),
+    (0xcfff_0000, 0x00cf_0000, -20, 60, 10),
+    (0x6000_ffff, 0x0000_0080, -20, 60, 12),
+    (0xefff_7f4f, 0x00ff_0000, -40, 40, 8),
+];
+
+/// `0x349c48(moby, pos, vel, desc, 1)`: an exhaust puff (type 0x4a) at `pos`, riding `moby` (its place kept in the
+/// moby's frame, `+0x30`), moving `vel` a tick in that frame; the descriptor `desc` ([`EXHAUST_DESCS`]) gives its
+/// colour, size and life; additive, its far byte 0xa0, a random roll ([`update_exhaust`]).
+pub fn exhaust(sys: &mut Particles, rng: &mut Rng, moby: &crate::moby::Moby, moby_id: usize, pos: [f32; 3], vel: [f32; 3], desc: usize) -> Option<usize> {
+    let i = sys.create_part(EXHAUST)?;
+    let def = sys.def_first(EXHAUST);
+    let rot = rng.randi(0xff) as u8;
+    let (start, _, _, _, life) = EXHAUST_DESCS[desc];
+    let d = sub(pos, moby.pos);
+    let rows = moby.rows;
+    let local = rows.map(|row| row[0] * d[0] + row[1] * d[1] + row[2] * d[2]);
+    let r = &mut sys.pool.recs[i];
+    r[9] = 0xa0;
+    r[3] = 0x48;
+    r[1] = 0;
+    r[2] = def;
+    r[8] = rot;
+    rec::set_ff(r, 0xc, 0.0);
+    rec::set_v3(r, 0x10, pos);
+    rec::set_v3(r, 0x20, vel);
+    rec::set_u32(r, 0x2c, moby_id as u32 + 1);
+    rec::set_v3(r, 0x30, local);
+    rec::set_u32(r, 0x3c, desc as u32);
+    rec::set_i16(r, 0xa, life as i16);
+    rec::set_u32(r, 4, start);
+    Some(i)
+}
+
+/// `0x349db0`: an exhaust puff's tick. Its size `1000·(range·(life − left)/life + least)` (whole numbers), its
+/// velocity ×0.98; its place in the moby's frame on by it and the puff at the moby turned by it (the moby gone: it
+/// goes); a roll step; its colour from the start's to the end's by the life spent; at the end of its life it goes.
+pub fn update_exhaust(sys: &mut Particles, i: usize, mobys: &crate::moby::MobyWorld) {
+    let r = &mut sys.pool.recs[i];
+    let desc = EXHAUST_DESCS.get(rec::u32(r, 0x3c) as usize).copied().unwrap_or(EXHAUST_DESCS[0]);
+    let (start, end, range, least, life) = desc;
+    let left = rec::i16(r, 0xa) as i32;
+    let size = (range as i32 * (life - left)) / life + least as i32;
+    rec::set_ff(r, 0xc, size as f32 * 1000.0);
+    let vel = rec::v3(r, 0x20).map(|v| v * 0.98);
+    rec::set_v3(r, 0x20, vel);
+    let m = rec::u32(r, 0x2c).checked_sub(1).and_then(|k| mobys.mobys.get(k as usize)).filter(|m| m.state < 0x80);
+    let Some(m) = m else { return sys.kill_part(i) };
+    let o = add(rec::v3(r, 0x30), vel);
+    rec::set_v3(r, 0x30, o);
+    rec::set_v3(r, 0x10, std::array::from_fn(|k| m.pos[k] + (m.rows[0][k] * o[0] + m.rows[1][k] * o[1] + m.rows[2][k] * o[2])));
+    r[8] = r[8].wrapping_add(1);
+    let t = left as f32 / life as f32;
+    rec::set_u32(r, 4, crate::hud::lerp_rgba(t, end, start));
+    if dec_life(r) { sys.kill_part(i); }
 }
 
 /// Type 0x3e, the nanotech orb and its trail puffs (crate::moby::classes::nanotech).
@@ -824,6 +890,7 @@ pub fn update_parts(sys: &mut Particles, mobys: &crate::moby::MobyWorld, cam: [f
             0x3c => update_glint(sys, i, hero),
             TWINKLE => update_twinkle(sys, i),
             ORB => update_orb(sys, i, mobys),
+            EXHAUST => update_exhaust(sys, i, mobys),
             TRAIL => update_trail(sys, i),
             BILLOW => update_billow(sys, i, cam, rng),
             EMBER => update_ember(sys, i, rng, mobys.frame),

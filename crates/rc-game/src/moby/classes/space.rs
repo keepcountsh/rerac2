@@ -660,7 +660,31 @@ pub fn update_fighter(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     flyby(w, id, ctx);
     fire(w, id, ctx);
     maybe_attack(w, id, ctx);
+    exhaust(w, id, ctx);
     w.rebuild(id, &*ctx.host);
+}
+
+/// `0x3ca6c0` (the fighter, while its sphere is on screen: `0x302b78`) / `0x3cbc40` (the gunship, its two engines):
+/// not in a scene, from the nozzle (the fighter's 0.3 behind it; the gunship's 0.21 behind, ±0.061 across, 0.045 up,
+/// in its frame) jittered ±0.1 (`0x333500`), three puffs (crate::particles::exhaust, each from its own jitter of the
+/// nozzle) moving back 0.4·(30..40)/60 a tick in its frame.
+fn exhaust(w: &MobyWorld, id: usize, ctx: &mut Ctx) {
+    if ctx.game.scenes.mode == crate::scene::SCENE { return; }
+    let m = &w.mobys[id];
+    let gunship = m.o_class == GUNSHIP;
+    if !gunship && !in_view(ctx, m.pos, radius(w, id)) { return; }
+    let Some(sys) = ctx.parts.as_deref_mut() else { return };
+    let (nozzles, first): (&[V3], usize) = if gunship { (&[[-0.21, 0.061, 0.045], [-0.21, -0.061, 0.045]], 3) } else { (&[[-0.3, 0.0, 0.0]], 0) };
+    let jitter = |g: &mut crate::rng::Rng, p: V3| [p[0] + g.randf(-0.1, 0.1), p[1] + g.randf(-0.1, 0.1), p[2] + g.randf(-0.1, 0.1)];
+    for &n in nozzles {
+        let base = add(m.pos, in_frame(m.rows, n));
+        for k in 0..3 {
+            let g = &mut ctx.game.rng;
+            let at = jitter(g, base);
+            let vel = [-(g.randf(30.0, 40.0) / 60.0) * 0.4, 0.0, 0.0];
+            crate::particles::exhaust(sys, g, m, id, at, vel, first + k);
+        }
+    }
 }
 
 /// The class code's fly-by: within 10 of its own target, its sound (`+0x1c0` / `+0x2f4`) not playing, one chance in
