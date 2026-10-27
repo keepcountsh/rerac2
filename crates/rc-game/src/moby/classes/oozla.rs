@@ -2113,3 +2113,161 @@ pub fn update_061c(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         _ => {}
     }
 }
+
+/// `0x2eb940(text, slot, kind, zone, off)`: a zone's help — while Ratchet is in `zone` (and not in `off`, which turns
+/// the slot off for good) and the slot is not spent (kind 0: never shown; else not off): kind 0 once; kind 1 again,
+/// but not within 0x439 ticks of its last showing (`+4`); kind 2 the first time only marked (shown once, here, this
+/// level, `+4` now), then as kind 1; kind 3 once its levels' word has bit 31.
+fn zone_help(ctx: &mut Ctx, text: i32, slot: i32, kind: i32, zone: i32, off: i32) {
+    let k = slot.max(0) as usize;
+    let count = ctx.game.help_counts.get(k).copied().unwrap_or(-1);
+    let spent = if kind == 0 { count as u16 >= 1 } else { count == -1 };
+    if spent { return; }
+    if off != -1 && ctx.level.in_cuboid(off, ctx.hero.pos) {
+        ctx.game.help_counts[k] = -1;
+        return;
+    }
+    if zone == -1 || !ctx.level.in_cuboid(zone, ctx.hero.pos) { return; }
+    let g = &mut *ctx.game;
+    let now = g.play_time;
+    match kind {
+        0 => {}
+        1 | 2 => {
+            if kind == 2 && count == 0 {
+                g.help_counts[k] = 1;
+                g.help_last[k] = g.help_last[k].max(now);
+                g.help_levels[k] |= 1u32.checked_shl(g.level.max(0) as u32).unwrap_or(0) | 0x8000_0000;
+                return;
+            }
+            let last = g.help_last[k];
+            if last != 0 && now.wrapping_sub(last) < 0x439 {
+                if last < now { g.help_last[k] = now; }
+                return;
+            }
+        }
+        3 if g.help_levels[k] & 0x8000_0000 != 0 => {}
+        _ => return,
+    }
+    g.help(text, slot);
+}
+
+/// The hint manager 0x0c23 (L01 `0x3ea3b0`, one on Oozla): the level's help texts by where Ratchet is, read from its
+/// pvars (`+0x68`, words): the zones `[0]`..`[6]`, `[0xa]`, `[0xc]`, `[0xd]`, `[0x10]`, `[0x11]`, `[0x20]`, `[0x28]`,
+/// `[0x29]`, `[0x2b]`; `[8]` a moby shown only with the Gravity Boots (item 0x13), and its `[0xc]`. Each tick:
+/// * 0x9b5 (slot 0xc, the map) once a level (its levels' word);
+/// * 0x9b6 (0xd, the wrench's throw) in `[0]`, 0x9b7 (0xe, interrupting messages) in `[1]`, 0x9b8 (0xf, weapons) in
+///   `[3]`, 0x9ba (0x11, the camera) in `[5]`, 0x9bb (0x12, the jump attack) in `[6]`: while their slots are unshown;
+/// * 0x9b9 (0x10, the Dynamo) with the Dynamo, after 180 ticks in `[0x10]` (the slot's `+2` counting, `+4` the stay's
+///   start), till Ratchet reaches `[4]` (the slot off);
+/// * 0x9bc (0x13, the Tractor Beam's columns) with the Tractor Beam in `[0x11]`, a minute after its last showing; off
+///   once Ratchet is in `[0x28]` or `[0x29]` (the cliff's top: `0x139653` set);
+/// * 0x9e3 (0x3a, strafing) in `[0xc]`, asked every 20 ticks (`[0xb]`), not while he strafes (state 0x39) or is held
+///   (0x6f), not once he has passed `[0xa]` (`0x139633` bit 1), and only till shown (its levels' bit 31);
+/// * 0x9e4 (0x3b, find new coordinates) while Maktar is locked, once Ratchet has left `[0x2b]`: [`zone_help`] kind 1
+///   in `[0xd]`;
+/// * the nanotech (slot 6 unshown, the panel idle): by a cluster (0x326) out of its crate within 10, 0x9af (6) while
+///   short of health, else within 1 0x9e7 (0x3e, unshown);
+/// * 0xa3c (0x93, the missions on the map), queued once (`0x13962d` bit 2) in `[0x20]` with mission 3 done and
+///   mission 1 not (`0x307008`: the missions' states, 2 read here as done).
+///
+/// Not ported: the stats some ask (`0x18c7bc` the map's use, `0x18c75c` the throws, `0x18c8dc`, `0x18c8e8`, `0x18c750`:
+/// G-HERO-005, read as none — each of those hints shows once even to a player past it), the voice lines (`[0x14..
+/// 0x1f]`, `[0x22..0x26]`: the dialogue player), the start's move to `[0x2d]` with the Tractor Beam and not
+/// `0x139653` (the flag is not saved: it would move him on every load), `[2]`'s close of the panel (its flag is never
+/// set), `0x139633` bit 2 (`[0xc]` with `0x18a040`) and the strafe stat it resets.
+pub fn update_0c23(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    use crate::hero::items::DYNAMO;
+    const GRAVITY_BOOTS: usize = 0x13;
+    const TRACTOR: usize = 0x2e;
+    let zone = |w: &MobyWorld, k: usize| w.mobys[id].pv_i(4 * k);
+    if w.mobys[id].state == 0 {
+        let m = &mut w.mobys[id];
+        m.update_dist = 0xff;
+        m.state = 1;
+        m.set_pv_i(0xb * 4, 0x14);
+        m.set_pv_i(0x2c * 4, 0);
+    }
+    let have = |g: &crate::game::GameState, item: usize| g.items.get(item).is_some_and(|&b| b != 0);
+    let inside = |ctx: &Ctx, z: i32| z != -1 && ctx.level.in_cuboid(z, ctx.hero.pos);
+    let count = |g: &crate::game::GameState, slot: usize| g.help_counts.get(slot).copied().unwrap_or(-1);
+    // `[8]`: shown with the Gravity Boots (and its `[0xc]` with it).
+    let by_index = |w: &MobyWorld, i: i32| usize::try_from(i).ok().and_then(|i| w.mobys.iter().position(|m| m.index == i && m.state < 0x80));
+    if let Some(t) = by_index(w, zone(w, 8)) {
+        let child = by_index(w, w.mobys[t].pv_i(0xc));
+        let shown = have(ctx.game, GRAVITY_BOOTS);
+        for i in std::iter::once(t).chain(child) {
+            let m = &mut w.mobys[i];
+            if shown { (m.mode, m.drawn) = (m.mode & !0x43, 1) } else { (m.mode, m.drawn) = (m.mode | 0x43, 0) }
+        }
+    }
+    // 0x9b5: the map, once a level.
+    let level_bit = 1u32.checked_shl(ctx.game.level.max(0) as u32).unwrap_or(0);
+    if ctx.game.help_levels[0xc] & level_bit == 0 { ctx.game.help(0x9b5, 0xc); }
+    for (z, text, slot) in [(0, 0x9b6, 0xd), (1, 0x9b7, 0xe), (3, 0x9b8, 0xf), (5, 0x9ba, 0x11), (6, 0x9bb, 0x12)] {
+        if count(ctx.game, slot) == 0 && inside(ctx, zone(w, z)) { ctx.game.help(text, slot as i32); }
+    }
+    // The Dynamo: `[4]` reached turns its hint off; else 180 ticks in `[0x10]`.
+    if inside(ctx, zone(w, 4)) { ctx.game.help_counts[0x10] = -1; }
+    if have(ctx.game, DYNAMO as usize) && inside(ctx, zone(w, 0x10)) && count(ctx.game, 0x10) == 0 {
+        let g = &mut *ctx.game;
+        let now = g.frame;
+        let (stay, since) = (g.help_aux[0x10] as i32, g.help_last[0x10]);
+        if since + stay < now - 2 {
+            if since < now { g.help_last[0x10] = now; }
+            g.help_aux[0x10] = 0;
+        } else {
+            g.help_aux[0x10] = (stay + 1) as i16;
+            if 0xb3 < stay + 1 {
+                g.help(0x9b9, 0x10);
+                g.help_aux[0x10] = 0;
+            }
+        }
+    }
+    // The Tractor Beam's columns, and the cliff's top.
+    if have(ctx.game, TRACTOR) && inside(ctx, zone(w, 0x11)) && 0xe10 < ctx.game.play_time - ctx.game.help_last[0x13] {
+        ctx.game.help(0x9bc, 0x13);
+    }
+    if inside(ctx, zone(w, 0x28)) || inside(ctx, zone(w, 0x29)) {
+        ctx.game.hint_flags[2] = 1;
+        ctx.game.help_counts[0x13] = -1;
+    }
+    // Strafing.
+    let state = ctx.hero.state;
+    if inside(ctx, zone(w, 0xc)) {
+        let mut t = w.mobys[id].pv_i(0xb * 4);
+        let due = crate::moby::countdown(&mut t);
+        w.mobys[id].set_pv_i(0xb * 4, if due { 0x14 } else { t });
+        let g = &mut *ctx.game;
+        if due && state != 0x6f && state != 0x39 && g.hint_flags[1] & 1 == 0 && g.help_levels[0x3a] & 0x8000_0000 == 0 {
+            g.help(0x9e3, 0x3a);
+        }
+    }
+    if inside(ctx, zone(w, 0xa)) { ctx.game.hint_flags[1] |= 1; }
+    // New coordinates.
+    if !inside(ctx, zone(w, 0x2b)) { w.mobys[id].set_pv_i(0x2c * 4, 1); }
+    if ctx.game.planets.get(2).is_some_and(|&b| b == 0) && w.mobys[id].pv_i(0x2c * 4) != 0 {
+        let z = zone(w, 0xd);
+        zone_help(ctx, 0x9e4, 0x3b, 1, z, -1);
+    }
+    // The nanotech.
+    if count(ctx.game, 6) == 0 && ctx.game.help_state == 0 && ctx.game.help_req.is_none() {
+        let hero = ctx.hero.pos;
+        let near = w.mobys.iter()
+            .filter(|m| m.o_class == super::nanotech::CLASS && m.state < 0x80 && m.state != 1)
+            .map(|m| crate::hero::physics::dist(m.pos, hero))
+            .fold(f32::MAX, f32::min);
+        if near < 10.0 {
+            if ctx.hero.hp < ctx.game.max_health {
+                ctx.game.help(0x9af, 6);
+            } else if near < 1.0 && count(ctx.game, 0x3e) == 0 {
+                ctx.game.help(0x9e7, 0x3e);
+            }
+        }
+    }
+    // The missions on the map.
+    let done = |g: &crate::game::GameState, k: usize| g.missions.get(g.level.max(0) as usize * 0x10 + k).is_some_and(|&b| b & 0x80 != 0);
+    if done(ctx.game, 3) && !done(ctx.game, 1) && ctx.game.hint_flags[0] & 2 == 0 && inside(ctx, zone(w, 0x20)) {
+        ctx.game.hint_flags[0] |= 2;
+        ctx.game.help_later(0xa3c, 0x93);
+    }
+}

@@ -16,7 +16,7 @@
 //! bottom (`0x444de0`), mirrored, their frame stretching them to the box's height and width.
 //!
 //! Not ported: the help voice (the dialogue player `0x1a63cc`, the voice table `0x14df60`), the prompt slot it holds
-//! (`0x327ae0(5, 0, 1)`), the slot's last-shown time and level bits (`0x18c95c` / `0x18c960`), the help log
+//! (`0x327ae0(5, 0, 1)`), the help log
 //! `0x2f6538`, the multi-page help (`0x27d800`), PAL's height (0.9).
 
 use crate::game::GameState;
@@ -182,10 +182,16 @@ pub struct Panel {
 impl Panel {
     fn layout(y: i32, flags: u16) -> Layout { Layout { top: 0xf0, bottom: 0x1e0, x0: 0x2c, x1: 0x1d4, x: 0x100, y, line: 0x10, flags } }
 
+    /// The slot counted (`0x18c958 + 0xc·slot`): shown once more, when (`+4`, at least the last) and on this level
+    /// (`+8`, with bit 31).
     fn count(g: &mut GameState, slot: i32) {
-        if let Some(c) = g.help_counts.get_mut(slot.max(0) as usize) {
+        let k = slot.max(0) as usize;
+        if let Some(c) = g.help_counts.get_mut(k) {
             if *c != -1 { *c += 1; }
         }
+        if let Some(t) = g.help_last.get_mut(k) { *t = (*t).max(g.play_time); }
+        let bit = 1u32.checked_shl(g.level.max(0) as u32).unwrap_or(0);
+        if let Some(l) = g.help_levels.get_mut(k) { *l |= bit | 0x8000_0000; }
     }
 
     /// `0x2f5528`: open on the text `index` (the measure waits for the draw, which has the font).
@@ -211,6 +217,8 @@ impl Panel {
 
     /// `0x2f5680`, once a frame (`triangle`: △ pressed this frame).
     pub fn tick(&mut self, g: &mut GameState, triangle: bool, texts: &[Message]) {
+        // The queued texts' turn (`0x2ebcd0`).
+        g.help_queue_tick();
         // `0x308ac0`'s head: the shift's frames down; out, the shift goes.
         g.help_shift_ticks = (g.help_shift_ticks - 1).max(0);
         if g.help_shift_ticks == 0 { g.help_shift = 0; }
