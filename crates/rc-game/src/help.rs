@@ -17,7 +17,7 @@
 //!
 //! Not ported: the help voice (the dialogue player `0x1a63cc`, the voice table `0x14df60`), the prompt slot it holds
 //! (`0x327ae0(5, 0, 1)`), the slot's last-shown time and level bits (`0x18c95c` / `0x18c960`), the help log
-//! `0x2f6538`, the multi-page help (`0x27d800`), the shake offset `0x27d808`, PAL's height (0.9).
+//! `0x2f6538`, the multi-page help (`0x27d800`), PAL's height (0.9).
 
 use crate::game::GameState;
 use crate::gui::{self, Quad, Tex};
@@ -102,7 +102,8 @@ pub fn wrap(text: &[u8], l: &Layout, glyphs: &[Glyph; 256]) -> Vec<(usize, usize
     lines
 }
 
-/// The size `(width, height)` of the laid-out text, and its draw into `out` unless the layout measures only.
+/// The size `(width, height)` of the laid-out text, and its draw into `out` unless the layout measures only: in font 2
+/// (`0x2eaf70` / L25 `0x2fe2c0`: texture slot 2, `glyphs` the font's, `0x28c8f0`).
 pub fn text_box(out: &mut Vec<Quad>, text: &[u8], l: &Layout, glyphs: &[Glyph; 256], rgba: [u8; 4]) -> (i32, i32) {
     let lines = wrap(text, l, glyphs);
     let mut y = l.y;
@@ -115,7 +116,7 @@ pub fn text_box(out: &mut Vec<Quad>, text: &[u8], l: &Layout, glyphs: &[Glyph; 2
             width = width.max(w);
             if l.flags & 4 == 0 {
                 let x = if l.flags & 1 != 0 { l.x - (w >> 1) } else { l.x };
-                gui::text(out, glyphs, 1, part, x as f32, y as f32, 1.0, rgba);
+                gui::text(out, glyphs, 2, part, x as f32, y as f32, 1.0, rgba);
             }
         }
         y += l.line;
@@ -210,6 +211,9 @@ impl Panel {
 
     /// `0x2f5680`, once a frame (`triangle`: △ pressed this frame).
     pub fn tick(&mut self, g: &mut GameState, triangle: bool, texts: &[Message]) {
+        // `0x308ac0`'s head: the shift's frames down; out, the shift goes.
+        g.help_shift_ticks = (g.help_shift_ticks - 1).max(0);
+        if g.help_shift_ticks == 0 { g.help_shift = 0; }
         self.timer += 1;
         match g.help_state {
             0 => {
@@ -277,7 +281,9 @@ impl Panel {
     pub fn draw(&mut self, g: &GameState, texts: &[Message], glyphs: &[Glyph; 256], sprites: &HashMap<u32, Sprite>) -> Vec<Quad> {
         let mut out = Vec::new();
         if g.help_state != 0 && !self.measured { self.measure(texts, glyphs); }
-        let [x, y] = self.centre;
+        // `0x308ac0` adds the shift (`0x28e888`, [`GameState::help_offset`]) to every height it draws at.
+        let shift = g.help_shift;
+        let [x, y] = [self.centre[0], self.centre[1] + shift];
         let t8 = self.timer.clamp(0, 8);
         match g.help_state {
             1 => {
@@ -299,7 +305,8 @@ impl Panel {
                 let t4 = self.timer.clamp(0, 4);
                 let alpha = match g.help_state { 4 => t4 * 0x20, 6 => (4 - t4) * 0x20, _ => 0x80 };
                 let text = self.index.and_then(|i| texts.get(i)).map_or(&[][..], |m| &m.text[..]);
-                text_box(&mut out, text, &Self::layout(y, 3), glyphs, gui::rgba(((alpha as u32) << 24) | TEXT_RGB));
+                let l = Layout { top: 0xf0 + shift, bottom: 0x1e0 + shift, ..Self::layout(y, 3) };
+                text_box(&mut out, text, &l, glyphs, gui::rgba(((alpha as u32) << 24) | TEXT_RGB));
             }
             7 => {
                 let [dx, dy] = self.drawn;

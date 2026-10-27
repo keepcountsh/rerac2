@@ -2046,6 +2046,7 @@ fn draw_hud(
                 match item {
                     rc_game::ship::HudItem::Quad(q) => quads.push(q),
                     rc_game::ship::HudItem::Draw(d) => quads.extend(rc_game::hud::quads(std::slice::from_ref(&d), &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon, rc_game::gui::PLAY_TAN)),
+                    rc_game::ship::HudItem::Text2 { text, pos, colour } => rc_game::gui::text(&mut quads, &hud.data.assets().glyphs_2, 2, text.as_bytes(), pos[0], pos[1], 1.0, colour.to_le_bytes()),
                 }
             }
             let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
@@ -2073,7 +2074,7 @@ fn draw_hud(
         }
         if p.glyphs.is_none() { p.glyphs = Some(Box::new(a.glyphs)); }
         p.boxes.draw(&mut quads, &a.glyphs, &a.sprites);
-        quads.extend(p.help.draw(&p.game, &p.texts, &a.glyphs, &a.sprites));
+        quads.extend(p.help.draw(&p.game, &p.texts, &a.glyphs_2, &a.sprites));
     }
     // The flight between the planets (rc_game::travel, `0x363ba0`): the destination's pictures into their textures
     // once, then the planet picture quad and the caption over the flight's world.

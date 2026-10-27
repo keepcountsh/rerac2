@@ -1484,6 +1484,15 @@ pub const BOOM: usize = 0x110;
 /// the particles — the tick's leading group (`0x374e10`, crate::moby::classes::space::leader), and the ship's blast at
 /// its death (`0x3cbfe8(ship, 0, 1)`: here the ground's blast, crate::moby::blast, at size 1).
 pub fn update_mission(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    // `0x40e340`'s start: updated and drawn from anywhere (`+0x30` 0xff, `+0x32` 0x1ff).
+    if w.mobys[id].state == 0 {
+        let m = &mut w.mobys[id];
+        m.update_dist = 0xff;
+        m.draw_dist = 0x1ff;
+        m.state = 1;
+    }
+    // `0x307ce0(0x1b2884 · −230 + 0.5, 2)` every tick: the help panel 230 up, over the fight's HUD at the bottom.
+    ctx.game.help_offset(-230, 2);
     let lead = crate::moby::classes::space::leader(w, &mut ctx.game.rng);
     w.mobys[id].set_pv_i(crate::moby::classes::space::LEADER, lead);
     if w.mobys[id].pv_i(BOOM + 0xc) == 0 { return; }
@@ -1527,6 +1536,8 @@ fn laser_burst(ctx: &mut Ctx, at: V3, rgb: u32) {
 pub enum HudItem {
     Draw(crate::hud::Draw),
     Quad(crate::gui::Quad),
+    /// Text in font 2 (`0x2fd2b8`: texture slot 2), left at `pos`.
+    Text2 { text: String, pos: [f32; 2], colour: u32 },
 }
 
 /// `0x2fc7f8(x0, y0, x1, y1, 1, colours)`: a bar from `left`'s colour to `right`'s (here in 32 slices).
@@ -1578,8 +1589,9 @@ impl Flight {
             out.push(d(Draw::Sprite { id: 0xc1, pos: [84.0, y], scale: [1.1, 1.0], frame: 0.0, colour: 0x6044_2d00 }));
             out.push(d(Draw::Sprite { id: 0xc2, pos: [84.0, y], scale: [1.1, 1.0], frame: 0.0, colour: 0x55f0_c070 }));
         }
+        // In font 2 (`0x2fd2b8`); the ammo below is font 1's (`0x2fd238`).
         for (id, n, pos) in self.counts(w) {
-            out.push(d(Draw::Text { text: format!("{}: {n}", label(id)), pos, scale: 1.0, colour: 0x8080_8080, align: Align::Left }));
+            out.push(HudItem::Text2 { text: format!("{}: {n}", label(id)), pos, colour: 0x8080_8080 });
         }
         // The frame and the shield's gauge.
         let mid = [256.0, 200.0];
