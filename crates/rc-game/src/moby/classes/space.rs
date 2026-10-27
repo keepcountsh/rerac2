@@ -734,8 +734,8 @@ fn drop(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// `0x3c7408` / `0x415790`: within 60 of the ship the pickup closes on it (`0x331058`: a spring on the distance,
 /// 0.0056 / 0.0017, at most 0.5 a tick) shrinking (its scale · d / 45, at least 0.3); within 0.5 it is taken — the
 /// shield's adds 33 (one time in four all of it, `0x29c310` slot 6), the bolts' are counted (`0x1a7a04`). It turns
-/// (0.03 a tick about z; the bolts' also 0.01 about x). Not ported: the shield's sparkles (`0x3c7720`), the voices
-/// and sounds.
+/// (0.03 a tick about z; the bolts' also 0.01 about x); taken, the ship's sound 0xc and the message (the shield's
+/// 0x1283 / 0x1284 full, the bolts' 0x1282 after the first; [`pickup_sparkles`] the sparkles round it).
 pub fn update_pickup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let class = w.mobys[id].o_class;
     let base = w.class(class).map_or(1.0, |c| c.scale);
@@ -754,13 +754,21 @@ pub fn update_pickup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
             // `0x36cc38(0xc, 0, m, 0xfbf)`; the bolts' first one's help (`0x307d80(0xa3b, 0x92)`).
             ctx.host.play_sound_of(&w.mobys[id], crate::ship::SHIP_CLASS, 0xc, 0);
             if class == BOLT_PICKUP {
-                if !ctx.game.bolt_help_done { ctx.game.bolt_help_done = ctx.game.help(0xa3b, 0x92); }
+                // The first one's help; the next ones' message 0x1282 (`0x321738`, crate::msgbox).
+                if ctx.game.space_bolts == 0 {
+                    if !ctx.game.bolt_help_done { ctx.game.bolt_help_done = ctx.game.help(0xa3b, 0x92); }
+                } else {
+                    ctx.game.messages.push(crate::msgbox::Request::Text { text: 0x1282, ticks: None });
+                }
                 // `0x1a7a04`: the bolts taken (the HUD's panel shows it for 300 ticks, `0x40f3e0`).
                 ctx.game.space_bolts += 1;
                 ctx.game.space_bolts_shown = 300;
             }
             if class == SHIELD_PICKUP {
-                let add = if ctx.game.rng.randi(4) != 0 { 0x21 } else { crate::ship::SHIELD_MAX };
+                // One in four the shield full (message 0x1284), else 33 (0x1283).
+                let full = ctx.game.rng.randi(4) == 0;
+                let add = if full { crate::ship::SHIELD_MAX } else { 0x21 };
+                ctx.game.messages.push(crate::msgbox::Request::Text { text: if full { 0x1284 } else { 0x1283 }, ticks: None });
                 let n = w.mobys[s].pv_i(crate::ship::SHIELD_ADD) + add;
                 w.mobys[s].set_pv_i(crate::ship::SHIELD_ADD, n);
             }
@@ -770,7 +778,61 @@ pub fn update_pickup(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let m = &mut w.mobys[id];
     m.rot[2] = crate::hero::physics::add_rot(m.rot[2], 0.03);
     if class == BOLT_PICKUP { m.rot[0] = crate::hero::physics::add_rot(m.rot[0], 0.01); }
+    pickup_sparkles(w, id, ctx);
     w.rebuild(id, &*ctx.host);
+}
+
+/// The pickups' four sparkles' words (the port's, past the class's pvars): set up, the rolls, their steps, the blink
+/// timers, the sizes.
+const SPARKLES_SET: usize = 0x400;
+const SPARKLE_ROLL: usize = 0x404;
+const SPARKLE_STEP: usize = 0x414;
+const SPARKLE_TIMER: usize = 0x424;
+const SPARKLE_SIZE: usize = 0x434;
+
+/// `0x3c7720` (the shield's) / `0x415a88` (the bolts'), set up by `0x3c7648`: four sparkles (crate::particles::sparkle,
+/// `0x347cb0(size, at, colour, roll, def 0x35, soft, 2 ticks)`, far byte 0x61) in a line away from the camera from
+/// 0.3 behind the pickup (0.25 up), 0.1 apart: each rolls by its step (−1, −2.25, 1.25, 2.5; from a random roll,
+/// wrapping at 255), blinks on a timer (from 0x3f, 0x7f, 0xbf, 0xff; back to 0xff when out), its colour from the
+/// first to the second by |½ − (255 − timer)/255| (the shield's 0x50ff4040 → 0x10ff4040, the bolts' 0x40405fff →
+/// 0x10405fff), sizes 2.8, 3.5, 3.5, 2.8.
+fn pickup_sparkles(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    if w.mobys[id].pv_i(SPARKLES_SET) == 0 {
+        let m = &mut w.mobys[id];
+        m.set_pv_i(SPARKLES_SET, 1);
+        for k in 0..4 {
+            let roll = ctx.game.rng.randi(0xff) as f32;
+            m.set_pv_f(SPARKLE_ROLL + 4 * k, roll);
+            m.set_pv_f(SPARKLE_STEP + 4 * k, [-1.0, -2.25, 1.25, 2.5][k]);
+            m.set_pv_i(SPARKLE_TIMER + 4 * k, 0x3f + 0x40 * k as i32);
+            m.set_pv_f(SPARKLE_SIZE + 4 * k, [2.8, 3.5, 3.5, 2.8][k]);
+        }
+    }
+    let (from, to) = if w.mobys[id].o_class == BOLT_PICKUP { (0x4040_5fff, 0x1040_5fff) } else { (0x50ff_4040, 0x10ff_4040) };
+    let p = w.mobys[id].pos;
+    let p = [p[0], p[1], p[2] + 0.25];
+    let away = sub(p, ctx.host.camera_pos());
+    let mut at = add(p, set_len(away, 0.3));
+    let step = set_len(away, 0.1);
+    let hero = ctx.hero.pos;
+    for k in 0..4 {
+        let m = &mut w.mobys[id];
+        let mut roll = m.pv_f(SPARKLE_ROLL + 4 * k) + m.pv_f(SPARKLE_STEP + 4 * k);
+        if 255.0 <= roll { roll -= 255.0 } else if roll <= 0.0 { roll += 255.0 }
+        m.set_pv_f(SPARKLE_ROLL + 4 * k, roll);
+        let mut t = m.pv_i(SPARKLE_TIMER + 4 * k);
+        if crate::moby::countdown(&mut t) { t = 0xff; }
+        m.set_pv_i(SPARKLE_TIMER + 4 * k, t);
+        let f = (0.5 - (0xff - t) as f32 * 0.003_921_569).abs();
+        let colour = crate::hud::lerp_rgba(f, from, to);
+        let size = m.pv_f(SPARKLE_SIZE + 4 * k);
+        if let Some(sys) = ctx.parts.as_deref_mut() {
+            if let Some(i) = crate::particles::sparkle(sys, size, at, colour, roll as i32 as u8, 0x35, true, 2, false, hero) {
+                sys.pool.recs[i][9] = 0x61;
+            }
+        }
+        at = add(at, step);
+    }
 }
 
 /// The asteroid field's spawner (0x095f, `0x3ca8b0`) and the asteroids (0x0953..0x0956, 0x0971: `0x3c91c8`).

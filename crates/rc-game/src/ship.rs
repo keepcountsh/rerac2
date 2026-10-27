@@ -804,12 +804,15 @@ fn push_strip(out: &mut Vec<crate::fx::FxQuad>, fx: usize, additive: bool, (rows
 /// - facing the camera, four rays (FX 0x40, additive, 0x10) a quarter turn apart, the flare turning 2° a frame
 ///   (`+0x1fbc`) by its gun's side (`+0xc`) from a random start (`+8`).
 ///
-/// A fighter's shot: `0x378960` twice (0.05 white, 0.1 in its colour 0x60008000, from its tail to its head).
+/// A fighter's shot: a glow at its head (`0x300aa0`: 0.35, FX 0x31, its colour, a roll the update draws), then
+/// `0x378960` twice (0.05 white, 0.1 in its colour 0x60008000, from its tail to its head).
 pub fn draw_laser(w: &MobyWorld, id: usize, cam: V3, out: &mut Vec<crate::fx::FxQuad>) {
     let m = &w.mobys[id];
     if m.pv_i(0x44) != 0 {
         let st = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]];
         let (a, b) = (m.pv_v(0x50), m.pos);
+        // The head's glow first (`0x300aa0(0.35, 0, roll, head, FX 0x31, colour, additive)`), then the two streaks.
+        crate::fx::sprite(out, 0.35, 0.0, m.pv_f(0x6c), b, cam, 0x31, m.pv_i(0x68) as u32, true);
         for (half, c) in [(0.05, 0x807f_7f7fu32), (0.1, m.pv_i(0x68) as u32)] {
             let side = set_len(cross(sub(b, a), sub(cam, a)), half);
             out.push(crate::fx::FxQuad { fx: 0xe, additive: true, corners: [add(a, side), sub(a, side), add(b, side), sub(b, side)], st, rgba: [c; 4] });
@@ -895,6 +898,10 @@ fn update_enemy_shot(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     m.set_pv_f(0x48, flown);
     if 350.0 <= flown { return w.delete(id); }
     let head = m.pos;
+    // `0x300aa0`'s roll for the head's glow (the random stream's, every tick).
+    let roll = ctx.game.rng.rand_angle();
+    w.mobys[id].set_pv_f(0x6c, roll);
+    let m = &w.mobys[id];
     if let Some(s) = usize::try_from(m.pv_i(0x4c) - 1).ok().filter(|&s| w.mobys.get(s).is_some_and(|x| x.state < 0x80 && x.draw_dist != 0)) {
         if crate::hero::physics::dist(head, w.mobys[s].pos) < w.mobys[id].pv_f(0x60) {
             let n = w.mobys[s].pv_i(HITS) + 1;
