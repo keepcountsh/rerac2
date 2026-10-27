@@ -17,11 +17,9 @@
 //! the wings 0x10d4 (both sides), 0x10d7, the canopy 0x10e3 (alpha 0x60), 0x10da, 0x10de and 0x10e5 (both sides).
 //! Each tick (`0x411aa8` → `0x415d88`) they take the ship's place and rows, the second side's left row turned over.
 //!
-//! Not ported: the other modes (the fades, the death `0x434ad0`, the U-turn `0x434c98`), the auto level `0x4356c8`,
-//! the boost (`0x22183c`, `0x375168`), Gorn's and Hrugis's special cases (levels 0xf, 0x14, 5 / 10), the spheres the
-//! ship must stay in (the mission object 0x0eee's `+0x68`[0]), the collision `0x437a70`, the guns but the
-//! lasers and the boost (the missiles ○ `0x3caae8`, the weapons 2 / 3 / 4), the
-//! upgrades' parts, the ship's light and draws (`0x436d20`, `0x437258`, `0x4383d8`).
+//! Not ported: the warp (modes 7 / 8, `0x434c98`: an upgrade, the bit 0x2000 with L1 + L2 or R1 + R2 — to the
+//! farther of two of the ship's nine restart points behind a fade), the weapons 2 / 3 / 4 and the upgrades' parts
+//! (bought), Gorn's and Hrugis's special cases (levels 0xf, 0x14, 5 / 10), the ship's light.
 //!
 //! **The lasers** (`0x436440`, ✕): every 10 ticks (`$gp+0x25b0`; during a barrel roll only on even frames) a shot
 //! from each gun (`$gp+0x2640` / `+0x2650`: 1.23 ahead, ±0.045 across, 0.055 up in the ship's frame) toward the point
@@ -30,18 +28,17 @@
 //! update (`0x412e38`): the step; gone at the end of its time or out of the 2..1021 box; the step's line against the
 //! world (`0x2f1998`, not the material 6) ends it; a moby (`0x2f45d0`) whose centre comes within the radius of the
 //! step takes a hit (1, flags 0x110000; `0x32f910`) and ends it. Its draw (`0x4137d0`, meshes of FX 0xb and 8 with a
-//! spinning star) is drawn here as an additive streak. Not ported: the shots' sounds (`0x36cb90`), the burst of the
-//! end (`0x4134b0`), an enemy's shots hitting the ship.
+//! spinning star) is drawn here as an additive streak. The end's burst: [`laser_burst`].
 //!
 //! **The hits** (`0x375e78`): each takes 1 from the shield (34), then from the hull (100); the hull at 0 is the
 //! death (`0x434ad0`, mode 6: the ship gone, the camera drifting back 0.133 a tick for 60 ticks, then `0x2c63f0`,
-//! here the level again). Not ported: the shield's upgrades, the half damage of `0x4380b8`, the burst.
+//! here the level again). A hit during a barrel roll is
+//! halved (`0x4380b8`). Not ported: the shield's upgrades.
 //!
 //! **The boost** (`0x436440`, □; the weapon slot 7 of `0x29c300`, 0x28 each: `+0` had, `+0x10` the most fuel 600,
 //! `+0x14` the fuel): held with fuel, the ship's `+0x34` counts up to 8 and the fuel down by 1 a tick; else `+0x34`
 //! counts down, and at 0 with □ up the fuel comes back by 1 every third frame. With `+0x34` the move (`0x435a18`)
 //! springs the speed to 50 a second (`$gp+0x25d4`; 30 with `0x375168`) at 0.005 (`+0x2700`) instead of the cruise.
-//! Not ported: its sound (`0x36cc38(0x11, …)`).
 
 use crate::hero::physics::{add, cross, dot, scale, set_len, sub, unit, V3};
 use crate::moby::hits::HitTemplate;
@@ -933,8 +930,8 @@ fn lerp_rgba(t: f32, a: u32, b: u32) -> u32 {
 /// `0x411c78` (the ship's draw callback, registered by its update `0x411a80`; drawn here after the flight's tick so
 /// it sits on the ship as this tick placed it, the boost moving it 0.8 a tick): its exhaust from (−0.135, 0, 0.07) in its frame, two layers of sprites
 /// (`0x412308` → `0x300aa0`: FX 0x2e, additive, a random roll each, jittered) stepping back along its forward and
-/// shrinking, their sizes, steps and colours from the cruise's to the boost's by `+0x34` / 8. Not ported: the hull
-/// 0x10d9's three nozzles, the sparks `0x412910`, the boost's trail `0x412430`.
+/// shrinking, their sizes, steps and colours from the cruise's to the boost's by `+0x34` / 8. Not ported: the upgraded hull
+/// 0x10d9's three nozzles.
 pub fn draw_flame(w: &MobyWorld, id: usize, cam: V3, rng: &mut crate::rng::Rng, out: &mut Vec<crate::fx::FxQuad>) {
     let m = &w.mobys[id];
     if m.draw_dist == 0 { return; }
@@ -1359,7 +1356,7 @@ impl Flight {
 /// `0x3caca8`: the missile. While its target lives, after its first 4 ticks it flies at it (before, it turns to it,
 /// `0x3cb1e0`: here at once too); it grows to its scale (0.05 a tick); its time, the 2..1021 box, the world's line
 /// (`0x2f1998`) and the mobys' (`0x2f29f8`, 0.2) end it — a moby hit takes 5 (flags 0x810000, `0x3cb4f0`), and it
-/// bursts (`0x3cbfe8`, here the blast at 0.3). Not ported: its trail (`0x3420e8`), the 0x956's sparks.
+/// bursts (`0x3cbfe8`, here the blast at 0.3). Not ported: the 0x956's sparks.
 pub fn update_missile(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let from = w.mobys[id].pos;
     let mut v = w.mobys[id].pv_v(0);

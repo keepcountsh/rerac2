@@ -892,7 +892,7 @@ pub fn update_field(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// within its size breaks it (`0x3c9c40` → `0x3c9d18`: a hit on itself of 5, the ship's own damage is its collision's);
 /// a hit with the flags 0x230000 (0x956 not by the lasers) or the world's box ends it (`0x3c94d8`): its pieces thrown
 /// apart (24 a second along the hit, 3× for the ram; and 12 a second each way), its chips; the big ones (size 5 or
-/// more) a drop (`0x3c9e78`, as the fighters'). Not ported: the dust (`0x342520`), the camera's shake, the sounds.
+/// more) a drop (`0x3c9e78`, as the fighters'); the dust (`0x342520`), the ram's shake and the sounds.
 pub fn update_asteroid(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     let class = w.mobys[id].o_class;
     let k = kind(class);
