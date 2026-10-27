@@ -1150,8 +1150,6 @@ impl Flight {
         }
         w.mobys[mid].set_pv_i(crate::moby::classes::space::PASSIVE, passive as i32);
         w.mobys[mid].set_pv_i(crate::moby::classes::space::ACTIVE_COUNT, active as i32);
-        let lead = crate::moby::classes::space::leader(w, self.frame);
-        w.mobys[mid].set_pv_i(crate::moby::classes::space::LEADER, lead);
     }
 
     /// `0x434670`'s modes 1..5: the fades of the cut (`$gp+0x2a70`, 0.05 a tick). 1 flying while the screen goes
@@ -1470,9 +1468,12 @@ impl Flight {
 /// The mission object's word the flight asks the ship's blast through (`0x434ad0` → `0x3cbfe8`, the place).
 pub const BOOM: usize = 0x110;
 
-/// The mission object 0x0eee's update here: what [`Flight::mission`] cannot do without the particles — the ship's
-/// blast at its death (`0x3cbfe8(ship, 0, 1)`: here the ground's blast, crate::moby::blast, at size 1).
+/// The mission object 0x0eee's update here: what [`Flight::mission`] cannot do without the game's random numbers and
+/// the particles — the tick's leading group (`0x374e10`, crate::moby::classes::space::leader), and the ship's blast at
+/// its death (`0x3cbfe8(ship, 0, 1)`: here the ground's blast, crate::moby::blast, at size 1).
 pub fn update_mission(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    let lead = crate::moby::classes::space::leader(w, &mut ctx.game.rng);
+    w.mobys[id].set_pv_i(crate::moby::classes::space::LEADER, lead);
     if w.mobys[id].pv_i(BOOM + 0xc) == 0 { return; }
     let at = w.mobys[id].pv_v(BOOM);
     w.mobys[id].set_pv_i(BOOM + 0xc, 0);
