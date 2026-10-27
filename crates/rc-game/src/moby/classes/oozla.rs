@@ -2271,3 +2271,85 @@ pub fn update_0c23(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
         ctx.game.help_later(0xa3c, 0x93);
     }
 }
+
+/// 0x0af0 (L01 `0x3d56d0`, a camera volume; two on Oozla): while Ratchet is in its cuboid `+0x68`[4] and one of its
+/// groups `[0..3]` has a member alive (`0x312728`; none given: always), a camera tweak holds (`0x2ccbd8`, priority
+/// byte `+0x33`; its slot + 1 kept in `[5]`): the distance `[6]`, the pitch `[7]` and field of view `[0xb]` (degrees;
+/// −1 none), the pivot and look heights `[8]` / `[9]`, `[0xa]` (or −1 with `+0x45`), the stick off `+0x30`, facing its
+/// direction once / after the stick rests `+0x31` / `+0x32`, the firm springs `+0x46`, the yaw rate `[0x10]`. The
+/// direction (every tick): to the cuboid `[0xd]`'s place from Ratchet, or (`+0x49`) along its first row. The first
+/// time that cuboid's place is on screen (`0x2e5388`, `+0x47` set): `[0xa]` taken (`+0x45`), the facing off (`+0x44`),
+/// the firm springs on (`+0x48`). Out, or the groups dead: released (`0x2ccc78`).
+///
+/// Not ported: its look at a focus moby (`[0xe]` ≠ −1: the script camera `0x42bd08` / `0x42ba48`; −1 on both of
+/// Oozla's).
+pub fn update_0af0(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
+    const DEG: f32 = 0.017_453_294;
+    if w.mobys[id].state == 0 {
+        let m = &mut w.mobys[id];
+        m.set_pv_b(0x47, 0);
+        m.set_pv_i(0x14, 0);
+        m.set_pv_i(0x3c, 0);
+        m.update_dist = 0xff;
+        m.state = 1;
+        return;
+    }
+    let m = &w.mobys[id];
+    let inside = ctx.level.in_cuboid(m.pv_i(0x10), ctx.hero.pos);
+    let groups: Vec<i32> = (0..4).map(|k| m.pv_i(4 * k)).filter(|&g| g != -1).collect();
+    let open = groups.is_empty() || groups.iter().any(|&g| super::props::group_alive(w, g) != 0);
+    let held = usize::try_from(m.pv_i(0x14) - 1).ok();
+    let target = m.pv_i(0x34);
+    let dir = |w: &MobyWorld, ctx: &Ctx| -> Option<V3> {
+        let c = ctx.level.cuboids.get(usize::try_from(target).ok()?)?;
+        Some(if w.mobys[id].pv_b(0x49) == 0 { sub([c.matrix[3][0], c.matrix[3][1], c.matrix[3][2]], ctx.hero.pos) } else { [c.matrix[0][0], c.matrix[0][1], c.matrix[0][2]] })
+    };
+    let slot = match held {
+        None => {
+            if !inside || !open { return; }
+            let Some(slot) = ctx.game.cam_tweaks.request(m.pv_b(0x33)) else { return };
+            let f = |o: usize| m.pv_f(o);
+            let t = &mut ctx.game.cam_tweaks.slots[slot];
+            t.dist = f(0x18);
+            t.pitch = if f(0x1c) == -1.0 { -1.0 } else { f(0x1c) * DEG };
+            t.pivot_h = f(0x20);
+            t.look_h = f(0x24);
+            t.g14 = if m.pv_b(0x45) == 0 { f(0x28) } else { -1.0 };
+            t.fov = if f(0x2c) == -1.0 { -1.0 } else { f(0x2c) * DEG };
+            t.no_stick = m.pv_b(0x30) != 0;
+            t.face_once = m.pv_b(0x31) != 0;
+            t.face_rest = m.pv_b(0x32) != 0;
+            t.firm = m.pv_b(0x46) != 0;
+            if m.pv_i(0x40) != -1 { t.rate_deg = m.pv_i(0x40); }
+            if let Some(d) = dir(w, ctx) { ctx.game.cam_tweaks.slots[slot].dir = d; }
+            w.mobys[id].set_pv_i(0x14, slot as i32 + 1);
+            slot
+        }
+        Some(slot) => {
+            if !inside || !open {
+                ctx.game.cam_tweaks.release(slot);
+                w.mobys[id].set_pv_i(0x14, 0);
+                return;
+            }
+            if let Some(d) = dir(w, ctx) { ctx.game.cam_tweaks.slots[slot].dir = d; }
+            slot
+        }
+    };
+    // The first sight of the target.
+    let m = &w.mobys[id];
+    if m.pv_b(0x47) == 0 {
+        if let Some(c) = usize::try_from(target).ok().and_then(|t| ctx.level.cuboids.get(t)) {
+            if super::space::in_view(ctx, [c.matrix[3][0], c.matrix[3][1], c.matrix[3][2]], 1.0) {
+                let (g14, unface, firm) = (m.pv_b(0x45) != 0, m.pv_b(0x44) != 0, m.pv_b(0x48) != 0);
+                let g = m.pv_f(0x28);
+                let t = &mut ctx.game.cam_tweaks.slots[slot];
+                if g14 { t.g14 = g; }
+                if unface { t.face_once = false; t.face_rest = false; }
+                if firm { t.firm = true; }
+                w.mobys[id].set_pv_b(0x47, 1);
+            }
+        }
+    }
+    let fov = w.mobys[id].pv_f(0x2c);
+    ctx.game.cam_tweaks.slots[slot].fov = fov * DEG;
+}

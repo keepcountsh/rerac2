@@ -241,7 +241,7 @@ fn own_target(w: &MobyWorld, id: usize) -> Option<usize> {
 
 /// The sphere `(c, r)` against the camera's view (`0x302b78`, the view's planes `0x1bd900..`): −1 outside, else in
 /// (here no 0 / 1 split: the callers ask only for −1), by the game's 4:3 tangents and near plane.
-fn in_view(ctx: &Ctx, c: V3, r: f32) -> bool {
+pub(crate) fn in_view(ctx: &Ctx, c: V3, r: f32) -> bool {
     let (eye, rows) = (ctx.host.camera_pos(), ctx.host.camera_rows());
     let d = sub(c, eye);
     let dot = |a: V3| a[0] * d[0] + a[1] * d[1] + a[2] * d[2];

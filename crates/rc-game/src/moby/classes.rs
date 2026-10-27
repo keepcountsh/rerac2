@@ -135,6 +135,7 @@ pub fn update_for(o_class: i16) -> Option<UpdateFn> {
         0x0b21 => Some(oozla::update_0b21),
         0x02e1 => Some(oozla::update_02e1),
         0x0c23 => Some(oozla::update_0c23),
+        0x0af0 => Some(oozla::update_0af0),
         platinum::CLASS => Some(platinum::update),
         0x0825 => Some(dynamo::update),
         0x00bc => Some(tractor::update),
