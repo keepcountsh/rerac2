@@ -1489,20 +1489,33 @@ pub fn update_mission(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
     crate::moby::blast::burst(w, ctx, at, &crate::moby::blast::Blast { size: 1.0, bursts: [0x32, 0x1e, 0x1e], puffs: 0x1e, streaks: 0x28, light: false, shake: false });
 }
 
-/// `0x4134b0(at, 20, colour, laser)`: the laser's end — 20 sparks (crate::particles::spark standing in for `0x346ee8`)
-/// thrown toward the camera's side, 0.05..3 a second across and 1..5 up, a white and a coloured one each.
+/// `0x4134b0(at, 20, colour, laser)`: the laser's end — 20 times: `r` 0.25..1 (`$gp+0x1e30`), a spin of ±1, the way
+/// toward the camera turned ±60° about up and 0.05..3 a second long, 1..5 a second up (`+0x1e1c..+0x1e28`); the
+/// point wandering ±0.15 each time; two twinkles (`0x346ee8`, crate::particles::twinkle: falling 0.002, 60 ticks,
+/// frame 6 of type 0x61's list, far byte 0x74): the shot's colour (`+0x24`: its colour | alpha 0x7f) from `r` to
+/// `r`·0.1, and grey `0x7f7f7f7f` from `r`·0.7 to `r`·0.07 (its roll 0x20, the spin the other way).
 fn laser_burst(ctx: &mut Ctx, at: V3, rgb: u32) {
     let cam = ctx.host.camera_pos();
     let Some(sys) = ctx.parts.as_deref_mut() else { return };
-    let toward = set_len(sub(cam, at), 0.5);
+    let frame = sys.def_frame(0x61, 6);
+    let toward = sub(cam, at);
+    let mut p = at;
+    let colour = rgb & 0x00ff_ffff | 0x7f00_0000;
     for _ in 0..20 {
         let g = &mut ctx.game.rng;
-        let size = g.randf(0.25, 1.0);
-        let across = crate::moby::classes::shot::polar(g.randf(0.05, 3.0) / 60.0, g.rand_angle(), g.rand_angle());
-        let v = add(add(across, [0.0, 0.0, g.randf(1.0, 5.0) / 60.0]), scale(toward, 0.01));
-        let p = [at[0] + g.randf(-0.15, 0.15), at[1] + g.randf(-0.15, 0.15), at[2] + g.randf(-0.15, 0.15)];
-        crate::particles::spark(sys, g, size * 0.1 * 210_000.0, 0.0, 0.002, 0.0, 1.0, p, v, 60, 0x7f, rgb & 0xff_ffff, 0);
-        crate::particles::spark(sys, g, size * 0.07 * 210_000.0, 0.0, 0.002, 0.0, 1.0, p, v, 60, 0x7f, 0x7f_7f7f, 0);
+        let r = g.randf(0.25, 1.0);
+        let spin: i8 = if g.randi(2) != 0 { 1 } else { -1 };
+        let (s, c) = g.randf(-1.047_197_6, 1.047_197_6).sin_cos();
+        let turned = [toward[0] * c - toward[1] * s, toward[0] * s + toward[1] * c, toward[2]];
+        let mut v = set_len(turned, g.randf(0.05, 3.0) / 60.0);
+        v[2] = g.randf(1.0, 5.0) / 60.0;
+        for k in 0..3 { p[k] += g.randf(-0.15, 0.15); }
+        for (size, end, rgba, rot, sp) in [(r * 0.1, r, colour, 0u8, spin), (r * 0.07, r * 0.7, 0x7f7f_7f7f, 1, -spin)] {
+            if let Some(i) = crate::particles::twinkle(sys, g, size, end, 0.002, p, 60, rgba, rot, sp, v, 0) {
+                sys.pool.recs[i][2] = frame;
+                sys.pool.recs[i][9] = 0x74;
+            }
+        }
     }
 }
 

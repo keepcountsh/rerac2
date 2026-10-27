@@ -448,15 +448,15 @@ fn think(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 /// `0x301e10(out, v, rows)`: `v` in the frame `rows`.
 fn in_frame(rows: [V3; 3], v: V3) -> V3 { add(add(scale(rows[0], v[0]), scale(rows[1], v[1])), scale(rows[2], v[2])) }
 
-/// `0x374f50`'s 20 sparks (`0x346ee8(0.2, 1.25, 0, at, 60, 0x4000ff7f, 0, 2, dir, 0)`, dir 1/6 at random angles;
-/// crate::particles::spark standing in, as the laser's).
+/// `0x374f50`'s 20 sparks: twinkles (`0x346ee8(0.2, 1.25, 0, at, 60, 0x4000ff7f, 0, 2, dir, 0)`,
+/// crate::particles::twinkle), `dir` 1/6 a tick at random angles.
 fn bounce_sparks(w: &MobyWorld, id: usize, ctx: &mut Ctx) {
     let at = w.mobys[id].pos;
     let Some(sys) = ctx.parts.as_deref_mut() else { return };
     for _ in 0..20 {
         let g = &mut ctx.game.rng;
         let v = super::shot::polar(0.166_666_67, g.rand_angle(), g.rand_angle());
-        crate::particles::spark(sys, g, 0.2 * 210_000.0, 0.0, 0.002, 0.0, 1.25, at, v, 60, 0x40, 0x00_ff7f, 0);
+        crate::particles::twinkle(sys, g, 0.2, 1.25, 0.0, at, 60, 0x4000_ff7f, 0, 2, v, 0);
     }
 }
 

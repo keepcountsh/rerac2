@@ -52,7 +52,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 |---|---|---|---|---|---|
 | G-PRT-001 | **Particle types beyond 0x17 / 0x2c / 0x30 / 0x55 / 0x59** (0x30, R&C1's type 48, closed 2026-10-22: particles.rs `drift`): type 2 `0x3327e8`, 0x3c `0x33b5e0`, sparks (`0x38ce80`, `0x38cc88`, `0x33a058`, `0x336148`, `0x3dbc20`), dust `0x334528`, the bolt sparkle `0x33a6a0`, bubbles and splashes (`0x3378b0`, `0x2aac58`, `0x37d5a0`), smoke | wrench, grind, chute, zip line, crates, bolts, water, burns, 53 units | 53 / 1,757 (30 / 1,047) | particles.rs:15; wrench.rs:15; grind.rs:22, 398; misc.rs:15; crate_.rs:13; bolt.rs:7; water.rs:19; damage.rs:12; props.rs:329 | yes |
 | G-PRT-002 | The gravity boots' bend of particle positions `0x380e08` (`+0x1c` = 2) | — | — | particles.rs:15 | minor |
-| G-PRT-003 | **The laser end's sparks** `0x346ee8` | Wupash: the ship's lasers (`0x4134b0`; crate::particles::spark stands in) | — | rc-game/src/ship.rs (`laser_burst`) | yes |
+| G-PRT-003 | ~~**The laser end's sparks** `0x346ee8`~~ closed 2026-10-27: `0x346ee8` is the twinkle (type 0x35, crate::particles::twinkle); the laser's end (`0x4134b0`) and the fighters' bounce (`0x374f50`) now make twinkles with the original's arguments | Wupash | — | rc-game/src/ship.rs (`laser_burst`), rc-game/src/moby/classes/space.rs (`bounce_sparks`) | yes |
 
 ## Cameras (CAM)
 
