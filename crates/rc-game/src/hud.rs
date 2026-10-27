@@ -551,16 +551,17 @@ impl Hud {
     }
 }
 
-/// The draws as GUI quads (crate::gui): the sprites' shapes, the icons as textured quads (`icon` gives the layer's
-/// texture of an icon frame and its texel size), the text in the font of texture slot 1.
-pub fn quads(draws: &[Draw], sprites: &HashMap<u32, Sprite>, glyphs: &[Glyph; 256], icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>) -> Vec<Quad> {
+/// The draws as GUI quads (crate::gui): the sprites' shapes by the view's tangent `tan` (crate::gui::PLAY_TAN for
+/// the space fight's HUD, MENU_TAN else: G-REN-016), the icons as textured quads (`icon` gives the layer's texture of an icon frame and
+/// its texel size), the text in the font of texture slot 1.
+pub fn quads(draws: &[Draw], sprites: &HashMap<u32, Sprite>, glyphs: &[Glyph; 256], icon: &dyn Fn(u16, u16) -> Option<(Tex, [f32; 2])>, tan: f32) -> Vec<Quad> {
     let mut out = Vec::new();
     let rgba = |c: u32| -> [u8; 4] { c.to_le_bytes() };
     for d in draws {
         match d {
             Draw::Sprite { id, pos, scale, frame, colour } => {
                 if colour >> 24 == 0 { continue; }
-                if let Some(s) = sprites.get(id) { gui::sprite(&mut out, s, *pos, *frame, *scale, rgba(*colour)); }
+                if let Some(s) = sprites.get(id) { gui::sprite_with(&mut out, s, *pos, *frame, *scale, rgba(*colour), tan); }
             }
             Draw::Icon { id, frame, pos, size, colour } => {
                 if colour >> 24 == 0 { continue; }

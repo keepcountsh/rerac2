@@ -1972,7 +1972,7 @@ fn draw_hud(
         let draws = rc_game::travel::menu_draws(&p.game, &text, &width, &mut lines, &mut texts, &mut scroll);
         p.game.travel.menu.mission_scroll += scroll;
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
-        quads.extend(rc_game::hud::quads(&draws, &a.sprites, &a.glyphs, &icon));
+        quads.extend(rc_game::hud::quads(&draws, &a.sprites, &a.glyphs, &icon, rc_game::gui::MENU_TAN));
         // The planet widget draws its picture after its window (`0x435f10`: `0x431fa8`, then `0x355508`).
         if let Some(d) = pp.planet {
             if hud.planet_shown != Some(d.level) {
@@ -2045,7 +2045,7 @@ fn draw_hud(
             for item in f.hud_items(&m.world, (p.game.space_bolts, p.game.space_bolts_shown), &label) {
                 match item {
                     rc_game::ship::HudItem::Quad(q) => quads.push(q),
-                    rc_game::ship::HudItem::Draw(d) => quads.extend(rc_game::hud::quads(std::slice::from_ref(&d), &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon)),
+                    rc_game::ship::HudItem::Draw(d) => quads.extend(rc_game::hud::quads(std::slice::from_ref(&d), &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon, rc_game::gui::PLAY_TAN)),
                 }
             }
             let tex = |fx: u16| hud.fx.get(&fx).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
@@ -2062,7 +2062,7 @@ fn draw_hud(
             p.qs.draw(&slots, &p.pad, &|id| strings.get(id).to_vec(), &mut draws);
         }
         let icon = |id: u16, f: u16| hud.icons.get(&(id, f)).map(|&(i, s)| (rc_game::gui::Tex::Slot(i), s));
-        quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon));
+        quads.extend(rc_game::hud::quads(&draws, &hud.data.assets().sprites, &hud.data.assets().glyphs, &icon, rc_game::gui::MENU_TAN));
         let a = hud.data.assets();
         // The action prompt's text (rc_game::prompt) and the vendor's menu (rc_game::vendor): the level's texts, else
         // the front end's strings.

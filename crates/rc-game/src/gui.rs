@@ -9,10 +9,14 @@ use rc_formats::disc::gui_sprite::{BoneKey, Prim, Sprite};
 pub const SCREEN_W: f32 = 512.0;
 pub const SCREEN_H: f32 = 416.0;
 
-/// The GUI projection's pixels per sprite unit × 16 (`FUN_0027af50`: half the screen over 0x1b9070 = 0.62; y ×
-/// 0.775 for NTSC, `FUN_0027b0a0`).
-const X_SCALE: f32 = SCREEN_W * 0.5 / 0.62;
-const Y_SCALE: f32 = SCREEN_H * 0.5 / (0.62 * 0.775);
+/// The GUI projection (L25 `0x390ae0`): pixels per sprite unit × 16 are half the screen over the current view's
+/// tangent `0x1bd730` across, and half its height over `0x1bd734` × 0.75 (`0x1a7bb9` set) up — the x tangent × 0.775.
+/// Read live: 0.62 on the pause menu (game mode 3, [`MENU_TAN`]), 0.6299774 in the Wupash fight ([`PLAY_TAN`]).
+/// Only the space fight's HUD takes [`PLAY_TAN`] so far; the rest (the on-foot HUD, the help and message boxes) keep
+/// [`MENU_TAN`] until their own views are read (docs/plan/gaps.md G-REN-016).
+pub const MENU_TAN: f32 = 0.62;
+pub const PLAY_TAN: f32 = 0.629_977_4;
+fn scales(tan: f32) -> (f32, f32) { (SCREEN_W * 0.5 / tan, SCREEN_H * 0.5 / (tan * 0.775)) }
 
 /// What a quad samples.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,16 +122,21 @@ pub fn pose(s: &Sprite, frame: f32) -> Vec<Mat> {
 }
 
 /// `FUN_003017f8(x, y, sx, sy, frame, sprite, colour)`: the sprite's quads. A vertex lands at
-/// `pos + (X_SCALE·sx·scale·x, −Y_SCALE·sy·scale·z) / 16` (the GS coordinate, half a pixel right of a [`Quad`]
+/// `pos + (X·sx·scale·x, −Y·sy·scale·z) / 16` (X, Y: the projection's [`scales`] by the view's tangent; here the menus') (the GS coordinate, half a pixel right of a [`Quad`]
 /// corner); its colour is `vertex × colour >> 7`. Quads after a texture select of a texture the sprite has are not
 /// drawn (no textured GUI sprite is used yet). Nothing is drawn when the colour's alpha is 0 (`FUN_003017f8`).
 pub fn sprite(out: &mut Vec<Quad>, s: &Sprite, pos: [f32; 2], frame: f32, scale: [f32; 2], colour: [u8; 4]) {
+    sprite_with(out, s, pos, frame, scale, colour, MENU_TAN);
+}
+
+pub fn sprite_with(out: &mut Vec<Quad>, s: &Sprite, pos: [f32; 2], frame: f32, scale: [f32; 2], colour: [u8; 4], tan: f32) {
     if colour[3] == 0 { return; }
+    let (x_scale, y_scale) = scales(tan);
     let bones = pose(s, frame);
     let pts: Vec<([f32; 2], [u8; 4])> = s.vertices.iter().map(|v| {
         let p = bones.get(v.bone).map_or(v.pos, |m| apply(m, v.pos));
-        let x = pos[0] + X_SCALE * scale[0] * s.scale * p[0] / 16.0 + 0.5;
-        let y = pos[1] - Y_SCALE * scale[1] * s.scale * p[2] / 16.0 + 0.5;
+        let x = pos[0] + x_scale * scale[0] * s.scale * p[0] / 16.0 + 0.5;
+        let y = pos[1] - y_scale * scale[1] * s.scale * p[2] / 16.0 + 0.5;
         let c = std::array::from_fn(|i| ((v.rgba[i] as u32 * colour[i] as u32) >> 7).min(0xff) as u8);
         ([x, y], c)
     }).collect();

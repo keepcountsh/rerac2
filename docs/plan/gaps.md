@@ -44,6 +44,7 @@ under `crates/` shortened to `<crate>/src/...`, or the doc §. *Seen*: whether a
 | G-REN-013 | **The explosion moby 0x986** (L25 `0x3cbfe8(at, 0, kind)`: at most 5 alive, the oldest recycled) | Wupash: the missiles' hits and the ship's death (the ground blast `0x4184c8` stands in) | — | rc-game/src/ship.rs (`update_mission`, the missile's hit) | yes |
 | G-REN-014 | **The Tractor Beam's rope** `0x38dd68` (20 points, springy and waving) | the Tractor Beam (a straight line with a slight wave stands in) | — | rc-game/src/moby/classes/tractor.rs:22 | yes |
 | G-REN-015 | **Overlay tables read at Aranos's addresses only**: the nanotech cluster's glow tables (`GlowTables`, gated on level 0) | the nanotech cluster 0x326 on every level with nanotech crates | — (lint) | rc-engine/src/play.rs:330; census `aranos_only.tsv` | yes |
+| G-REN-016 | **The GUI sprites' projection tangent per view** (`0x390ae0`: half the screen over the current view's tangent `0x1bd730`; read live 0.62 on the pause menu, 0.6299774 in the Wupash fight — 1.6% apart) | every GUI sprite: only the space fight's HUD takes 0.6299774 (`gui::PLAY_TAN`); the on-foot HUD, the help box, the message box, the vendor and the menus keep 0.62 until each one's view is read live (a full-width frame shows the 1.6% as 5-6 px at its ends) | — | rc-game/src/gui.rs:12 (`MENU_TAN` / `PLAY_TAN`); rc-engine/src/play.rs (the `hud::quads` calls) | yes |
 
 ## Particles (PRT)
 
