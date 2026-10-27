@@ -351,12 +351,15 @@ impl Flight {
         self.hits_heard = self.hits_heard.wrapping_add(1);
         if self.hits_heard % 6 == 1 { self.hit_sound = true; }
         if self.mode == 6 { return; }
-        self.damage(w, n);
+        // Each shot its own `0x375e78(1)` (a roll's half of 1 is nothing).
+        for _ in 0..n { self.damage(w, 1.0); }
     }
 
-    /// `0x375e78(n)`: the shield takes it first, then the hull; at 0 the death.
-    fn damage(&mut self, w: &mut MobyWorld, n: i32) {
+    /// `0x375e78(n)`: half while the barrel roll lasts (`0x4380b8`: the ship camera's record `+0xd8`, the roll's
+    /// side), in whole points (truncated); the shield takes it first, then the hull; at 0 the death.
+    fn damage(&mut self, w: &mut MobyWorld, n: f32) {
         if self.mode == 6 { return; }
+        let n = if self.roll_dir != 0 { n * 0.5 } else { n } as i32;
         let from_shield = n.min(self.shield);
         self.shield -= from_shield;
         self.hull -= n - from_shield;
@@ -1405,10 +1408,12 @@ pub fn update_missile(w: &mut MobyWorld, id: usize, ctx: &mut Ctx) {
 impl Flight {
     /// `0x437a70`: the ship's step swept in 0.25 spheres (0.075 up in its frame; at most 30 long) against the world
     /// and the mobys. The world met nose-on (|n · forward| > 0.75) is the death (`0x434ad0`); else the camera and the
-    /// ship are pushed out and the hull takes 1 every fourth frame. A moby met head-on (its facing against the ship's)
-    /// takes 1 (flags 0x10000) and the hull 30, once in 15 ticks (the record's `+0x58`). Either way the scrape
-    /// (`+0x90`, drawn by [`Flight::draw_scrape`]) at the contact. Not ported: the Hrugis special case, the pad's
-    /// rumble (`0x2e9f18(0x2b3200)`).
+    /// ship are pushed out and the hull takes 1 every fourth frame (pushed back to within 0.1 of the tick's start:
+    /// pinned, the death). A moby met head-on (its facing against the ship's) takes 1 (flags 0x10000) and the hull
+    /// 30, once in 15 ticks (the record's `+0x58`). Either way the scrape (`+0x90`, drawn by [`Flight::draw_scrape`])
+    /// at the contact. Not ported (none on Wupash): the Hrugis special case (level 10: the class 0xf86's 1000, the
+    /// 0x1315 passed), the classes 0x1327 / 0x1328 passed, a moby of type 0xb met as the world; the pad's rumble
+    /// (`0x2e9f18(0x2b3200)`).
     fn collide(&mut self, w: &mut MobyWorld, coll: Option<&rc_formats::collision::Collision>, scene: Option<&crate::collision::mobys::MobyScene>, from: V3) {
         countdown(&mut self.ram_wait);
         self.scrape = None;
@@ -1431,7 +1436,7 @@ impl Flight {
                             let tmpl = HitTemplate::new(1.0, Some(ship), 0x0001_0000, [dir[0], dir[1], dir[2], 0.0]);
                             let q = w.mobys[m].pos;
                             w.deliver_hit_any(m, &tmpl, [q[0], q[1], q[2], 1.0]);
-                            self.damage(w, 30);
+                            self.damage(w, 30.0);
                             self.ram_wait = 15;
                         }
                         self.scrape = Some(h.point);
@@ -1448,9 +1453,12 @@ impl Flight {
                         self.pos = add(self.pos, out);
                         w.mobys[ship].pos = add(w.mobys[ship].pos, out);
                     }
-                    if self.frame.is_multiple_of(4) { self.damage(w, 1); }
+                    // `0x437a70`: doubled while rolling, so the roll's half leaves it whole.
+                    if self.frame.is_multiple_of(4) { self.damage(w, if self.roll_dir != 0 { 2.0 } else { 1.0 }); }
                     // `+0x90`: the contact, out along the face by 0.8 of the sphere (`$gp+0x272c` 0.25).
                     self.scrape = Some(add(h.point, scale(nrm, 0.25 * 0.8)));
+                    // Pushed back to within 0.1 of where the tick started: pinned, the death.
+                    if crate::hero::physics::dist(from, w.mobys[ship].pos) < 0.1 { self.die(w); }
                 }
             }
             return;
